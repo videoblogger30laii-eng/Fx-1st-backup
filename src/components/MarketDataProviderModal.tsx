@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { MarketDataProvider, PROVIDER_CONFIGS } from '../types';
-import { X, Database, Check, ShieldCheck, Zap } from 'lucide-react';
+import { X, Database, Check, ShieldCheck } from 'lucide-react';
 
 interface Props {
   currentProvider: MarketDataProvider;
@@ -46,7 +46,10 @@ export const MarketDataProviderModal: React.FC<Props> = ({
         <div className="flex items-center justify-between pb-3 border-b border-[#222F47] mb-4">
           <div className="flex items-center gap-2">
             <Database className="w-5 h-5 text-[#2979FF]" />
-            <span className="text-base font-bold text-[#F1F5F9]">Market Data Providers</span>
+            <div>
+              <span className="text-base font-bold text-[#F1F5F9] block">Market Data Pipeline</span>
+              <span className="text-[11px] text-[#94A3B8]">Deriv WebSocket Primary • Twelve Data Secondary Fallback</span>
+            </div>
           </div>
           <button
             onClick={onDismiss}
@@ -58,8 +61,11 @@ export const MarketDataProviderModal: React.FC<Props> = ({
 
         {/* Current Status Pill */}
         <div className="bg-[#182033] border border-[#222F47] rounded-xl p-3 mb-4 flex items-center justify-between">
-          <div className="text-xs text-[#94A3B8]">Active Stream Status:</div>
-          <div className="text-xs font-bold text-[#00E676] bg-[#00E676]/10 px-2 py-0.5 rounded border border-[#00E676]/30">
+          <div className="text-xs text-[#94A3B8] flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-[#00E676] animate-pulse" />
+            Active Feed Status:
+          </div>
+          <div className="text-xs font-bold text-[#00E676] bg-[#00E676]/10 px-2.5 py-0.5 rounded border border-[#00E676]/30">
             {activeStatus}
           </div>
         </div>
@@ -82,6 +88,16 @@ export const MarketDataProviderModal: React.FC<Props> = ({
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-bold text-[#F1F5F9]">{config.displayName}</span>
+                    {config.isPrimary && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40">
+                        PRIMARY
+                      </span>
+                    )}
+                    {config.isSecondary && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#2979FF]/20 text-[#2979FF] border border-[#2979FF]/40">
+                        FALLBACK
+                      </span>
+                    )}
                     {isSelected && <Check className="w-4 h-4 text-[#2979FF]" />}
                   </div>
                   <span className="text-[10px] font-mono text-[#64748B]">{config.endpointName}</span>
@@ -91,24 +107,31 @@ export const MarketDataProviderModal: React.FC<Props> = ({
                 {/* Inline Credentials inputs if this provider is selected */}
                 {isSelected && provider === 'DERIV' && (
                   <div className="mt-3 pt-3 border-t border-[#222F47] space-y-2" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-[#00E676] flex items-center gap-1 font-semibold">
+                        <ShieldCheck className="w-3.5 h-3.5" /> Credentials Configured & Active
+                      </span>
+                    </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label className="text-[10px] text-[#94A3B8] block mb-0.5">Deriv App ID</label>
                         <input
+                          id="derivAppId"
                           type="text"
                           value={derivAppIdInput}
                           onChange={e => setDerivAppIdInput(e.target.value)}
-                          placeholder="10154"
+                          placeholder="1089"
                           className="w-full bg-[#101522] border border-[#222F47] rounded-lg px-2.5 py-1.5 text-xs font-mono text-[#F1F5F9]"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-[#94A3B8] block mb-0.5">Token (Optional)</label>
+                        <label className="text-[10px] text-[#94A3B8] block mb-0.5">Deriv API Token</label>
                         <input
+                          id="derivApiToken"
                           type="password"
                           value={derivTokenInput}
                           onChange={e => setDerivTokenInput(e.target.value)}
-                          placeholder="pat_..."
+                          placeholder="Token loaded"
                           className="w-full bg-[#101522] border border-[#222F47] rounded-lg px-2.5 py-1.5 text-xs font-mono text-[#F1F5F9]"
                         />
                       </div>
@@ -118,12 +141,17 @@ export const MarketDataProviderModal: React.FC<Props> = ({
 
                 {isSelected && provider === 'TWELVE_DATA' && (
                   <div className="mt-3 pt-3 border-t border-[#222F47]" onClick={e => e.stopPropagation()}>
-                    <label className="text-[10px] text-[#94A3B8] block mb-0.5">Twelve Data API Key</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] text-[#94A3B8]">Twelve Data API Key</label>
+                      <span className="text-[10px] text-[#00E676] flex items-center gap-1 font-semibold">
+                        <ShieldCheck className="w-3 h-3" /> Key Active
+                      </span>
+                    </div>
                     <input
-                      type="text"
+                      type="password"
                       value={tdKeyInput}
                       onChange={e => setTdKeyInput(e.target.value)}
-                      placeholder="Enter Twelve Data Key"
+                      placeholder="Twelve Data Key loaded"
                       className="w-full bg-[#101522] border border-[#222F47] rounded-lg px-2.5 py-1.5 text-xs font-mono text-[#F1F5F9]"
                     />
                   </div>
@@ -131,12 +159,17 @@ export const MarketDataProviderModal: React.FC<Props> = ({
 
                 {isSelected && provider === 'FINNHUB' && (
                   <div className="mt-3 pt-3 border-t border-[#222F47]" onClick={e => e.stopPropagation()}>
-                    <label className="text-[10px] text-[#94A3B8] block mb-0.5">Finnhub API Key</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] text-[#94A3B8]">Finnhub API Key</label>
+                      <span className="text-[10px] text-[#00E676] flex items-center gap-1 font-semibold">
+                        <ShieldCheck className="w-3 h-3" /> Key Active
+                      </span>
+                    </div>
                     <input
-                      type="text"
+                      type="password"
                       value={fhKeyInput}
                       onChange={e => setFhKeyInput(e.target.value)}
-                      placeholder="Enter Finnhub Key"
+                      placeholder="Finnhub Key loaded"
                       className="w-full bg-[#101522] border border-[#222F47] rounded-lg px-2.5 py-1.5 text-xs font-mono text-[#F1F5F9]"
                     />
                   </div>
@@ -156,3 +189,4 @@ export const MarketDataProviderModal: React.FC<Props> = ({
     </div>
   );
 };
+

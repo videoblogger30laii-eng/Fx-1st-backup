@@ -165,11 +165,12 @@ ${isBestTrade ? '⭐ **AI BEST TRADE NOW — A+ VIP INSTITUTIONAL TIER**\n' : ''
 
 ---
 
-### ⏳ 2. Trade Validation Window & Invalidation Trigger:
-${isPending ? `- **Remaining Validation Time:** **${signal.validityTimeLeft}**
+${isPending ? `### ⏳ 2. Pending Order Entry Window (${signal.timeframe === 'M15' ? '1 Hour' : signal.timeframe === 'H1' ? '4 Hours' : `${signal.timeframe} cycle`}):
+- **Remaining Validation Time:** **${signal.validityTimeLeft}**
 - **Session Deadline:** \`${signal.validityExpiresAt}\`
-- **Auto-Cancellation Trigger:** ${signal.invalidationTrigger}` : `- **Trade State:** Active position currently managed in live interbank flow.
-- **Trade Invalidation:** Immediate manual exit if price closes beyond Stop Loss on the ${tfLabel} candle close.
+- **Auto-Cancellation Trigger:** ${signal.invalidationTrigger}` : `### 🛡️ 2. Trade Execution & Stop Loss Protection:
+- **Trade State:** Active running trade (Open until TP or SL reached — no fixed time expiration).
+- **Stop Loss Protection:** Immediate manual/automatic exit if price closes beyond Stop Loss at ${formatPrice(signal.pair, signal.stopLoss)} on the ${tfLabel} candle close.
 - **Protective Trailing Rule:** Once TP1 is secured, shift Stop Loss to Entry price (Break-Even).`}
 
 ---

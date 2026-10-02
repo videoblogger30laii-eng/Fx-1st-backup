@@ -19,18 +19,33 @@ export const LiveMarketDataService = {
   async fetchRates(
     provider: MarketDataProvider,
     apiKey: string = '',
-    appId: string = '10154'
+    appId: string = '1089'
   ): Promise<LiveRates> {
+    const resolvedTdKey = apiKey || 
+      (typeof window !== 'undefined' ? localStorage.getItem('fx_twelve_data_key') : '') || 
+      (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TWELVE_DATA_API_KEY) || 
+      '';
+
     if (provider === 'DERIV') {
       const derivRates = this.getDerivCachedRates();
       if (derivRates.eurUsd || derivRates.xauUsd || derivRates.btcUsd) {
         return derivRates;
       }
+
+      // If Deriv WebSocket has not populated quotes yet, immediately fallback to Twelve Data
+      if (resolvedTdKey) {
+        try {
+          const td = await this.fetchTwelveDataRates(resolvedTdKey);
+          if (td.eurUsd || td.btcUsd) return td;
+        } catch {
+          // fallback
+        }
+      }
     }
 
-    if (provider === 'TWELVE_DATA' && apiKey) {
+    if (provider === 'TWELVE_DATA' && resolvedTdKey) {
       try {
-        const td = await this.fetchTwelveDataRates(apiKey);
+        const td = await this.fetchTwelveDataRates(resolvedTdKey);
         if (td.eurUsd || td.btcUsd) return td;
       } catch {
         // fallback

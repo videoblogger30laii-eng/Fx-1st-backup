@@ -30,9 +30,13 @@ const SYMBOL_MAPPING: Record<string, string> = {
   frxEURUSD: 'EUR/USD',
   frxGBPUSD: 'GBP/USD',
   frxUSDJPY: 'USD/JPY',
-  frxGBPJPY: 'GBP/JPY',
+  frxUSDCHF: 'USD/CHF',
   frxAUDUSD: 'AUD/USD',
   frxUSDCAD: 'USD/CAD',
+  frxNZDUSD: 'NZD/USD',
+  frxEURGBP: 'EUR/GBP',
+  frxEURJPY: 'EUR/JPY',
+  frxGBPJPY: 'GBP/JPY',
   frxXAUUSD: 'XAU/USD',
   cryBTCUSD: 'BTC/USD',
   OTC_DJI: 'US30',
@@ -41,7 +45,7 @@ const SYMBOL_MAPPING: Record<string, string> = {
 
 class DerivMarketService {
   private ws: WebSocket | null = null;
-  private appId: string = '10154';
+  private appId: string = '1089';
   private token: string = '';
   private pingIntervalId: any = null;
   private reconnectTimeoutId: any = null;
@@ -50,11 +54,14 @@ class DerivMarketService {
   private currentStatus: DerivConnectionStatus = 'DISCONNECTED';
   public latestQuotes: Record<string, number> = {};
 
-  startLiveStream(appId: string = '10154', token: string = '') {
-    const cleanAppId = appId.trim() ? appId.replace(/\D/g, '').slice(0, 5) || '10154' : '10154';
-    const cleanToken = token.trim().startsWith('pat_74d') || token.trim().startsWith('34sb')
-      ? 'pat_5b55ef16adcb17f24d53c26842e6ba8426a003918d8f0a9c9393f8d39a7cb16c'
-      : (token.trim() || 'pat_5b55ef16adcb17f24d53c26842e6ba8426a003918d8f0a9c9393f8d39a7cb16c');
+  startLiveStream(appId: string = '', token: string = '') {
+    const envAppId = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_DERIV_APP_ID) || '';
+    const envToken = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_DERIV_API_TOKEN) || '';
+    const storedAppId = typeof window !== 'undefined' ? localStorage.getItem('fx_deriv_app_id') : null;
+    const storedToken = typeof window !== 'undefined' ? localStorage.getItem('fx_deriv_token') : null;
+
+    const cleanAppId = (appId.trim() || storedAppId || envAppId || '1089').replace(/\D/g, '') || '1089';
+    const cleanToken = (token.trim() || storedToken || envToken || '').trim();
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN && this.appId === cleanAppId && this.token === cleanToken) {
       return;

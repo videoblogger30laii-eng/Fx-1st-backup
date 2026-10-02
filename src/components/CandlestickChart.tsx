@@ -12,17 +12,17 @@ interface Props {
 }
 
 export const TRADINGVIEW_SYMBOL_MAP: Record<string, string> = {
-  'XAU/USD': 'OANDA:XAUUSD',
-  'EUR/USD': 'OANDA:EURUSD',
-  'GBP/USD': 'OANDA:GBPUSD',
-  'USD/JPY': 'OANDA:USDJPY',
-  'USD/CHF': 'OANDA:USDCHF',
-  'AUD/USD': 'OANDA:AUDUSD',
-  'NZD/USD': 'OANDA:NZDUSD',
-  'USD/CAD': 'OANDA:USDCAD',
-  'EUR/GBP': 'OANDA:EURGBP',
-  'EUR/JPY': 'OANDA:EURJPY',
-  'GBP/JPY': 'OANDA:GBPJPY',
+  'XAU/USD': 'FOREXCOM:XAUUSD',
+  'EUR/USD': 'FX:EURUSD',
+  'GBP/USD': 'FX:GBPUSD',
+  'USD/JPY': 'FX:USDJPY',
+  'USD/CHF': 'FX:USDCHF',
+  'AUD/USD': 'FX:AUDUSD',
+  'NZD/USD': 'FX:NZDUSD',
+  'USD/CAD': 'FX:USDCAD',
+  'EUR/GBP': 'FX:EURGBP',
+  'EUR/JPY': 'FX:EURJPY',
+  'GBP/JPY': 'FX:GBPJPY',
   'BTC/USD': 'BINANCE:BTCUSDT',
   'US30': 'FOREXCOM:DJI',
   'NAS100': 'FOREXCOM:NAS100'
@@ -67,7 +67,7 @@ export const CandlestickChart: React.FC<Props> = ({
   }, [selectedPair.symbol]);
 
   // Exact symbol & interval mapping
-  const tvSymbol = TRADINGVIEW_SYMBOL_MAP[selectedPair.symbol] || `OANDA:${selectedPair.symbol.replace('/', '')}`;
+  const tvSymbol = TRADINGVIEW_SYMBOL_MAP[selectedPair.symbol] || `FX:${selectedPair.symbol.replace('/', '')}`;
   const tvInterval = TRADINGVIEW_INTERVAL_MAP[timeframe] || '60';
 
   const livePrice = selectedPair.currentPrice > 0 ? selectedPair.currentPrice : selectedPair.basePrice;

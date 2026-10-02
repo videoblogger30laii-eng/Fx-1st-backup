@@ -13,9 +13,13 @@ import {
   AiPersonaId,
   BacktestFilter,
   BacktestSummary,
+  BacktestTrade,
   StrategyType,
   TradeOutcome,
-  AI_PERSONAS
+  AI_PERSONAS,
+  Elev8AccountConfig,
+  DEFAULT_ELEV8_CONFIG,
+  Elev8Trade
 } from './types';
 import {
   ALL_PAIRS,
@@ -29,7 +33,9 @@ import {
   isForexMarketOpen,
   updateSignalWithLiveMarket,
   calculateLotSize,
-  formatPrice
+  formatPrice,
+  isSignalValidAndActive,
+  isSignalExpiredOrInvalid
 } from './services/marketData';
 import { LiveMarketDataService } from './services/liveMarketService';
 import { realPriceService } from './services/RealPriceService';
@@ -44,6 +50,9 @@ import { MarketDataProviderModal } from './components/MarketDataProviderModal';
 import { RefreshIntervalModal } from './components/RefreshIntervalModal';
 import { AddAlertDialog } from './components/AddAlertDialog';
 import { TriggeredAlertBanner } from './components/TriggeredAlertBanner';
+import { LiveChartModal } from './components/LiveChartModal';
+import { Elev8IntegrationModal } from './components/Elev8IntegrationModal';
+import { Elev8OrderModal } from './components/Elev8OrderModal';
 
 // Screens
 import { SignalsScreen } from './screens/SignalsScreen';
@@ -77,6 +86,7 @@ export const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortOption, setSortOption] = useState<string>('CONFLUENCE');
   const [selectedSignalDetail, setSelectedSignalDetail] = useState<ForexSignal | null>(null);
+  const [liveChartSignal, setLiveChartSignal] = useState<ForexSignal | null>(null);
 
   // Charting & Pairs State
   const [allPairs, setAllPairs] = useState<ForexPair[]>(ALL_PAIRS);
@@ -86,14 +96,38 @@ export const App: React.FC = () => {
   const [isCandleLoading, setIsCandleLoading] = useState<boolean>(false);
 
   // Provider & Refresh Interval
-  const [marketDataProvider, setMarketDataProvider] = useState<MarketDataProvider>('DERIV');
-  const [refreshInterval, setRefreshInterval] = useState<RefreshIntervalSeconds>(5);
-  const [providerStatus, setProviderStatus] = useState<string>('Deriv • Live Streaming');
+  const [marketDataProvider, setMarketDataProvider] = useState<MarketDataProvider>('TRADING_VIEW');
+  const [refreshInterval, setRefreshInterval] = useState<RefreshIntervalSeconds>(() =>
+    PersistenceManager.getRefreshInterval()
+  );
+  const [prevActiveInterval, setPrevActiveInterval] = useState<RefreshIntervalSeconds>(() => {
+    const current = PersistenceManager.getRefreshInterval();
+    return current > 0 ? current : 300;
+  });
+  const [lastSyncTime, setLastSyncTime] = useState<number>(() => PersistenceManager.getLastSyncTime());
+  const [apiQuota, setApiQuota] = useState<{ used: number; limit: number }>(() => PersistenceManager.getApiQuota());
+  const [providerStatus, setProviderStatus] = useState<string>('TradingView Interbank • Primary Active');
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
-  const [twelveDataKey, setTwelveDataKey] = useState<string>('fbf5fe46b0344421a3e9c3fb6a549114');
-  const [finnhubKey, setFinnhubKey] = useState<string>('dafson1r01quvmmhdlsgdafson1r01quvmmhdlt0');
-  const [derivAppId, setDerivAppId] = useState<string>('10154');
-  const [derivApiKey, setDerivApiKey] = useState<string>('pat_5b55ef16adcb17f24d53c26842e6ba8426a003918d8f0a9c9393f8d39a7cb16c');
+  const [twelveDataKey, setTwelveDataKey] = useState<string>(() => 
+    localStorage.getItem('fx_twelve_data_key') || 
+    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TWELVE_DATA_API_KEY) || 
+    'fbf5fe46b0344421a3e9c3fb6a549114'
+  );
+  const [finnhubKey, setFinnhubKey] = useState<string>(() => 
+    localStorage.getItem('fx_finnhub_key') || 
+    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_FINNHUB_API_KEY) || 
+    'dafson1r01quvmmhdlsgdafson1r01quvmmhdlt0'
+  );
+  const [derivAppId, setDerivAppId] = useState<string>(() => 
+    localStorage.getItem('fx_deriv_app_id') || 
+    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_DERIV_APP_ID) || 
+    '1089'
+  );
+  const [derivApiKey, setDerivApiKey] = useState<string>(() => 
+    localStorage.getItem('fx_deriv_token') || 
+    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_DERIV_API_TOKEN) || 
+    ''
+  );
 
   // Alerts State
   const [alerts, setAlerts] = useState<PriceAlert[]>([
@@ -177,15 +211,16 @@ Tap any suggested prompt below or type your question!`,
   ]);
 
   // Backtest State
+  const [cachedBacktestTrades, setCachedBacktestTrades] = useState<BacktestTrade[]>([]);
   const [backtestFilter, setBacktestFilter] = useState<BacktestFilter>({
     strategy: 'BEST_TRADE_NOW',
     timeframe: null,
-    minConfluence: 85,
+    minConfluence: 70,
     pairSymbol: null,
     outcomeFilter: null
   });
   const [backtestSummary, setBacktestSummary] = useState<BacktestSummary>(() =>
-    BacktestEngine.runBacktest({ strategy: 'BEST_TRADE_NOW', minConfluence: 85 })
+    BacktestEngine.runBacktest({ strategy: 'BEST_TRADE_NOW', minConfluence: 70 })
   );
 
   // Macro & Fundamentals
@@ -204,10 +239,102 @@ Tap any suggested prompt below or type your question!`,
   // Modals
   const [isRiskModalOpen, setIsRiskModalOpen] = useState(false);
   const [isProviderModalOpen, setIsProviderModalOpen] = useState(false);
+  const [isElev8ModalOpen, setIsElev8ModalOpen] = useState(false);
   const [isRefreshModalOpen, setIsRefreshModalOpen] = useState(false);
   const [isAddAlertModalOpen, setIsAddAlertModalOpen] = useState(false);
   const [prefillAlertPair, setPrefillAlertPair] = useState<ForexPair | null>(null);
   const [prefillAlertPrice, setPrefillAlertPrice] = useState<number | null>(null);
+
+  // Elev8 MT5 Account Integration State
+  const [elev8Config, setElev8Config] = useState<Elev8AccountConfig>(() => {
+    return PersistenceManager.getElev8Config() || DEFAULT_ELEV8_CONFIG;
+  });
+  const [selectedElev8OrderSignal, setSelectedElev8OrderSignal] = useState<ForexSignal | null>(null);
+  const [elev8Trades, setElev8Trades] = useState<Elev8Trade[]>(() => {
+    const saved = PersistenceManager.getElev8Trades();
+    if (saved && saved.length > 0) return saved;
+    const initialTrades: Elev8Trade[] = [
+      {
+        id: 'ELEV8-001',
+        signalId: 'SIG-GOLD-001',
+        symbol: 'XAUUSD',
+        orderType: 'BUY_MARKET',
+        lots: 0.50,
+        entryPrice: 4152.00,
+        currentPrice: 4182.20,
+        stopLoss: 4132.00,
+        takeProfit1: 4210.00,
+        takeProfit2: 4260.00,
+        takeProfit3: 4320.00,
+        status: 'OPEN',
+        realizedPnl: 0,
+        floatingPnl: 1510.00,
+        pips: 302.2,
+        slRiskDollars: 1000.00,
+        tp1GainDollars: 2900.00,
+        tp2GainDollars: 5400.00,
+        tp3GainDollars: 8400.00,
+        openedAt: Date.now() - 3600 * 1000 * 2
+      },
+      {
+        id: 'ELEV8-002',
+        signalId: 'SIG-EUR-002',
+        symbol: 'EURUSD',
+        orderType: 'BUY_MARKET',
+        lots: 1.00,
+        entryPrice: 1.1310,
+        currentPrice: 1.1345,
+        stopLoss: 1.1275,
+        takeProfit1: 1.1345,
+        takeProfit2: 1.1390,
+        takeProfit3: 1.1440,
+        status: 'CLOSED',
+        closeReason: 'TP1',
+        realizedPnl: 350.00,
+        floatingPnl: 0,
+        pips: 35.0,
+        slRiskDollars: 350.00,
+        tp1GainDollars: 350.00,
+        tp2GainDollars: 800.00,
+        tp3GainDollars: 1300.00,
+        openedAt: Date.now() - 3600 * 1000 * 5,
+        closedAt: Date.now() - 3600 * 1000 * 3
+      }
+    ];
+    return initialTrades;
+  });
+
+  const handleExecuteElev8Trade = (trade: Elev8Trade) => {
+    setElev8Trades(prev => {
+      const updated = [trade, ...prev];
+      PersistenceManager.saveElev8Trades(updated);
+      return updated;
+    });
+  };
+
+  const handleCloseElev8Trade = (tradeId: string) => {
+    setElev8Trades(prev => {
+      const updated = prev.map(t => {
+        if (t.id === tradeId) {
+          return {
+            ...t,
+            status: 'CLOSED' as const,
+            closeReason: 'MANUAL' as const,
+            realizedPnl: t.floatingPnl,
+            closedAt: Date.now()
+          };
+        }
+        return t;
+      });
+      PersistenceManager.saveElev8Trades(updated);
+      return updated;
+    });
+  };
+
+  const handleClearElev8History = () => {
+    setElev8Trades([]);
+    PersistenceManager.saveElev8Trades([]);
+  };
 
   // Clock Ticker (1 second)
   const [nowClockMs, setNowClockMs] = useState(Date.now());
@@ -221,9 +348,12 @@ Tap any suggested prompt below or type your question!`,
 
   // Update backtest when filter changes
   useEffect(() => {
-    const summary = BacktestEngine.runBacktest(backtestFilter);
+    const summary = BacktestEngine.runBacktest(
+      backtestFilter,
+      cachedBacktestTrades.length > 0 ? cachedBacktestTrades : undefined
+    );
     setBacktestSummary(summary);
-  }, [backtestFilter]);
+  }, [backtestFilter, cachedBacktestTrades]);
 
   // Apply live quote to signals, allPairs, candles, and alerts
   const applyLiveQuote = useCallback((symbol: string, quote: number) => {
@@ -318,16 +448,30 @@ Tap any suggested prompt below or type your question!`,
     };
   }, [applyLiveQuote]);
 
-  // Periodic rate polling
+  // Format last sync time (e.g. "18:45")
+  const formatLastSyncTime = useCallback((timestamp: number): string => {
+    const d = new Date(timestamp);
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+  }, []);
+
+  // Periodic rate polling & quota counting
   const refreshRates = useCallback(async () => {
     setIsRefreshing(true);
     try {
       await Promise.all([
+        realPriceService.pollTradingViewQuotes(),
+        realPriceService.pollTradingViewCfdAndIndices(),
         realPriceService.pollGoldPrice(),
-        realPriceService.pollFxRates(),
         realPriceService.pollBtcPrice()
       ]);
-      setProviderStatus('Active • Real FX & Gold Feed');
+      const now = Date.now();
+      setLastSyncTime(now);
+      PersistenceManager.saveLastSyncTime(now);
+      const updatedUsed = PersistenceManager.incrementApiQuota(1);
+      setApiQuota({ used: updatedUsed, limit: 800 });
+      setProviderStatus('TradingView • Live Interbank Real Feed');
     } catch {
       // fallback
     } finally {
@@ -335,11 +479,79 @@ Tap any suggested prompt below or type your question!`,
     }
   }, []);
 
+  // Synchronized cadence interval
   useEffect(() => {
+    if (refreshInterval === 0) {
+      // PAUSED / Sleep Mode: Halt all calls, freeze chart & prices
+      realPriceService.stop();
+      setProviderStatus('Paused • Sleep Mode (0 API calls)');
+      return;
+    }
+
+    // Active Cadence: Start feed and trigger immediate fetch
+    realPriceService.start();
     refreshRates();
-    const interval = setInterval(refreshRates, refreshInterval * 1000);
+
+    const interval = setInterval(() => {
+      // Auto-freeze if document is hidden to conserve API quota & battery
+      if (!document.hidden) {
+        refreshRates();
+      }
+    }, refreshInterval * 1000);
+
     return () => clearInterval(interval);
   }, [refreshRates, refreshInterval]);
+
+  // Tab Visibility Listener: Auto-pause when tab is hidden/minimized
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Tab minimized or switched -> freeze polling
+        realPriceService.stop();
+      } else {
+        // Tab foregrounded -> resume if active
+        if (refreshInterval > 0) {
+          realPriceService.start();
+          refreshRates();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [refreshInterval, refreshRates]);
+
+  // Big Sync ON/OFF Toggle
+  const handleToggleSync = useCallback(() => {
+    if (refreshInterval === 0) {
+      // Resume sync: resume to prevActiveInterval (or 300 / 5m Default)
+      const targetInterval = prevActiveInterval > 0 ? prevActiveInterval : 300;
+      setRefreshInterval(targetInterval);
+      PersistenceManager.saveRefreshInterval(targetInterval);
+      realPriceService.start();
+      refreshRates();
+    } else {
+      // Pause sync: save current interval to prevActiveInterval, set interval to 0 (PAUSED mode)
+      setPrevActiveInterval(refreshInterval);
+      setRefreshInterval(0);
+      PersistenceManager.saveRefreshInterval(0);
+      realPriceService.stop();
+    }
+  }, [refreshInterval, prevActiveInterval, refreshRates]);
+
+  const handleSelectRefreshInterval = useCallback((sec: RefreshIntervalSeconds) => {
+    setRefreshInterval(sec);
+    PersistenceManager.saveRefreshInterval(sec);
+    if (sec > 0) {
+      setPrevActiveInterval(sec);
+      realPriceService.start();
+      refreshRates();
+    } else {
+      realPriceService.stop();
+    }
+  }, [refreshRates]);
 
   // Load Macro Data
   const loadMacro = useCallback(async () => {
@@ -382,17 +594,26 @@ Tap any suggested prompt below or type your question!`,
     loadCandles(selectedPair, tf);
   }, [selectedPair, loadCandles]);
 
-  // Filtered Signals
+  // Filtered Signals: Strictly removes invalid and time-expired signals from all active feeds
   const filteredSignals = signals.filter(sig => {
-    const isClosed = sig.status === 'HIT_TP' || sig.status === 'HIT_SL';
-    if (selectedFilter === 'VIP' && (isClosed || sig.confluenceScore < 90)) return false;
-    if (selectedFilter === 'RUNNING' && sig.status !== 'RUNNING') return false;
-    if (selectedFilter === 'PENDING' && sig.status !== 'PENDING') return false;
-    if (selectedFilter === 'HISTORY' && !isClosed) return false;
-    if (selectedFilter === 'GOLD' && (isClosed || !sig.pair.symbol.includes('XAU'))) return false;
-    if (selectedFilter === 'INDICES' && (isClosed || (!sig.pair.symbol.includes('US30') && !sig.pair.symbol.includes('NAS')))) return false;
-    if (selectedFilter === 'FAVORITES' && (isClosed || !sig.isFavorite)) return false;
-    if (selectedFilter === 'ALL' && isClosed) return false;
+    const isValidAndActive = isSignalValidAndActive(sig, nowClockMs);
+    const isClosedOrExpired = !isValidAndActive;
+
+    // The Closed / History tab displays closed, hit-TP, hit-SL, or expired orders
+    if (selectedFilter === 'HISTORY') {
+      if (!isClosedOrExpired) return false;
+    } else {
+      // For all active categories (ALL, VIP, RUNNING, PENDING, GOLD, INDICES, FAVORITES):
+      // Exclude any signal that has expired or been structurally invalidated!
+      if (!isValidAndActive) return false;
+
+      if (selectedFilter === 'VIP' && sig.confluenceScore < 90) return false;
+      if (selectedFilter === 'RUNNING' && sig.status !== 'RUNNING') return false;
+      if (selectedFilter === 'PENDING' && sig.status !== 'PENDING') return false;
+      if (selectedFilter === 'GOLD' && !sig.pair.symbol.includes('XAU')) return false;
+      if (selectedFilter === 'INDICES' && (!sig.pair.symbol.includes('US30') && !sig.pair.symbol.includes('NAS'))) return false;
+      if (selectedFilter === 'FAVORITES' && !sig.isFavorite) return false;
+    }
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -538,13 +759,13 @@ Tap any suggested prompt below or type your question!`,
             signals={signals}
             filteredSignals={filteredSignals}
             allPairs={allPairs}
-            tradingSessions={getTradingSessions()}
+            tradingSessions={getTradingSessions(new Date(nowClockMs))}
             selectedFilter={selectedFilter}
             searchQuery={searchQuery}
             sortOption={sortOption}
             refreshInterval={refreshInterval}
             marketDataProvider={marketDataProvider}
-            isMarketOpen={isForexMarketOpen()}
+            isMarketOpen={isForexMarketOpen(new Date(nowClockMs))}
             isRefreshing={isRefreshing}
             activeAlertCount={activeAlertsCount}
             nowClockMs={nowClockMs}
@@ -556,11 +777,19 @@ Tap any suggested prompt below or type your question!`,
             onToggleAlert={handleToggleAlert}
             onOpenRiskModal={() => setIsRiskModalOpen(true)}
             onOpenProviderModal={() => setIsProviderModalOpen(true)}
+            onOpenElev8Modal={() => setIsElev8ModalOpen(true)}
+            onOpenElev8Order={(sig) => setSelectedElev8OrderSignal(sig)}
+            isElev8Connected={elev8Config.isConnected}
             onOpenRefreshModal={() => setIsRefreshModalOpen(true)}
             onManualRefresh={refreshRates}
+            onToggleSync={handleToggleSync}
+            lastSyncFormatted={formatLastSyncTime(lastSyncTime)}
+            quotaUsed={apiQuota.used}
+            quotaLimit={apiQuota.limit}
             onAskAi={handleAskAiForSignal}
             onOpenAlerts={() => setSelectedTab('ALERTS')}
             onOpenBacktest={() => setSelectedTab('BACKTEST')}
+            onOpenLiveChart={(sig) => setLiveChartSignal(sig)}
           />
         )}
 
@@ -616,6 +845,14 @@ Tap any suggested prompt below or type your question!`,
             onConfluenceSelect={(score) => setBacktestFilter(prev => ({ ...prev, minConfluence: score }))}
             onPairSelect={(pair) => setBacktestFilter(prev => ({ ...prev, pairSymbol: pair }))}
             onOutcomeSelect={(outcome) => setBacktestFilter(prev => ({ ...prev, outcomeFilter: outcome }))}
+            onSummaryUpdate={(newSummary, allTrades) => {
+              setBacktestSummary(newSummary);
+              if (allTrades && allTrades.length > 0) {
+                setCachedBacktestTrades(allTrades);
+              } else if (newSummary.filteredTrades.length > 0 && !cachedBacktestTrades.length) {
+                setCachedBacktestTrades(newSummary.filteredTrades);
+              }
+            }}
           />
         )}
 
@@ -765,7 +1002,34 @@ Tap any suggested prompt below or type your question!`,
             setPrefillAlertPrice(sig.takeProfit1);
             setIsAddAlertModalOpen(true);
           }}
+          onOpenElev8Order={(sig) => setSelectedElev8OrderSignal(sig)}
           nowClockMs={nowClockMs}
+        />
+      )}
+
+      {selectedElev8OrderSignal && (
+        <Elev8OrderModal
+          signal={selectedElev8OrderSignal}
+          config={elev8Config}
+          isOpen={!!selectedElev8OrderSignal}
+          onClose={() => setSelectedElev8OrderSignal(null)}
+          onExecuteTrade={handleExecuteElev8Trade}
+          onOpenElev8Dashboard={() => setIsElev8ModalOpen(true)}
+        />
+      )}
+
+      {isElev8ModalOpen && (
+        <Elev8IntegrationModal
+          config={elev8Config}
+          trades={elev8Trades}
+          signals={signals}
+          onSaveConfig={(updated) => {
+            setElev8Config(updated);
+            PersistenceManager.saveElev8Config(updated);
+          }}
+          onCloseTrade={handleCloseElev8Trade}
+          onClearHistory={handleClearElev8History}
+          onDismiss={() => setIsElev8ModalOpen(false)}
         />
       )}
 
@@ -783,12 +1047,22 @@ Tap any suggested prompt below or type your question!`,
           activeStatus={providerStatus}
           onSelect={setMarketDataProvider}
           onSaveApiKey={(prov, key) => {
-            if (prov === 'TWELVE_DATA') setTwelveDataKey(key);
-            if (prov === 'FINNHUB') setFinnhubKey(key);
+            if (prov === 'TWELVE_DATA') {
+              setTwelveDataKey(key);
+              try { localStorage.setItem('fx_twelve_data_key', key); } catch {}
+            }
+            if (prov === 'FINNHUB') {
+              setFinnhubKey(key);
+              try { localStorage.setItem('fx_finnhub_key', key); } catch {}
+            }
           }}
           onSaveDerivConfig={(appId, token) => {
             setDerivAppId(appId);
             setDerivApiKey(token);
+            try {
+              localStorage.setItem('fx_deriv_app_id', appId);
+              localStorage.setItem('fx_deriv_token', token);
+            } catch {}
           }}
           onDismiss={() => setIsProviderModalOpen(false)}
         />
@@ -797,8 +1071,11 @@ Tap any suggested prompt below or type your question!`,
       {isRefreshModalOpen && (
         <RefreshIntervalModal
           currentInterval={refreshInterval}
-          onSelect={setRefreshInterval}
+          onSelect={handleSelectRefreshInterval}
           onDismiss={() => setIsRefreshModalOpen(false)}
+          quotaUsed={apiQuota.used}
+          quotaLimit={apiQuota.limit}
+          lastSyncFormatted={formatLastSyncTime(lastSyncTime)}
         />
       )}
 
@@ -812,6 +1089,15 @@ Tap any suggested prompt below or type your question!`,
             setPrefillAlertPrice(null);
           }}
           onAddAlert={handleAddPriceAlert}
+        />
+      )}
+
+      {liveChartSignal && (
+        <LiveChartModal
+          signal={liveChartSignal}
+          isOpen={!!liveChartSignal}
+          onClose={() => setLiveChartSignal(null)}
+          onAskAi={handleAskAiForSignal}
         />
       )}
     </div>

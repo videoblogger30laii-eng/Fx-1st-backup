@@ -195,7 +195,7 @@ export const ChartTerminalScreen: React.FC<Props> = ({
                 </span>
               </div>
               <div className="text-[10px] text-[#64748B]">
-                Pure price action candlesticks with volume • OANDA, Binance & Forex.com
+                Pure price action candlesticks with volume • Deriv, Twelve Data, Binance & Forex.com
               </div>
             </div>
             <span className="text-[#00E676] font-semibold text-xs">TradingView Widget</span>

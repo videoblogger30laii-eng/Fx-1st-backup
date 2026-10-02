@@ -82,6 +82,34 @@ export interface ForexSignal {
   createdAtMs: number;
   takeProfit: number;
   isSimulated?: boolean;
+  detailedAnalysis?: SignalAnalysis;
+}
+
+export interface SignalAnalysis {
+  strategyModel: string;
+  entryReason: string;
+  stopLossReason: string;
+  takeProfitReason: string;
+  indicatorAnalysis: {
+    emaAlignment: string;
+    rsiReading: string;
+    atrVolatility: string;
+    displacement: string;
+    volumeProfile: string;
+  };
+  macroAnalysis: {
+    fundamentalCatalyst: string;
+    dxyBias: string;
+    rateDifferential: string;
+    economicCalendar: string;
+  };
+  smcParameters: {
+    orderBlockZone: string;
+    fvgImbalance: string;
+    liquidityTarget: string;
+    structureShift: string;
+    pricingZone: 'Discount (Optimal Buy)' | 'Premium (Optimal Sell)' | 'Equilibrium';
+  };
 }
 
 export interface CandleStick {
@@ -94,12 +122,20 @@ export interface CandleStick {
 }
 
 export interface TradingSession {
+  id?: string;
   name: string;
   city: string;
+  country?: string;
+  flag?: string;
+  localTime?: string;
   gmtHours: string;
   isOpen: boolean;
   volatility: string;
   statusText: string;
+  countdownText?: string;
+  progressPercent?: number;
+  activePairs?: string;
+  overlapNotice?: string;
 }
 
 export interface MacroAssetQuote {
@@ -158,40 +194,52 @@ export interface MarketDataProviderConfig {
   keyHint: string;
   supportsCandlesticks: boolean;
   description: string;
+  isPrimary?: boolean;
+  isSecondary?: boolean;
 }
 
 export const PROVIDER_CONFIGS: Record<MarketDataProvider, MarketDataProviderConfig> = {
-  DERIV: {
-    displayName: 'Deriv Live Stream',
-    endpointName: 'ws.derivws.com',
-    requiresKey: true,
-    keyHint: 'Works without key (App ID 10154) or enter token',
+  TRADING_VIEW: {
+    displayName: 'TradingView Real-Time Feed (Primary)',
+    endpointName: 'scanner.tradingview.com',
+    requiresKey: false,
+    keyHint: 'Institutional Direct Interbank Stream',
     supportsCandlesticks: true,
-    description: 'Institutional WebSocket Tick Stream for all Major FX pairs, Gold & BTC'
+    isPrimary: true,
+    description: 'Primary official TradingView real-time interbank quote feed. 100% synchronized with TradingView charts down to 0.1 pips.'
+  },
+  DERIV: {
+    displayName: 'Deriv Live WebSocket (Secondary)',
+    endpointName: 'ws.derivws.com',
+    requiresKey: false,
+    keyHint: 'Configured with App ID & API Token',
+    supportsCandlesticks: true,
+    isSecondary: true,
+    description: 'Secondary broker tick streaming for Deriv MT5 & WebTrader account execution'
   },
   TWELVE_DATA: {
-    displayName: 'Twelve Data Live',
+    displayName: 'Twelve Data Live (Fallback)',
     endpointName: 'api.twelvedata.com',
     requiresKey: true,
-    keyHint: 'Enter Twelve Data API Key',
+    keyHint: 'Configured with Twelve Data API Key',
     supportsCandlesticks: true,
-    description: 'Forex & Crypto Real-Time Spot Rates & Time-Series Candlestick Feed'
+    description: 'High-precision spot rates and candlestick time series fallback'
   },
   FINNHUB: {
     displayName: 'Finnhub Macro & Fundamentals',
     endpointName: 'api.finnhub.io',
     requiresKey: true,
-    keyHint: 'Enter Finnhub API Key',
+    keyHint: 'Configured with Finnhub API Key',
     supportsCandlesticks: false,
     description: 'Macro Indicators (DXY, SPY, TLT, GLD), Fundamental Factors Analysis & Real-Time News Wire'
   },
   INTERBANK_FEED: {
-    displayName: 'Interbank Free Feed',
+    displayName: 'Interbank Standard Feed',
     endpointName: 'open.er-api.com',
     requiresKey: false,
     keyHint: 'No API Key required',
     supportsCandlesticks: true,
-    description: 'Free global central bank interbank rates + Binance Crypto & Spot Gold'
+    description: 'Global interbank reference rates + Binance crypto & spot gold backup'
   },
   YAHOO_FINANCE: {
     displayName: 'Yahoo Real-Time',
@@ -200,29 +248,26 @@ export const PROVIDER_CONFIGS: Record<MarketDataProvider, MarketDataProviderConf
     keyHint: 'Global Interbank Feed',
     supportsCandlesticks: true,
     description: 'High-frequency interbank FX quotes'
-  },
-  TRADING_VIEW: {
-    displayName: 'TradingView Fastfeed',
-    endpointName: 'data.tradingview.com/forex',
-    requiresKey: false,
-    keyHint: 'Institutional Feed',
-    supportsCandlesticks: true,
-    description: 'Technical institutional charting feed'
   }
 };
 
-export type RefreshIntervalSeconds = 5 | 15 | 30 | 60;
+export type RefreshIntervalSeconds = 5 | 15 | 30 | 60 | 300 | 600 | 0;
 
 export interface RefreshIntervalConfig {
   seconds: RefreshIntervalSeconds;
   label: string;
+  isDefault?: boolean;
+  isPaused?: boolean;
 }
 
 export const REFRESH_INTERVALS: RefreshIntervalConfig[] = [
-  { seconds: 5, label: '5s Real-Time' },
-  { seconds: 15, label: '15s Dynamic' },
+  { seconds: 5, label: '5s Real-Time (Live Active Feed)', isDefault: true },
+  { seconds: 15, label: '15s Dynamic Stream' },
   { seconds: 30, label: '30s Balanced' },
-  { seconds: 60, label: '1m Battery-Saver' },
+  { seconds: 60, label: '1m Battery Saver' },
+  { seconds: 300, label: '5m Quota Saver' },
+  { seconds: 600, label: '10m Ultra Saver' },
+  { seconds: 0, label: '⏸️ PAUSED - Sleep Mode (0 API calls)', isPaused: true },
 ];
 
 export type AlertCondition = 
@@ -281,29 +326,30 @@ export type StrategyType =
 export interface StrategyConfig {
   title: string;
   description: string;
-  defaultWinRate: number;
+  modelRule: string;
+  defaultWinRate?: number;
 }
 
 export const STRATEGY_CONFIGS: Record<StrategyType, StrategyConfig> = {
   BEST_TRADE_NOW: {
-    title: 'Best Trade Now (A+ Confluence)',
-    description: 'Institutional Confluence: H4 Order Block + M15 FVG mitigation + 85%+ Consensus',
-    defaultWinRate: 84.8
+    title: 'Order Block + FVG Mitigation',
+    description: 'H4 Order Block + M15 Fair Value Gap mitigation with multi-TF alignment',
+    modelRule: 'Fixed 1.5R (SL: 1.0x ATR, TP: 1.5x ATR)'
   },
   ICT_SMART_MONEY: {
-    title: 'ICT Smart Money / FVG',
-    description: 'Fair Value Gap fill with London/NY liquidity pool sweep',
-    defaultWinRate: 74.2
+    title: 'ICT Liquidity Sweep & Displacement',
+    description: 'Session liquidity pool sweep with aggressive market structure shift',
+    modelRule: 'Fixed 1.5R (SL: 1.0x ATR, TP: 1.5x ATR)'
   },
   TREND_EMA_CONFLUENCE: {
     title: 'Triple EMA (20/50/200) Pullback',
-    description: 'Trend following pullback entries on dynamic EMA support/resistance',
-    defaultWinRate: 68.5
+    description: 'Trend pullback entries on dynamic EMA 50 support/resistance retests',
+    modelRule: 'Fixed 1.5R (SL: 1.0x ATR, TP: 1.5x ATR)'
   },
   LIQUIDITY_SWEEP: {
-    title: 'London Breakout Sweep & Reversal',
-    description: 'Asian range high/low fakeout and reversal during London open',
-    defaultWinRate: 71.0
+    title: 'London Range Breakout Fakeout',
+    description: 'Range high/low sweep and immediate candle displacement reversal',
+    modelRule: 'Fixed 1.5R (SL: 1.0x ATR, TP: 1.5x ATR)'
   }
 };
 
@@ -446,3 +492,61 @@ export interface ChatMessage {
   signalReference?: string | null;
   suggestedPrompts?: string[];
 }
+
+export interface Elev8Trade {
+  id: string;
+  signalId?: string;
+  symbol: string;
+  orderType: string; // 'BUY_MARKET' | 'SELL_MARKET' | 'BUY_LIMIT' | 'SELL_LIMIT' | 'BUY_STOP' | 'SELL_STOP'
+  lots: number;
+  entryPrice: number;
+  currentPrice: number;
+  stopLoss: number;
+  takeProfit1: number;
+  takeProfit2: number;
+  takeProfit3: number;
+  status: 'OPEN' | 'CLOSED';
+  closeReason?: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'MANUAL';
+  realizedPnl: number;
+  floatingPnl: number;
+  pips: number;
+  slRiskDollars: number;
+  tp1GainDollars: number;
+  tp2GainDollars: number;
+  tp3GainDollars: number;
+  openedAt: number;
+  closedAt?: number;
+}
+
+export type Elev8ExecutionMode = 'SIMULATED' | 'WEBHOOK_BRIDGE' | 'METAAPI_CLOUD';
+
+export interface Elev8AccountConfig {
+  accountNumber: string;
+  server: string;
+  accountType: 'EVALUATION' | 'FUNDED' | 'DEMO';
+  accountBalance: number;
+  riskPerTradePercent: number;
+  symbolSuffix: string;
+  executionMode: Elev8ExecutionMode;
+  webhookUrl?: string;
+  metaApiToken?: string;
+  metaApiAccountId?: string;
+  autoCopyWebhookEnabled: boolean;
+  isConnected: boolean;
+  lastSyncTime?: number;
+}
+
+export const DEFAULT_ELEV8_CONFIG: Elev8AccountConfig = {
+  accountNumber: '',
+  server: 'Elev8Markets-Live',
+  accountType: 'EVALUATION',
+  accountBalance: 50000,
+  riskPerTradePercent: 0.5,
+  symbolSuffix: '',
+  executionMode: 'SIMULATED',
+  webhookUrl: '',
+  metaApiToken: '',
+  metaApiAccountId: '',
+  autoCopyWebhookEnabled: false,
+  isConnected: false
+};
