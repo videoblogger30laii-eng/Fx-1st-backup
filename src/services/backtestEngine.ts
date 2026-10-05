@@ -4,7 +4,10 @@ import {
   BacktestTrade,
   ConfluenceTierStats,
   StrategyType,
-  Timeframe
+  Timeframe,
+  AssetCategory,
+  ForexSignal,
+  getAssetCategory
 } from '../types';
 import { getAllRealOandaTrades } from './oandaHistoricalData';
 import { RealCandleFetcherService, RealCandleFetchOptions, RealCandleFetchResult } from './realCandleFetcher';
@@ -17,24 +20,75 @@ export interface LiveBacktestExecutionResult {
 
 export const BacktestEngine = {
   /**
-   * Evaluates the selected strategy on historical candles.
+   * Converts closed live terminal signals (HIT_TP / HIT_SL) into BacktestTrade records
+   * so the Backtesting Lab always reflects real-time live session TP and SL outcomes.
+   */
+  convertLiveSignalsToBacktestTrades(liveSignals: ForexSignal[], strategy: StrategyType): BacktestTrade[] {
+    if (!Array.isArray(liveSignals) || liveSignals.length === 0) return [];
+
+    return liveSignals
+      .filter(sig => sig.status === 'HIT_TP' || sig.status === 'HIT_SL')
+      .map(sig => {
+        const isWin = sig.status === 'HIT_TP';
+        const isBuy = sig.type.startsWith('BUY');
+        const exitPrice = isWin ? sig.takeProfit1 : sig.stopLoss;
+        const rawPips = Math.abs(sig.pips || 25);
+        const signedPips = isWin ? rawPips : -rawPips;
+
+        return {
+          id: `LIVE-${sig.id}`,
+          pairSymbol: sig.pair.symbol,
+          strategy,
+          direction: isBuy ? 'BUY' : 'SELL',
+          entryPrice: sig.entryPrice,
+          exitPrice,
+          stopLoss: sig.stopLoss,
+          takeProfit: sig.takeProfit1,
+          entryTime: sig.timestamp || 'Live Session',
+          exitTime: isWin ? 'Hit TP1 (Live Session)' : 'Hit SL (Live Session)',
+          pips: signedPips,
+          pnlPercent: isWin ? 1.5 : -1.0,
+          outcome: isWin ? 'WIN' : 'LOSS',
+          confluenceScore: sig.confluenceScore || 88,
+          timeframe: sig.timeframe,
+          riskRewardRatio: sig.riskReward || '1:2.5',
+          session: sig.killzone || 'Live Terminal Session',
+          rationale: `[📡 LIVE TERMINAL ${isWin ? 'TP1 WIN' : 'STOP LOSS HIT'}] ${sig.rationale}`
+        } as BacktestTrade;
+      });
+  },
+
+  /**
+   * Evaluates the selected strategy on historical candles + live session closed signals.
    * Calculates true win rate and real equity curve without capping or artificial floors.
    */
-  runBacktest(filter: BacktestFilter, customRealTrades?: BacktestTrade[]): BacktestSummary {
-    const allTrades = customRealTrades && customRealTrades.length > 0
+  runBacktest(
+    filter: BacktestFilter,
+    customRealTrades?: BacktestTrade[],
+    liveSignals?: ForexSignal[]
+  ): BacktestSummary {
+    const historicalTrades = customRealTrades && customRealTrades.length > 0
       ? customRealTrades
       : getAllRealOandaTrades(filter.strategy);
+
+    const liveClosedTrades = liveSignals
+      ? this.convertLiveSignalsToBacktestTrades(liveSignals, filter.strategy)
+      : [];
+
+    // Prepend live closed trades (HIT_TP and HIT_SL) so they appear first in the log and are counted in stats
+    const allTrades = [...liveClosedTrades, ...historicalTrades];
 
     const filtered = allTrades.filter(trade => {
       const matchTimeframe = !filter.timeframe || trade.timeframe === filter.timeframe;
       const matchConfluence = trade.confluenceScore >= filter.minConfluence;
       const matchPair = !filter.pairSymbol || trade.pairSymbol === filter.pairSymbol;
       const matchOutcome = !filter.outcomeFilter || trade.outcome === filter.outcomeFilter;
-      return matchTimeframe && matchConfluence && matchPair && matchOutcome;
+      const matchCategory = !filter.category || filter.category === 'ALL' || getAssetCategory(trade.pairSymbol) === filter.category;
+      return matchTimeframe && matchConfluence && matchPair && matchOutcome && matchCategory;
     });
 
     const total = filtered.length;
-    const confluenceMatrix = this.generateConfluenceMatrix(filter.strategy, allTrades);
+    const confluenceMatrix = this.generateConfluenceMatrix(filter.strategy, allTrades, filter.category);
 
     if (total === 0) {
       return {
@@ -173,7 +227,7 @@ export const BacktestEngine = {
   /**
    * Generates confluence matrix from real historical trades
    */
-  generateConfluenceMatrix(strategy: StrategyType, trades: BacktestTrade[]): ConfluenceTierStats[] {
+  generateConfluenceMatrix(strategy: StrategyType, trades: BacktestTrade[], category?: AssetCategory | null): ConfluenceTierStats[] {
     const tiers: [number, string][] = [
       [90, '90%+ (Elite Confluence)'],
       [85, '85%+ (A+ Institutional)'],
@@ -182,7 +236,10 @@ export const BacktestEngine = {
     ];
 
     return tiers.map(([minScore, label]) => {
-      const subset = trades.filter(t => t.confluenceScore >= minScore);
+      const subset = trades.filter(t => {
+        const matchCategory = !category || category === 'ALL' || getAssetCategory(t.pairSymbol) === category;
+        return t.confluenceScore >= minScore && matchCategory;
+      });
       const count = subset.length;
       const wins = subset.filter(t => t.outcome === 'WIN').length;
       const losses = count - wins;

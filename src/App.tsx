@@ -19,7 +19,8 @@ import {
   AI_PERSONAS,
   Elev8AccountConfig,
   DEFAULT_ELEV8_CONFIG,
-  Elev8Trade
+  Elev8Trade,
+  getAssetCategory
 } from './types';
 import {
   ALL_PAIRS,
@@ -42,6 +43,7 @@ import { realPriceService } from './services/RealPriceService';
 import { BacktestEngine } from './services/backtestEngine';
 import { GeminiChatEngine } from './services/geminiChatEngine';
 import { PersistenceManager } from './services/persistence';
+import { economicCalendarService } from './services/economicCalendarService';
 
 // Components & Modals
 import { SignalDetailSheet } from './components/SignalDetailSheet';
@@ -53,6 +55,13 @@ import { TriggeredAlertBanner } from './components/TriggeredAlertBanner';
 import { LiveChartModal } from './components/LiveChartModal';
 import { Elev8IntegrationModal } from './components/Elev8IntegrationModal';
 import { Elev8OrderModal } from './components/Elev8OrderModal';
+import { WhatsAppAlertModal } from './components/WhatsAppAlertModal';
+import { EconomicCalendarModal } from './components/EconomicCalendarModal';
+import { CurrencyStrengthModal } from './components/CurrencyStrengthModal';
+import { TradeJournalModal } from './components/TradeJournalModal';
+import { WhatsAppAlertService } from './services/WhatsAppAlertService';
+import { TelegramAlertService } from './services/TelegramAlertService';
+import { soundFx } from './services/soundFxService';
 
 // Screens
 import { SignalsScreen } from './screens/SignalsScreen';
@@ -72,7 +81,12 @@ import {
   BarChart2,
   LineChart,
   Layers,
-  Calendar
+  Calendar,
+  Gauge,
+  BookOpen,
+  Volume2,
+  VolumeX,
+  Flame
 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -183,32 +197,46 @@ export const App: React.FC = () => {
   const [triggeredEvents, setTriggeredEvents] = useState<TriggeredAlertEvent[]>([]);
   const [latestTriggeredBanner, setLatestTriggeredBanner] = useState<TriggeredAlertEvent | null>(null);
 
-  // AI Copilot State
-  const [aiPersona, setAiPersona] = useState<AiPersonaId>('INSTITUTIONAL');
+  // AI Copilot State (Persisted in localStorage until manually cleared by the user)
+  const [aiPersona, setAiPersona] = useState<AiPersonaId>('UNIVERSAL');
   const [isAiGenerating, setIsAiGenerating] = useState<boolean>(false);
-  const [aiChatMessages, setAiChatMessages] = useState<ChatMessage[]>([
-    {
-      id: 'welcome_msg',
-      text: `### 🏛️ Welcome to FX Institutional Copilot
-Powered by **Gemini 3.5 Flash** neural interbank analytics.
-
-I am actively analyzing the live Forex, Gold, and Indices order flow:
-- **Top VIP Setup:** **XAU/USD (Gold)** with **95% Confluence** and verified **84.8% backtested win rate**.
-- **Current Sessions:** High-liquidity London/New York session overlap active.
-- **Risk Mandate:** Strict 1.0% capital allocation with minimum 1:2.0 asymmetric risk/reward.
-
-Tap any suggested prompt below or type your question!`,
-      isUser: false,
-      timestamp: Date.now(),
-      suggestedPrompts: [
-        'Analyze Best Trade Now (XAU/USD)',
-        'Calculate risk: $1,000 account, 1% risk',
-        'Smart Money: How to trade FVG + Order Blocks',
-        'Explain 84.8% Backtested Win Rate',
-        'London / NY Overlap trading plan'
-      ]
+  const [aiChatMessages, setAiChatMessages] = useState<ChatMessage[]>(() => {
+    const saved = PersistenceManager.getAiChatMessages();
+    if (saved && Array.isArray(saved) && saved.length > 0) {
+      return saved;
     }
-  ]);
+    return [
+      {
+        id: 'welcome_msg',
+        text: `### 🌐 Welcome to Universal & Institutional AI Copilot
+Powered by **Gemini 3.8 Flash** with full live terminal access.
+
+In **Universal AI Copilot (Ask Anything)** mode, you can ask **any query** about:
+- **Live Trades & Any Pair:** Analyze active signals or inspect any of the 30 pairs (even those on Standby/Chart Watch).
+- **Economic Calendar & News Impact:** Ask what happens to any pair when CPI, NFP, GDP, or FOMC news releases and how to adjust your strategy.
+- **Technical, Macro & Risk Intelligence:** Ask about SMC/FVG, indicators (RSI, EMA), currency strength, lot sizing math, prop firm rules, or any general market question.
+
+Tap a topic or suggested prompt below, or type any question in the chat bar!`,
+        isUser: false,
+        timestamp: Date.now(),
+        suggestedPrompts: [
+          'What high-impact news is coming today & how will it affect pairs?',
+          'Analyze Best Trade Now (XAU/USD)',
+          'Which currency is strongest & weakest right now?',
+          'Analyze GBP/CAD live price, strength & news bias',
+          'Calculate risk: $1,000 account, 1% risk',
+          'Smart Money: How to trade FVG + Order Blocks'
+        ]
+      }
+    ];
+  });
+
+  // Automatically persist AI chat messages across browser reloads & sessions
+  useEffect(() => {
+    if (aiChatMessages.length > 0) {
+      PersistenceManager.saveAiChatMessages(aiChatMessages);
+    }
+  }, [aiChatMessages]);
 
   // Backtest State
   const [cachedBacktestTrades, setCachedBacktestTrades] = useState<BacktestTrade[]>([]);
@@ -244,6 +272,11 @@ Tap any suggested prompt below or type your question!`,
   const [isAddAlertModalOpen, setIsAddAlertModalOpen] = useState(false);
   const [prefillAlertPair, setPrefillAlertPair] = useState<ForexPair | null>(null);
   const [prefillAlertPrice, setPrefillAlertPrice] = useState<number | null>(null);
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+  const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
+  const [isStrengthModalOpen, setIsStrengthModalOpen] = useState(false);
+  const [isJournalModalOpen, setIsJournalModalOpen] = useState(false);
+  const [isSoundMuted, setIsSoundMuted] = useState<boolean>(() => soundFx.getMuted());
 
   // Elev8 MT5 Account Integration State
   const [elev8Config, setElev8Config] = useState<Elev8AccountConfig>(() => {
@@ -331,6 +364,43 @@ Tap any suggested prompt below or type your question!`,
     });
   };
 
+  const handleDeleteElev8Trade = (tradeId: string) => {
+    setElev8Trades(prev => {
+      const updated = prev.filter(t => t.id !== tradeId);
+      PersistenceManager.saveElev8Trades(updated);
+      return updated;
+    });
+  };
+
+  const handleMoveToBreakEven = (tradeId: string) => {
+    setElev8Trades(prev => {
+      const updated = prev.map(t => {
+        if (t.id === tradeId) {
+          return {
+            ...t,
+            stopLoss: t.entryPrice
+          };
+        }
+        return t;
+      });
+      PersistenceManager.saveElev8Trades(updated);
+
+      const targetTrade = prev.find(t => t.id === tradeId);
+      if (targetTrade) {
+        soundFx.playBreakEvenSound();
+        const beMsg = `🛡️ *TRADE MOVED TO BREAK-EVEN (BE)!*\n\n` +
+          `📊 *Pair:* ${targetTrade.symbol} (${targetTrade.orderType.replace('_', ' ')})\n` +
+          `💵 *Lots:* ${targetTrade.lots.toFixed(2)}\n` +
+          `📍 *Entry Price:* ${targetTrade.entryPrice}\n` +
+          `🛡️ *New Stop Loss:* ${targetTrade.entryPrice} (*0.0 Pips Risk / $0.00 Loss Risk*)\n` +
+          `🎯 *Take Profit 1:* ${targetTrade.takeProfit1}\n\n` +
+          `👉 *Your position is now 100% RISK-FREE. All downside capital is protected while runners aim for higher TP targets!*`;
+        TelegramAlertService.sendAlert(beMsg);
+      }
+      return updated;
+    });
+  };
+
   const handleClearElev8History = () => {
     setElev8Trades([]);
     PersistenceManager.saveElev8Trades([]);
@@ -338,30 +408,191 @@ Tap any suggested prompt below or type your question!`,
 
   // Clock Ticker (1 second)
   const [nowClockMs, setNowClockMs] = useState(Date.now());
+  const notifiedTransitionsRef = React.useRef<Set<string>>(new Set());
 
-  useEffect(() => {
-    const clockTimer = setInterval(() => {
-      setNowClockMs(Date.now());
-    }, 1000);
-    return () => clearInterval(clockTimer);
+  const appendUniqueTriggeredEvent = useCallback((evt: TriggeredAlertEvent) => {
+    setTriggeredEvents(prev => {
+      const isDuplicate = prev.some(
+        existing =>
+          existing.id === evt.id ||
+          (existing.alertId === evt.alertId &&
+            existing.condition === evt.condition &&
+            Math.abs(existing.timestamp - evt.timestamp) < 3000)
+      );
+      if (isDuplicate) return prev;
+      return [evt, ...prev];
+    });
+    setLatestTriggeredBanner(evt);
   }, []);
 
-  // Update backtest when filter changes
+  const runNewsSignalSync = useCallback((showBanner: boolean = false) => {
+    setSignals(prevSignals => {
+      const res = economicCalendarService.synchronizeSignalsWithReleasedNews(prevSignals, allPairs);
+      if (res.hasChanges) {
+        // Identify any brand-new or flipped/updated signals and automatically send to Telegram
+        const prevMap = new Map(prevSignals.map(s => [s.pair.symbol, s]));
+        res.updatedSignals.forEach(nextSig => {
+          const prevSig = prevMap.get(nextSig.pair.symbol);
+          if (!prevSig) {
+            // Brand new post-news signal formed!
+            TelegramAlertService.sendNewSignalAlert(
+              nextSig,
+              '🚨📰 *NEW POST-NEWS TRADE SIGNAL FORMED!*',
+              true
+            );
+          } else if (prevSig.type !== nextSig.type || prevSig.entryPrice !== nextSig.entryPrice) {
+            // Existing signal flipped or updated by news release!
+            TelegramAlertService.sendNewSignalAlert(
+              nextSig,
+              '🔄📰 *TRADE SIGNAL UPDATED BY NEWS RELEASE!*',
+              true
+            );
+          }
+        });
+
+        if (showBanner && (res.newlyAddedPairs.length > 0 || res.updatedExistingPairs.length > 0)) {
+          soundFx.playAlertPing();
+          const addedStr = res.newlyAddedPairs.length > 0 ? `New Signals Added: ${res.newlyAddedPairs.join(', ')}. ` : '';
+          const updatedStr = res.updatedExistingPairs.length > 0 ? `Updated: ${res.updatedExistingPairs.join(', ')}` : '';
+          const bannerEvt: TriggeredAlertEvent = {
+            id: `news-sync-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            alertId: 'news-guard',
+            pairSymbol: res.newlyAddedPairs[0]?.split(' ')[0] || 'NEWS',
+            title: '📰 Post-News Signals Automatically Updated & Sent to Telegram!',
+            message: `${addedStr}${updatedStr}`,
+            timestamp: Date.now(),
+            condition: 'VIP_SIGNAL',
+            price: 0
+          };
+          appendUniqueTriggeredEvent(bannerEvt);
+        }
+        return res.updatedSignals;
+      }
+      return prevSignals;
+    });
+  }, [allPairs, appendUniqueTriggeredEvent]);
+
+  // Automatically dispatch any newly formed signal in `signals` to Telegram
+  useEffect(() => {
+    const activeValid = signals.filter(s => isSignalValidAndActive(s));
+    const alreadySent = TelegramAlertService.getSentSignalKeys();
+
+    // If this is the very first load and no signals have ever been recorded yet,
+    // send the Best Trade Now VIP signal to Telegram and mark existing initial signals as known
+    if (alreadySent.size === 0 && activeValid.length > 0) {
+      const bestSig = activeValid.find(s => s.isBestTradeNow) || activeValid[0];
+      activeValid.forEach(sig => {
+        if (sig.id !== bestSig.id) {
+          TelegramAlertService.markSignalKeySent(TelegramAlertService.getSignalSignature(sig));
+        }
+      });
+      if (bestSig) {
+        TelegramAlertService.sendNewSignalAlert(
+          bestSig,
+          '🏆 *NEW VIP BEST TRADE NOW SIGNAL!*',
+          false
+        );
+      }
+      return;
+    }
+
+    // For any newly formed signal not yet sent to Telegram, dispatch automatically!
+    activeValid.forEach(sig => {
+      const key = TelegramAlertService.getSignalSignature(sig);
+      if (!alreadySent.has(key)) {
+        TelegramAlertService.sendNewSignalAlert(
+          sig,
+          sig.isBestTradeNow
+            ? '🏆 *NEW BEST TRADE NOW SIGNAL FORMED!*'
+            : '🚨 *NEW TRADE SIGNAL FORMED!*',
+          false
+        );
+      }
+    });
+  }, [signals]);
+
+  useEffect(() => {
+    // Initial sync for already-released session news
+    runNewsSignalSync(false);
+    const clockTimer = setInterval(() => {
+      setNowClockMs(Date.now());
+      runNewsSignalSync(true);
+    }, 1000);
+    return () => clearInterval(clockTimer);
+  }, [runNewsSignalSync]);
+
+  // Update backtest when filter or live signals change
   useEffect(() => {
     const summary = BacktestEngine.runBacktest(
       backtestFilter,
-      cachedBacktestTrades.length > 0 ? cachedBacktestTrades : undefined
+      cachedBacktestTrades.length > 0 ? cachedBacktestTrades : undefined,
+      signals
     );
     setBacktestSummary(summary);
-  }, [backtestFilter, cachedBacktestTrades]);
+  }, [backtestFilter, cachedBacktestTrades, signals]);
 
   // Apply live quote to signals, allPairs, candles, and alerts
   const applyLiveQuote = useCallback((symbol: string, quote: number) => {
     if (quote <= 0) return;
 
-    // Update signals
+    // Update signals & dispatch Telegram alerts on signal status transitions (PENDING -> RUNNING, or HIT_TP / HIT_SL)
     setSignals(prev =>
-      prev.map(sig => (sig.pair.symbol === symbol ? updateSignalWithLiveMarket(sig, quote) : sig))
+      prev.map(sig => {
+        if (sig.pair.symbol !== symbol) return sig;
+        const updatedSig = updateSignalWithLiveMarket(sig, quote);
+
+        if (sig.status === 'PENDING' && updatedSig.status === 'RUNNING') {
+          const transKey = `${sig.id}:RUNNING`;
+          if (!notifiedTransitionsRef.current.has(transKey)) {
+            notifiedTransitionsRef.current.add(transKey);
+            soundFx.playOrderFilled();
+            TelegramAlertService.sendNewSignalAlert(
+              updatedSig,
+              '🎯 *PENDING SIGNAL TRIGGERED (NOW RUNNING)!*',
+              true
+            );
+            const fillEvt: TriggeredAlertEvent = {
+              id: `sig-fill-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${sig.id}`,
+              alertId: sig.id,
+              pairSymbol: sig.pair.symbol,
+              title: `🎯 ${sig.pair.symbol} Pending Signal Triggered!`,
+              message: `${sig.type.replace('_', ' ')} filled at ${quote} • TP1: ${sig.takeProfit1} | SL: ${sig.stopLoss}`,
+              timestamp: Date.now(),
+              condition: 'PENDING_ORDER_TRIGGERED',
+              price: quote
+            };
+            appendUniqueTriggeredEvent(fillEvt);
+          }
+        } else if (sig.status === 'RUNNING' && updatedSig.status === 'HIT_TP') {
+          const transKey = `${sig.id}:HIT_TP`;
+          if (!notifiedTransitionsRef.current.has(transKey)) {
+            notifiedTransitionsRef.current.add(transKey);
+            soundFx.playTpChime();
+            TelegramAlertService.sendAlert(
+              `🎉 *SIGNAL TAKE PROFIT 1 HIT!*\n\n` +
+              `📊 *Pair:* ${updatedSig.pair.symbol} (${updatedSig.type.replace('_', ' ')})\n` +
+              `📍 *Entry:* ${updatedSig.entryPrice}\n` +
+              `🎯 *TP1 Reached:* ${quote} (+${Math.abs(updatedSig.pips)} pips)\n` +
+              `🛡️ *Action:* Secure partial profits & move Stop Loss to Entry (${updatedSig.entryPrice}) for risk-free runner to TP2 (${updatedSig.takeProfit2})!`
+            );
+          }
+        } else if (sig.status === 'RUNNING' && updatedSig.status === 'HIT_SL') {
+          const transKey = `${sig.id}:HIT_SL`;
+          if (!notifiedTransitionsRef.current.has(transKey)) {
+            notifiedTransitionsRef.current.add(transKey);
+            soundFx.playStopLossSound();
+            TelegramAlertService.sendAlert(
+              `🛡️ *SIGNAL STOP LOSS HIT*\n\n` +
+              `📊 *Pair:* ${updatedSig.pair.symbol} (${updatedSig.type.replace('_', ' ')})\n` +
+              `📍 *Entry:* ${updatedSig.entryPrice}\n` +
+              `🛑 *SL Hit at:* ${quote}\n` +
+              `ℹ️ Setup invalidated & moved to Closed History.`
+            );
+          }
+        }
+
+        return updatedSig;
+      })
     );
 
     // Update allPairs
@@ -414,13 +645,194 @@ Tap any suggested prompt below or type your question!`,
       });
 
       if (triggered) {
-        const newEvt = triggered;
-        setTriggeredEvents(h => [newEvt, ...h]);
-        setLatestTriggeredBanner(newEvt);
+        const newEvt: TriggeredAlertEvent = triggered;
+        appendUniqueTriggeredEvent(newEvt);
+        soundFx.playAlertPing();
+        TelegramAlertService.sendAlert(`🔔 *PRICE ALERT TRIGGERED!*\n\nPair: *${newEvt.pairSymbol}*\nPrice: *${quote}*\nEvent: ${newEvt.title}\nDetails: ${newEvt.message}`);
       }
       return updated;
     });
-  }, [selectedPair.symbol]);
+
+    // Check Elev8 Pending Orders for Auto-Trigger or Invalidation
+    setElev8Trades(prevTrades => {
+      let hasChanges = false;
+      const cleanTickSym = symbol.replace('/', '');
+
+      const updated = prevTrades.map(trade => {
+        const cleanTradeSym = trade.symbol.replace(elev8Config.symbolSuffix || '', '').replace('/', '');
+        if (cleanTickSym !== cleanTradeSym) return trade;
+
+        if (trade.status === 'PENDING') {
+          // 1. Check if Pending Order is TRIGGERED & FILLED
+          let isTriggered = false;
+          if (trade.orderType === 'BUY_LIMIT' && quote <= trade.entryPrice) isTriggered = true;
+          else if (trade.orderType === 'SELL_LIMIT' && quote >= trade.entryPrice) isTriggered = true;
+          else if (trade.orderType === 'BUY_STOP' && quote >= trade.entryPrice) isTriggered = true;
+          else if (trade.orderType === 'SELL_STOP' && quote <= trade.entryPrice) isTriggered = true;
+
+          if (isTriggered) {
+            hasChanges = true;
+            soundFx.playOrderFilled();
+            const evt: TriggeredAlertEvent = {
+              id: 'evt_trig_' + Date.now() + Math.random().toString(36).slice(2, 5),
+              alertId: trade.id,
+              pairSymbol: trade.symbol,
+              title: `🎯 MT5 Pending Order Filled!`,
+              message: `${trade.symbol} ${trade.orderType.replace('_', ' ')} @ ${trade.entryPrice} was filled at ${quote}! Review running position in your MT5 mobile.`,
+              timestamp: Date.now(),
+              condition: 'PENDING_ORDER_TRIGGERED',
+              price: quote
+            };
+            appendUniqueTriggeredEvent(evt);
+
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              try {
+                new Notification(evt.title, { body: evt.message });
+              } catch {}
+            }
+
+            // Automated WhatsApp & Telegram Alert Dispatch
+            const waFillMsg = `🎯 *MT5 PENDING ORDER FILLED!*\n\nPair: *${trade.symbol}*\nAction: *${trade.orderType.replace('_', ' ')}*\nEntry: *${trade.entryPrice}*\nFilled at: *${quote}*\nTime: ${new Date().toLocaleTimeString()}\n\n👉 *Review running position in your MT5 mobile app now!*`;
+            WhatsAppAlertService.sendAutomatedAlert(waFillMsg);
+            TelegramAlertService.sendAlert(waFillMsg);
+
+            return {
+              ...trade,
+              status: 'OPEN' as const,
+              triggeredAt: Date.now(),
+              currentPrice: quote
+            };
+          }
+
+          // 2. Check if Pending Order is INVALIDATED (TP hit without entry, or SL breached)
+          let isInvalidated = false;
+          let invalidReason = '';
+
+          if (trade.orderType === 'SELL_LIMIT') {
+            if (trade.takeProfit1 > 0 && quote <= trade.takeProfit1) {
+              isInvalidated = true;
+              invalidReason = `Target TP1 (${trade.takeProfit1}) reached without entry fill. The trade move has completed.`;
+            } else if (trade.stopLoss > 0 && quote >= trade.stopLoss) {
+              isInvalidated = true;
+              invalidReason = `Price breached Stop Loss (${trade.stopLoss}) before fill.`;
+            }
+          } else if (trade.orderType === 'BUY_LIMIT') {
+            if (trade.takeProfit1 > 0 && quote >= trade.takeProfit1) {
+              isInvalidated = true;
+              invalidReason = `Target TP1 (${trade.takeProfit1}) reached without entry fill. The trade move has completed.`;
+            } else if (trade.stopLoss > 0 && quote <= trade.stopLoss) {
+              isInvalidated = true;
+              invalidReason = `Price breached Stop Loss (${trade.stopLoss}) before fill.`;
+            }
+          }
+
+          if (isInvalidated) {
+            hasChanges = true;
+            const evt: TriggeredAlertEvent = {
+              id: 'evt_inval_' + Date.now() + Math.random().toString(36).slice(2, 5),
+              alertId: trade.id,
+              pairSymbol: trade.symbol,
+              title: `⚠️ MT5 Pending Order Invalidated!`,
+              message: `${trade.symbol} ${trade.orderType.replace('_', ' ')} @ ${trade.entryPrice}: ${invalidReason} Please cancel/delete this order in your MT5 mobile app!`,
+              timestamp: Date.now(),
+              condition: 'PENDING_ORDER_INVALIDATED',
+              price: quote
+            };
+            appendUniqueTriggeredEvent(evt);
+
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              try {
+                new Notification(evt.title, { body: evt.message });
+              } catch {}
+            }
+
+            // Automated WhatsApp & Telegram Alert Dispatch
+            const waInvalMsg = `⚠️ *MT5 PENDING ORDER INVALIDATED!*\n\nPair: *${trade.symbol}*\nOrder: *${trade.orderType.replace('_', ' ')} @ ${trade.entryPrice}*\nReason: *${invalidReason}*\nTime: ${new Date().toLocaleTimeString()}\n\n⚠️ *Action: Please CANCEL or DELETE this order in your MT5 mobile app immediately!*`;
+            WhatsAppAlertService.sendAutomatedAlert(waInvalMsg);
+            TelegramAlertService.sendAlert(waInvalMsg);
+
+            return {
+              ...trade,
+              status: 'CLOSED' as const,
+              closeReason: 'CANCELLED' as const,
+              closedAt: Date.now(),
+              currentPrice: quote
+            };
+          }
+        }
+
+        if (trade.status === 'OPEN') {
+          const isBuy = trade.orderType.startsWith('BUY');
+          let isHitTp = false;
+          let isHitSl = false;
+
+          if (isBuy) {
+            if (trade.takeProfit1 > 0 && quote >= trade.takeProfit1) isHitTp = true;
+            else if (trade.stopLoss > 0 && quote <= trade.stopLoss) isHitSl = true;
+          } else {
+            if (trade.takeProfit1 > 0 && quote <= trade.takeProfit1) isHitTp = true;
+            else if (trade.stopLoss > 0 && quote >= trade.stopLoss) isHitSl = true;
+          }
+
+          const isJpy = trade.symbol.includes('JPY');
+          const mult = isJpy ? 100 : (trade.symbol.includes('XAU') ? 10 : 10000);
+          const pipVal = isJpy && quote > 0 ? (1000.0 / quote) : (trade.symbol.includes('XAU') ? 10.0 : 10.0);
+
+          if (isHitTp || isHitSl) {
+            hasChanges = true;
+            if (isHitTp) {
+              soundFx.playTpChime();
+            } else {
+              soundFx.playStopLossSound();
+            }
+
+            const pips = Math.round(Math.abs(quote - trade.entryPrice) * mult * 10) / 10;
+            const pnl = isHitTp ? (pips * pipVal * trade.lots) : -(pips * pipVal * trade.lots);
+
+            const tgMsg = isHitTp
+              ? `🎉 *TAKE PROFIT HIT!*\n\nPair: *${trade.symbol}*\nAction: *${trade.orderType.replace('_', ' ')}*\nEntry: *${trade.entryPrice}*\nExit Price: *${quote}*\nProfit: *+$${pnl.toFixed(2)} (+${pips} pips)*\nTime: ${new Date().toLocaleTimeString()}\n\n💰 *Target reached! Check your MT5 balance.*`
+              : `🛡️ *STOP LOSS HIT (Capital Protected)*\n\nPair: *${trade.symbol}*\nAction: *${trade.orderType.replace('_', ' ')}*\nEntry: *${trade.entryPrice}*\nExit Price: *${quote}*\nLoss: *-$${Math.abs(pnl).toFixed(2)} (-${pips} pips)*\nTime: ${new Date().toLocaleTimeString()}\n\n🛡️ *Risk managed. Ready for next setup.*`;
+
+            WhatsAppAlertService.sendAutomatedAlert(tgMsg);
+            TelegramAlertService.sendAlert(tgMsg);
+
+            return {
+              ...trade,
+              status: 'CLOSED' as const,
+              closeReason: (isHitTp ? 'TP1' : 'SL') as Elev8Trade['closeReason'],
+              closedAt: Date.now(),
+              currentPrice: quote,
+              realizedPnl: Math.round(pnl * 100) / 100,
+              floatingPnl: 0,
+              pips: isHitTp ? pips : -pips
+            };
+          }
+
+          // Update live floating P&L and pips for running OPEN trades
+          if (quote !== trade.currentPrice) {
+            hasChanges = true;
+            const signedPriceDiff = isBuy ? (quote - trade.entryPrice) : (trade.entryPrice - quote);
+            const livePips = Math.round(signedPriceDiff * mult * 10) / 10;
+            const livePnl = Math.round(livePips * pipVal * trade.lots * 100) / 100;
+            return {
+              ...trade,
+              currentPrice: quote,
+              pips: livePips,
+              floatingPnl: livePnl
+            };
+          }
+        }
+
+        return trade;
+      });
+
+      if (hasChanges) {
+        PersistenceManager.saveElev8Trades(updated);
+        return updated;
+      }
+      return prevTrades;
+    });
+  }, [selectedPair.symbol, elev8Config.symbolSuffix, appendUniqueTriggeredEvent]);
 
   // Real Price Service Setup: Gold API (5s) + Open ER-API (10s) + Binance BTC (8s)
   useEffect(() => {
@@ -610,8 +1022,11 @@ Tap any suggested prompt below or type your question!`,
       if (selectedFilter === 'VIP' && sig.confluenceScore < 90) return false;
       if (selectedFilter === 'RUNNING' && sig.status !== 'RUNNING') return false;
       if (selectedFilter === 'PENDING' && sig.status !== 'PENDING') return false;
-      if (selectedFilter === 'GOLD' && !sig.pair.symbol.includes('XAU')) return false;
-      if (selectedFilter === 'INDICES' && (!sig.pair.symbol.includes('US30') && !sig.pair.symbol.includes('NAS'))) return false;
+      if (selectedFilter === 'MAJORS' && getAssetCategory(sig.pair.symbol) !== 'MAJORS') return false;
+      if (selectedFilter === 'MINORS' && getAssetCategory(sig.pair.symbol) !== 'MINORS') return false;
+      if ((selectedFilter === 'METALS' || selectedFilter === 'GOLD') && getAssetCategory(sig.pair.symbol) !== 'METALS') return false;
+      if (selectedFilter === 'INDICES' && getAssetCategory(sig.pair.symbol) !== 'INDICES') return false;
+      if (selectedFilter === 'CRYPTO' && getAssetCategory(sig.pair.symbol) !== 'CRYPTO') return false;
       if (selectedFilter === 'FAVORITES' && !sig.isFavorite) return false;
     }
 
@@ -648,27 +1063,49 @@ Tap any suggested prompt below or type your question!`,
 
   const handleToggleAlert = (id: string) => {
     setSignals(prev => {
+      const targetSig = prev.find(s => s.id === id);
+      const willBeActive = targetSig ? !targetSig.hasAlert : false;
       const updated = prev.map(s => (s.id === id ? { ...s, hasAlert: !s.hasAlert } : s));
       const alertIds = updated.filter(s => s.hasAlert).map(s => s.id);
       PersistenceManager.saveAlertToggledSignals(alertIds);
+
+      if (targetSig && willBeActive) {
+        TelegramAlertService.sendNewSignalAlert(
+          targetSig,
+          '🔔 *LIVE TRADE SIGNAL & WATCHDOG ACTIVATED!*',
+          true
+        );
+      }
+
       return updated;
     });
   };
 
-  // AI Copilot Send Message
-  const handleSendAiMessage = async (prompt: string, signalCtx?: ForexSignal) => {
+  // AI Copilot Send Message (supports text + optional uploaded image)
+  const handleSendAiMessage = async (
+    prompt: string,
+    signalCtx?: ForexSignal,
+    imageDataUrl?: string | null
+  ) => {
+    const displayPrompt =
+      prompt.trim() ||
+      '📸 Analyze this uploaded screenshot (identify pairs, price levels, orders, or news & give trading advice).';
+
     const userMsg: ChatMessage = {
       id: Math.random().toString(36).slice(2),
-      text: prompt,
+      text: displayPrompt,
       isUser: true,
       timestamp: Date.now(),
-      signalReference: signalCtx ? `${signalCtx.pair.symbol} ${signalCtx.type}` : null
+      signalReference: signalCtx ? `${signalCtx.pair.symbol} ${signalCtx.type}` : null,
+      imageUrl: imageDataUrl || null
     };
 
     const thinkingMsgId = Math.random().toString(36).slice(2);
     const thinkingMsg: ChatMessage = {
       id: thinkingMsgId,
-      text: 'Analyzing order book, smart money liquidity voids, and institutional confluence...',
+      text: imageDataUrl
+        ? '🔍 Inspecting your uploaded screenshot with Gemini Vision & cross-referencing live terminal data...'
+        : 'Analyzing order book, smart money liquidity voids, and institutional confluence...',
       isUser: false,
       timestamp: Date.now(),
       isGenerating: true
@@ -680,16 +1117,38 @@ Tap any suggested prompt below or type your question!`,
     try {
       const bestTrade = signals.find(s => s.isBestTradeNow) || signals[0];
       const persona = AI_PERSONAS[aiPersona];
+      const historyForContext = aiChatMessages
+        .filter(m => !m.isGenerating)
+        .map(m => ({ text: m.text, isUser: m.isUser }));
       const reply = await GeminiChatEngine.generateResponse(
-        prompt,
+        displayPrompt,
         persona,
         signals,
-        bestTrade
+        bestTrade,
+        historyForContext,
+        allPairs,
+        imageDataUrl
       );
 
-      const followUps = prompt.toLowerCase().includes('risk')
-        ? ['Show 1:3 R:R position calculator', 'What is max drawdown for prop firms?', 'Analyze Best Trade Now (XAU/USD)']
-        : ['Analyze Best Trade Now (XAU/USD)', 'Calculate 1% risk for $1,000 account', 'Smart Money: How to trade FVG + Order Blocks'];
+      const pLower = prompt.toLowerCase();
+      const followUps = pLower.includes('news') || pLower.includes('calendar') || pLower.includes('impact')
+        ? [
+            'How should I adjust my trade strategy before & after news?',
+            'Analyze Best Trade Now (XAU/USD)',
+            'Which currency is strongest & weakest right now?'
+          ]
+        : pLower.includes('risk')
+        ? [
+            'How to pass a $50,000 Prop Firm challenge?',
+            'When should I move my Stop Loss to Breakeven (BE)?',
+            'Analyze Best Trade Now (XAU/USD)'
+          ]
+        : [
+            'What high-impact news is coming today & how will it affect pairs?',
+            'Analyze Best Trade Now (XAU/USD)',
+            'Which currency is strongest & weakest right now?',
+            'Calculate 1% risk for $1,000 account'
+          ];
 
       const assistantMsg: ChatMessage = {
         id: thinkingMsgId,
@@ -753,7 +1212,7 @@ Tap any suggested prompt below or type your question!`,
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto px-3 sm:px-6 pt-4 pb-20">
+      <main className="flex-1 overflow-y-auto px-3 sm:px-6 pt-4 pb-36 sm:pb-24">
         {selectedTab === 'SIGNALS' && (
           <SignalsScreen
             signals={signals}
@@ -781,6 +1240,11 @@ Tap any suggested prompt below or type your question!`,
             onOpenElev8Order={(sig) => setSelectedElev8OrderSignal(sig)}
             isElev8Connected={elev8Config.isConnected}
             onOpenRefreshModal={() => setIsRefreshModalOpen(true)}
+            onOpenCalendar={() => setIsCalendarModalOpen(true)}
+            onOpenStrength={() => setIsStrengthModalOpen(true)}
+            onOpenJournal={() => setIsJournalModalOpen(true)}
+            isSoundMuted={isSoundMuted}
+            onToggleSound={() => setIsSoundMuted(soundFx.toggleMute())}
             onManualRefresh={refreshRates}
             onToggleSync={handleToggleSync}
             lastSyncFormatted={formatLastSyncTime(lastSyncTime)}
@@ -800,7 +1264,15 @@ Tap any suggested prompt below or type your question!`,
             isGenerating={isAiGenerating}
             onSendMessage={handleSendAiMessage}
             onSelectPersona={setAiPersona}
+            onDeleteMessage={(id) => {
+              setAiChatMessages(prev => {
+                const updated = prev.filter(m => m.id !== id);
+                PersistenceManager.saveAiChatMessages(updated);
+                return updated;
+              });
+            }}
             onClearChat={() => {
+              PersistenceManager.clearAiChatMessages();
               setAiChatMessages([
                 {
                   id: Math.random().toString(36).slice(2),
@@ -833,6 +1305,7 @@ Tap any suggested prompt below or type your question!`,
             }}
             onClearHistory={() => setTriggeredEvents([])}
             onOpenAddModal={() => setIsAddAlertModalOpen(true)}
+            onOpenWhatsAppModal={() => setIsWhatsAppModalOpen(true)}
           />
         )}
 
@@ -840,17 +1313,20 @@ Tap any suggested prompt below or type your question!`,
           <BacktestingLabScreen
             summary={backtestSummary}
             filter={backtestFilter}
-            onStrategySelect={(st) => setBacktestFilter(prev => ({ ...prev, strategy: st }))}
+            liveSignals={signals}
+            onStrategySelect={(st) => {
+              setCachedBacktestTrades([]);
+              setBacktestFilter(prev => ({ ...prev, strategy: st }));
+            }}
             onTimeframeSelect={(tf) => setBacktestFilter(prev => ({ ...prev, timeframe: tf }))}
             onConfluenceSelect={(score) => setBacktestFilter(prev => ({ ...prev, minConfluence: score }))}
+            onCategorySelect={(cat) => setBacktestFilter(prev => ({ ...prev, category: cat, pairSymbol: null }))}
             onPairSelect={(pair) => setBacktestFilter(prev => ({ ...prev, pairSymbol: pair }))}
             onOutcomeSelect={(outcome) => setBacktestFilter(prev => ({ ...prev, outcomeFilter: outcome }))}
             onSummaryUpdate={(newSummary, allTrades) => {
               setBacktestSummary(newSummary);
               if (allTrades && allTrades.length > 0) {
                 setCachedBacktestTrades(allTrades);
-              } else if (newSummary.filteredTrades.length > 0 && !cachedBacktestTrades.length) {
-                setCachedBacktestTrades(newSummary.filteredTrades);
               }
             }}
           />
@@ -927,62 +1403,74 @@ Tap any suggested prompt below or type your question!`,
         )}
       </main>
 
-      {/* Bottom Navigation Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-[#101522] border-t border-[#222F47] px-4 py-2 flex items-center justify-around shadow-2xl">
-        <button
-          onClick={() => setSelectedTab('SIGNALS')}
-          className={`flex flex-col items-center gap-1 transition-colors ${
-            selectedTab === 'SIGNALS' ? 'text-[#FFD700]' : 'text-[#64748B] hover:text-[#94A3B8]'
-          }`}
-        >
-          <TrendingUp className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Signals</span>
-        </button>
+      {/* Bottom Navigation Bar — Lifted with Mobile System Bar Safe Clearance */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-[#101522]/98 backdrop-blur-md border-t border-[#222F47] px-2 pt-2 pb-[calc(52px+env(safe-area-inset-bottom,0px))] sm:pb-2.5 shadow-2xl">
+        <div className="max-w-xl mx-auto flex items-center justify-around">
+          <button
+            onClick={() => setSelectedTab('SIGNALS')}
+            className={`flex flex-col items-center gap-1 py-1.5 px-3 rounded-xl active:scale-95 transition-all ${
+              selectedTab === 'SIGNALS'
+                ? 'text-[#FFD700] bg-[#182033]/80'
+                : 'text-[#64748B] hover:text-[#94A3B8]'
+            }`}
+          >
+            <TrendingUp className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Signals</span>
+          </button>
 
-        <button
-          onClick={() => setSelectedTab('AI_CHAT')}
-          className={`flex flex-col items-center gap-1 transition-colors ${
-            selectedTab === 'AI_CHAT' ? 'text-[#FFD700]' : 'text-[#64748B] hover:text-[#94A3B8]'
-          }`}
-        >
-          <Sparkles className="w-5 h-5" />
-          <span className="text-[10px] font-bold">AI Copilot</span>
-        </button>
+          <button
+            onClick={() => setSelectedTab('AI_CHAT')}
+            className={`flex flex-col items-center gap-1 py-1.5 px-3 rounded-xl active:scale-95 transition-all ${
+              selectedTab === 'AI_CHAT'
+                ? 'text-[#FFD700] bg-[#182033]/80'
+                : 'text-[#64748B] hover:text-[#94A3B8]'
+            }`}
+          >
+            <Sparkles className="w-5 h-5" />
+            <span className="text-[10px] font-bold">AI Copilot</span>
+          </button>
 
-        <button
-          onClick={() => setSelectedTab('ALERTS')}
-          className={`relative flex flex-col items-center gap-1 transition-colors ${
-            selectedTab === 'ALERTS' ? 'text-[#FFD700]' : 'text-[#64748B] hover:text-[#94A3B8]'
-          }`}
-        >
-          <Bell className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Alerts</span>
-          {activeAlertsCount > 0 && (
-            <span className="absolute -top-1 right-2 bg-[#FFD700] text-[#080B11] text-[8px] font-black w-3.5 h-3.5 rounded-full flex items-center justify-center">
-              {activeAlertsCount}
-            </span>
-          )}
-        </button>
+          <button
+            onClick={() => setSelectedTab('ALERTS')}
+            className={`relative flex flex-col items-center gap-1 py-1.5 px-3 rounded-xl active:scale-95 transition-all ${
+              selectedTab === 'ALERTS'
+                ? 'text-[#FFD700] bg-[#182033]/80'
+                : 'text-[#64748B] hover:text-[#94A3B8]'
+            }`}
+          >
+            <Bell className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Alerts</span>
+            {activeAlertsCount > 0 && (
+              <span className="absolute top-0.5 right-2.5 bg-[#FFD700] text-[#080B11] text-[8px] font-black w-3.5 h-3.5 rounded-full flex items-center justify-center">
+                {activeAlertsCount}
+              </span>
+            )}
+          </button>
 
-        <button
-          onClick={() => setSelectedTab('BACKTEST')}
-          className={`flex flex-col items-center gap-1 transition-colors ${
-            selectedTab === 'BACKTEST' ? 'text-[#FFD700]' : 'text-[#64748B] hover:text-[#94A3B8]'
-          }`}
-        >
-          <FlaskConical className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Backtest</span>
-        </button>
+          <button
+            onClick={() => setSelectedTab('BACKTEST')}
+            className={`flex flex-col items-center gap-1 py-1.5 px-3 rounded-xl active:scale-95 transition-all ${
+              selectedTab === 'BACKTEST'
+                ? 'text-[#FFD700] bg-[#182033]/80'
+                : 'text-[#64748B] hover:text-[#94A3B8]'
+            }`}
+          >
+            <FlaskConical className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Backtest</span>
+          </button>
 
-        <button
-          onClick={() => setSelectedTab('MARKETS')}
-          className={`flex flex-col items-center gap-1 transition-colors ${
-            selectedTab === 'MARKETS' ? 'text-[#FFD700]' : 'text-[#64748B] hover:text-[#94A3B8]'
-          }`}
-        >
-          <BarChart2 className="w-5 h-5" />
-          <span className="text-[10px] font-bold">Markets</span>
-        </button>
+          <button
+            onClick={() => setSelectedTab('MARKETS')}
+            className={`flex flex-col items-center gap-1 py-1.5 px-3 rounded-xl active:scale-95 transition-all ${
+              selectedTab === 'MARKETS'
+                ? 'text-[#FFD700] bg-[#182033]/80'
+                : 'text-[#64748B] hover:text-[#94A3B8]'
+            }`}
+          >
+            <BarChart2 className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Markets</span>
+          </button>
+        </div>
       </nav>
 
       {/* Modals & Dialogs */}
@@ -1028,6 +1516,8 @@ Tap any suggested prompt below or type your question!`,
             PersistenceManager.saveElev8Config(updated);
           }}
           onCloseTrade={handleCloseElev8Trade}
+          onDeleteTrade={handleDeleteElev8Trade}
+          onMoveToBreakEven={handleMoveToBreakEven}
           onClearHistory={handleClearElev8History}
           onDismiss={() => setIsElev8ModalOpen(false)}
         />
@@ -1100,6 +1590,49 @@ Tap any suggested prompt below or type your question!`,
           onAskAi={handleAskAiForSignal}
         />
       )}
+
+      {/* WhatsApp & Telegram Alerts Configuration Modal */}
+      <WhatsAppAlertModal
+        isOpen={isWhatsAppModalOpen}
+        onClose={() => setIsWhatsAppModalOpen(false)}
+        activeSignals={filteredSignals}
+      />
+
+      {/* Economic Calendar & News Guard Modal */}
+      <EconomicCalendarModal
+        isOpen={isCalendarModalOpen}
+        onClose={() => setIsCalendarModalOpen(false)}
+        activeSignalPairs={signals.map(s => ({ symbol: s.pair.symbol, type: s.type, confluence: s.confluenceScore, isNewsGenerated: s.id.startsWith('SIG-NEWS-') }))}
+        onTriggerReleaseNow={(eventId, outcome) => {
+          economicCalendarService.triggerReleaseNow(eventId, outcome);
+          runNewsSignalSync(true);
+        }}
+        onSelectPair={(sym) => {
+          setIsCalendarModalOpen(false);
+          setSelectedTab('SIGNALS');
+          setSearchQuery(sym);
+          const found = signals.find(s => s.pair.symbol.replace('/', '') === sym.replace('/', ''));
+          if (found) setSelectedSignalDetail(found);
+        }}
+      />
+
+      {/* Live Currency Strength Meter Modal */}
+      <CurrencyStrengthModal
+        isOpen={isStrengthModalOpen}
+        onClose={() => setIsStrengthModalOpen(false)}
+        onSelectPair={(sym) => {
+          setIsStrengthModalOpen(false);
+          const found = signals.find(s => s.pair.symbol.replace('/', '') === sym.replace('/', ''));
+          if (found) setSelectedSignalDetail(found);
+        }}
+      />
+
+      {/* Trader Journal & Analytics Modal */}
+      <TradeJournalModal
+        isOpen={isJournalModalOpen}
+        onClose={() => setIsJournalModalOpen(false)}
+        trades={elev8Trades}
+      />
     </div>
   );
 };

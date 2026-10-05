@@ -12,7 +12,7 @@ interface Props {
 }
 
 export const TRADINGVIEW_SYMBOL_MAP: Record<string, string> = {
-  'XAU/USD': 'FOREXCOM:XAUUSD',
+  // Majors
   'EUR/USD': 'FX:EURUSD',
   'GBP/USD': 'FX:GBPUSD',
   'USD/JPY': 'FX:USDJPY',
@@ -20,12 +20,45 @@ export const TRADINGVIEW_SYMBOL_MAP: Record<string, string> = {
   'AUD/USD': 'FX:AUDUSD',
   'NZD/USD': 'FX:NZDUSD',
   'USD/CAD': 'FX:USDCAD',
+  // Minors & Crosses
   'EUR/GBP': 'FX:EURGBP',
   'EUR/JPY': 'FX:EURJPY',
+  'EUR/AUD': 'FX:EURAUD',
+  'EUR/CAD': 'FX:EURCAD',
+  'EUR/CHF': 'FX:EURCHF',
+  'EUR/NZD': 'FX:EURNZD',
   'GBP/JPY': 'FX:GBPJPY',
-  'BTC/USD': 'BINANCE:BTCUSDT',
+  'GBP/AUD': 'FX:GBPAUD',
+  'GBP/CAD': 'FX:GBPCAD',
+  'GBP/CHF': 'FX:GBPCHF',
+  'GBP/NZD': 'FX:GBPNZD',
+  'AUD/JPY': 'FX:AUDJPY',
+  'AUD/CAD': 'FX:AUDCAD',
+  'AUD/CHF': 'FX:AUDCHF',
+  'AUD/NZD': 'FX:AUDNZD',
+  'CAD/JPY': 'FX:CADJPY',
+  'CAD/CHF': 'FX:CADCHF',
+  'CHF/JPY': 'FX:CHFJPY',
+  'NZD/JPY': 'FX:NZDJPY',
+  'NZD/CAD': 'FX:NZDCAD',
+  'NZD/CHF': 'FX:NZDCHF',
+  // Metals & Commodities
+  'XAU/USD': 'FOREXCOM:XAUUSD',
+  'XAG/USD': 'FOREXCOM:XAGUSD',
+  'USOIL': 'TVC:USOIL',
+  'UKOIL': 'TVC:UKOIL',
+  // Indices
   'US30': 'FOREXCOM:DJI',
-  'NAS100': 'FOREXCOM:NAS100'
+  'NAS100': 'FOREXCOM:NAS100',
+  'SPX500': 'FOREXCOM:SPX500',
+  'GER40': 'FOREXCOM:GER40',
+  'UK100': 'FOREXCOM:UK100',
+  'JP225': 'TVC:NI225',
+  // Crypto
+  'BTC/USD': 'BINANCE:BTCUSDT',
+  'ETH/USD': 'BINANCE:ETHUSDT',
+  'SOL/USD': 'BINANCE:SOLUSDT',
+  'XRP/USD': 'BINANCE:XRPUSDT'
 };
 
 export const TRADINGVIEW_INTERVAL_MAP: Record<Timeframe, string> = {

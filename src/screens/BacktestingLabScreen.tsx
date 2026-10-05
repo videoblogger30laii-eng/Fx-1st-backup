@@ -6,9 +6,13 @@ import {
   StrategyType,
   Timeframe,
   TradeOutcome,
+  AssetCategory,
+  ForexSignal,
+  getAssetCategory,
   STRATEGY_CONFIGS
 } from '../types';
 import { BacktestEngine } from '../services/backtestEngine';
+import { ALL_PAIRS } from '../services/marketData';
 import {
   DerivHistoricalService,
   DEFAULT_DERIV_SYMBOLS,
@@ -31,15 +35,19 @@ import {
   ChevronUp,
   Percent,
   TrendingUp,
-  Target
+  Target,
+  Globe,
+  Layers
 } from 'lucide-react';
 
 interface Props {
   summary: BacktestSummary;
   filter: BacktestFilter;
+  liveSignals?: ForexSignal[];
   onStrategySelect: (strat: StrategyType) => void;
   onTimeframeSelect: (tf: Timeframe | null) => void;
   onConfluenceSelect: (score: number) => void;
+  onCategorySelect?: (category: AssetCategory | null) => void;
   onPairSelect: (pair: string | null) => void;
   onOutcomeSelect: (outcome: TradeOutcome | null) => void;
   onSummaryUpdate?: (summary: BacktestSummary, allTrades?: BacktestTrade[]) => void;
@@ -48,9 +56,11 @@ interface Props {
 export const BacktestingLabScreen: React.FC<Props> = ({
   summary: initialSummary,
   filter,
+  liveSignals = [],
   onStrategySelect,
   onTimeframeSelect,
   onConfluenceSelect,
+  onCategorySelect,
   onPairSelect,
   onOutcomeSelect,
   onSummaryUpdate
@@ -191,16 +201,25 @@ export const BacktestingLabScreen: React.FC<Props> = ({
     { score: 70, label: 'All Setups (70%+)' },
   ];
 
-  const pairs = [
-    { pair: null, label: 'All Symbols (Deriv)' },
-    { pair: 'XAU/USD', label: 'Gold (frxXAUUSD)' },
-    { pair: 'EUR/USD', label: 'EUR/USD (frxEURUSD)' },
-    { pair: 'GBP/USD', label: 'GBP/USD (frxGBPUSD)' },
-    { pair: 'USD/JPY', label: 'USD/JPY (frxUSDJPY)' },
-    { pair: 'AUD/USD', label: 'AUD/USD (frxAUDUSD)' },
-    { pair: 'USD/CAD', label: 'USD/CAD (frxUSDCAD)' },
-    { pair: 'US30', label: 'US30 (OTC_DJI)' },
+  const categoryTabs: { key: AssetCategory | null; label: string; icon: string }[] = [
+    { key: null, label: 'All Assets', icon: '🌐' },
+    { key: 'MAJORS', label: 'Majors (~$2 Margin)', icon: '🏛️' },
+    { key: 'MINORS', label: 'Minors & Crosses', icon: '🔀' },
+    { key: 'METALS', label: 'Metals (Gold & Silver)', icon: '🥇' },
+    { key: 'INDICES', label: 'Indices (US30)', icon: '📈' },
   ];
+
+  // Dynamically populated pairs filtered strictly by active category
+  const availablePairs = React.useMemo(() => {
+    const list = ALL_PAIRS.filter(p => {
+      if (!filter.category || filter.category === 'ALL') return true;
+      return getAssetCategory(p.symbol) === filter.category;
+    });
+    return [
+      { pair: null, label: filter.category ? `All ${filter.category} Pairs` : 'All Symbols' },
+      ...list.map(p => ({ pair: p.symbol, label: p.symbol }))
+    ];
+  }, [filter.category]);
 
   const outcomes: { outcome: TradeOutcome | null; label: string }[] = [
     { outcome: null, label: 'All Trades' },
@@ -214,26 +233,36 @@ export const BacktestingLabScreen: React.FC<Props> = ({
       strategy: filter.strategy,
       timeframe: filter.timeframe,
       pairSymbol: filter.pairSymbol,
+      category: filter.category,
       outcomeFilter: filter.outcomeFilter
     };
     return {
-      70: BacktestEngine.runBacktest({ ...baseFilter, minConfluence: 70 }).totalTrades,
-      80: BacktestEngine.runBacktest({ ...baseFilter, minConfluence: 80 }).totalTrades,
-      85: BacktestEngine.runBacktest({ ...baseFilter, minConfluence: 85 }).totalTrades,
-      90: BacktestEngine.runBacktest({ ...baseFilter, minConfluence: 90 }).totalTrades,
+      70: BacktestEngine.runBacktest({ ...baseFilter, minConfluence: 70 }, undefined, liveSignals).totalTrades,
+      80: BacktestEngine.runBacktest({ ...baseFilter, minConfluence: 80 }, undefined, liveSignals).totalTrades,
+      85: BacktestEngine.runBacktest({ ...baseFilter, minConfluence: 85 }, undefined, liveSignals).totalTrades,
+      90: BacktestEngine.runBacktest({ ...baseFilter, minConfluence: 90 }, undefined, liveSignals).totalTrades,
     };
-  }, [filter.strategy, filter.pairSymbol, filter.timeframe, filter.outcomeFilter]);
+  }, [filter.strategy, filter.pairSymbol, filter.category, filter.timeframe, filter.outcomeFilter, liveSignals]);
 
-  // Asset breakdown aggregation from real trades (showing all assets for current strategy & confluence)
+  // Live session signal outcome breakdown
+  const liveSignalStats = React.useMemo(() => {
+    const running = liveSignals.filter(s => s.status === 'RUNNING');
+    const pending = liveSignals.filter(s => s.status === 'PENDING');
+    const hitTp = liveSignals.filter(s => s.status === 'HIT_TP');
+    const hitSl = liveSignals.filter(s => s.status === 'HIT_SL');
+    return { running, pending, hitTp, hitSl };
+  }, [liveSignals]);
+
+  // Asset breakdown aggregation from real trades (categorized cleanly without mixing)
   const assetBreakdown = React.useMemo(() => {
-    const map: Record<string, { wins: number; total: number; pips: number }> = {};
+    const map: Record<string, { wins: number; total: number; pips: number; category: string }> = {};
     const tradesToScan = !filter.pairSymbol
       ? currentSummary.filteredTrades
-      : BacktestEngine.runBacktest({ ...filter, pairSymbol: null }).filteredTrades;
+      : BacktestEngine.runBacktest({ ...filter, pairSymbol: null }, undefined, liveSignals).filteredTrades;
 
     tradesToScan.forEach(trade => {
       if (!map[trade.pairSymbol]) {
-        map[trade.pairSymbol] = { wins: 0, total: 0, pips: 0 };
+        map[trade.pairSymbol] = { wins: 0, total: 0, pips: 0, category: getAssetCategory(trade.pairSymbol) };
       }
       map[trade.pairSymbol].total++;
       if (trade.outcome === 'WIN') map[trade.pairSymbol].wins++;
@@ -241,11 +270,12 @@ export const BacktestingLabScreen: React.FC<Props> = ({
     });
     return Object.entries(map).map(([symbol, data]) => ({
       symbol,
+      category: data.category,
       winRate: Math.round((data.wins / (data.total || 1)) * 100),
       total: data.total,
       netPips: Math.round(data.pips * 10) / 10
     }));
-  }, [currentSummary.filteredTrades, filter]);
+  }, [currentSummary.filteredTrades, filter, liveSignals]);
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto pb-16 text-left">
@@ -259,11 +289,11 @@ export const BacktestingLabScreen: React.FC<Props> = ({
             </h2>
             <span className="text-[10px] font-black text-[#00E676] bg-[#00E676]/15 border border-[#00E676]/30 px-2 py-0.5 rounded-full flex items-center gap-1">
               <Radio className="w-3 h-3 text-[#00E676] animate-pulse" />
-              <span>100% Uncapped Deriv Math</span>
+              <span>100% Uncapped Deriv Math + Live Sync</span>
             </span>
           </div>
           <p className="text-xs text-[#94A3B8] mt-1">
-            Zero lookahead bias. Real broker spreads deducted. Fixed 1.5R with 14-period ATR.
+            Evaluates {currentSummary.totalTrades.toLocaleString()} verified setups across all 30 pairs & timeframes + real-time closed signal outcomes.
           </p>
         </div>
 
@@ -292,6 +322,71 @@ export const BacktestingLabScreen: React.FC<Props> = ({
             <span>{isFetchingLive ? 'Scanning 5000 Candles...' : 'Run True Backtest'}</span>
           </button>
         </div>
+      </div>
+
+      {/* Live Terminal Signal Outcomes Sync Panel */}
+      <div className="bg-[#101522] border border-[#222F47] rounded-2xl p-3.5 space-y-2.5">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Radio className="w-4 h-4 text-[#2979FF] animate-pulse" />
+            <span className="text-xs font-black uppercase tracking-wider text-[#F1F5F9]">
+              Live Session Signal Telemetry (Synced with Signals Page)
+            </span>
+          </div>
+          <span className="text-[10.5px] text-[#94A3B8]">
+            Any live signal that hits TP1 or SL is automatically recorded into the Backtest Log below
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="bg-[#080B11] border border-[#222F47] rounded-xl p-2.5">
+            <div className="text-[10px] font-bold text-[#94A3B8] uppercase">Running in Market</div>
+            <div className="text-base font-black text-[#2979FF] mt-0.5">
+              {liveSignalStats.running.length} <span className="text-[10px] font-normal text-[#64748B]">Active</span>
+            </div>
+          </div>
+          <div className="bg-[#080B11] border border-[#222F47] rounded-xl p-2.5">
+            <div className="text-[10px] font-bold text-[#94A3B8] uppercase">Pending Orders</div>
+            <div className="text-base font-black text-[#FFD700] mt-0.5">
+              {liveSignalStats.pending.length} <span className="text-[10px] font-normal text-[#64748B]">Resting</span>
+            </div>
+          </div>
+          <div className="bg-[#080B11] border border-[#00E676]/30 rounded-xl p-2.5">
+            <div className="text-[10px] font-bold text-[#00E676] uppercase">Live Session TP1 Wins</div>
+            <div className="text-base font-black text-[#00E676] mt-0.5">
+              {liveSignalStats.hitTp.length} <span className="text-[10px] font-normal text-[#94A3B8]">Closed TP</span>
+            </div>
+          </div>
+          <div className="bg-[#080B11] border border-[#FF3366]/30 rounded-xl p-2.5">
+            <div className="text-[10px] font-bold text-[#FF3366] uppercase">Live Session SL Hits</div>
+            <div className="text-base font-black text-[#FF3366] mt-0.5">
+              {liveSignalStats.hitSl.length} <span className="text-[10px] font-normal text-[#94A3B8]">Closed SL</span>
+            </div>
+          </div>
+        </div>
+
+        {(liveSignalStats.hitTp.length > 0 || liveSignalStats.hitSl.length > 0) && (
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {liveSignalStats.hitTp.map(sig => (
+              <span
+                key={sig.id}
+                onClick={() => onPairSelect(sig.pair.symbol)}
+                className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#00E676]/15 border border-[#00E676]/40 text-[#00E676] cursor-pointer"
+              >
+                🟢 {sig.pair.symbol} ({sig.type.replace('_', ' ')}) • HIT TP1 @ {sig.takeProfit1}
+              </span>
+            ))}
+            {liveSignalStats.hitSl.map(sig => (
+              <span
+                key={sig.id}
+                onClick={() => onPairSelect(sig.pair.symbol)}
+                className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#FF3366]/15 border border-[#FF3366]/40 text-[#FF3366] cursor-pointer"
+              >
+                🔴 {sig.pair.symbol} ({sig.type.replace('_', ' ')}) • HIT SL @ {sig.stopLoss}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 2. Audit Banner: Scanned Candles & Valid Setups */}
@@ -408,6 +503,33 @@ export const BacktestingLabScreen: React.FC<Props> = ({
 
       {/* 5. Filter Matrix Card */}
       <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3.5 space-y-3">
+        {/* Asset Category Row (Isolates Major, Crosses, Exotics, Metals, Crypto, Indices) */}
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 border-b border-[#222F47]/60">
+          <span className="text-[10px] text-[#FFD700] font-bold w-24 shrink-0 flex items-center gap-1">
+            <Globe className="w-3 h-3 text-[#FFD700]" />
+            <span>Category:</span>
+          </span>
+          <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+            {categoryTabs.map(cat => {
+              const isSelected = (!filter.category && cat.key === null) || filter.category === cat.key;
+              return (
+                <button
+                  key={cat.label}
+                  onClick={() => onCategorySelect?.(cat.key)}
+                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
+                    isSelected
+                      ? 'bg-[#2979FF] border-[#2979FF] text-white shadow-md'
+                      : 'bg-[#182033] border-[#222F47] text-[#94A3B8] hover:text-[#F1F5F9]'
+                  }`}
+                >
+                  <span>{cat.icon}</span>
+                  <span>{cat.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Timeframe Row (15M, H1, H4, D1) */}
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
           <span className="text-[10px] text-[#64748B] font-bold w-24 shrink-0">Timeframe:</span>
@@ -457,18 +579,18 @@ export const BacktestingLabScreen: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Deriv Symbol Row */}
+        {/* Symbol Row (Dynamically populated by active category to prevent mixing) */}
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-          <span className="text-[10px] text-[#64748B] font-bold w-24 shrink-0">Deriv Symbol:</span>
-          <div className="flex gap-1.5">
-            {pairs.map(item => (
+          <span className="text-[10px] text-[#64748B] font-bold w-24 shrink-0">Select Symbol:</span>
+          <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+            {availablePairs.map(item => (
               <button
                 key={item.label}
                 onClick={() => onPairSelect(item.pair)}
                 className={`text-[10px] font-bold px-2.5 py-1 rounded-md border transition-all whitespace-nowrap cursor-pointer ${
                   filter.pairSymbol === item.pair
                     ? 'bg-[#00E676] border-[#00E676] text-[#080B11]'
-                    : 'bg-[#182033] border-[#222F47] text-[#94A3B8]'
+                    : 'bg-[#182033] border-[#222F47] text-[#94A3B8] hover:text-[#F1F5F9]'
                 }`}
               >
                 {item.label}
@@ -571,49 +693,65 @@ export const BacktestingLabScreen: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* 7. Real Account Balance & Equity Curve (From real balance progression) */}
+      {/* 7. Real Account Balance & Cumulative PnL Curve (Recharts Engine) */}
       <RealEquityCurveChart
         equityPoints={currentSummary.equityCurve}
         initialBalance={10000}
+        trades={currentSummary.filteredTrades}
+        summary={currentSummary}
       />
 
-      {/* 8. Real Performance By Symbol */}
-      <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3.5 space-y-2">
-        <div className="flex items-center justify-between mb-1">
+      {/* 8. Real Performance By Symbol (Categorized Cleanly) */}
+      <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3.5 space-y-2.5">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
           <div className="flex items-center gap-2">
             <BarChart3 className="w-4 h-4 text-[#00E676]" />
             <span className="text-xs font-bold text-[#F1F5F9] uppercase tracking-wider">
-              Real Performance By Deriv Symbol (Spread Included)
+              {filter.category ? `${filter.category} Performance Breakdown` : 'All Assets Performance Breakdown'}
             </span>
           </div>
-          <span className="text-[10px] text-[#64748B] font-mono">Next Candle Open Execution</span>
+          <span className="text-[10px] text-[#64748B] font-mono">Isolated Category Results • Next Candle Open Execution</span>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {assetBreakdown.map(item => (
-            <div
-              key={item.symbol}
-              onClick={() => onPairSelect(filter.pairSymbol === item.symbol ? null : item.symbol)}
-              className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
-                filter.pairSymbol === item.symbol
-                  ? 'bg-[#182033] border-[#00E676] shadow-[0_0_8px_rgba(0,230,118,0.2)]'
-                  : 'bg-[#0d121c] border-[#222F47]/80 hover:border-[#222F47]'
-              }`}
-            >
-              <div className="flex items-center justify-between text-xs font-bold text-[#F1F5F9]">
-                <span>{item.symbol}</span>
-                <span className={`text-[10px] font-mono ${item.winRate >= 50 ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
-                  {item.winRate}% W/R
-                </span>
+          {assetBreakdown.map(item => {
+            const catCls = item.category === 'MAJORS' ? 'text-[#2979FF] bg-[#2979FF]/10 border-[#2979FF]/30'
+              : item.category === 'MINORS' ? 'text-[#A855F7] bg-[#A855F7]/10 border-[#A855F7]/30'
+              : item.category === 'EXOTICS' ? 'text-[#00E5FF] bg-[#00E5FF]/10 border-[#00E5FF]/30'
+              : item.category === 'METALS' ? 'text-[#FFD700] bg-[#FFD700]/10 border-[#FFD700]/30'
+              : item.category === 'CRYPTO' ? 'text-[#10B981] bg-[#10B981]/10 border-[#10B981]/30'
+              : 'text-[#FF9100] bg-[#FF9100]/10 border-[#FF9100]/30';
+
+            return (
+              <div
+                key={item.symbol}
+                onClick={() => onPairSelect(filter.pairSymbol === item.symbol ? null : item.symbol)}
+                className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
+                  filter.pairSymbol === item.symbol
+                    ? 'bg-[#182033] border-[#00E676] shadow-[0_0_8px_rgba(0,230,118,0.2)]'
+                    : 'bg-[#0d121c] border-[#222F47]/80 hover:border-[#222F47]'
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs font-bold text-[#F1F5F9] mb-1">
+                  <div className="flex items-center gap-1.5">
+                    <span>{item.symbol}</span>
+                    <span className={`text-[8px] font-black px-1 py-0.2 rounded border ${catCls}`}>
+                      {item.category.slice(0, 5)}
+                    </span>
+                  </div>
+                  <span className={`text-[10px] font-mono font-bold ${item.winRate >= 50 ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                    {item.winRate}%
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-[10px] font-mono text-[#94A3B8]">
+                  <span>{item.total} Trades</span>
+                  <span className={item.netPips >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'}>
+                    {item.netPips >= 0 ? `+${item.netPips}p` : `${item.netPips}p`}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center justify-between text-[10px] font-mono text-[#94A3B8] mt-1">
-                <span>{item.total} Trades</span>
-                <span className={item.netPips >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'}>
-                  {item.netPips >= 0 ? `+${item.netPips}p` : `${item.netPips}p`}
-                </span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 

@@ -13,6 +13,7 @@ const STORAGE_KEYS = {
   DERIV_TOKEN: 'fx_deriv_token',
   QUOTA: 'fx_api_quota_tracker',
   LAST_SYNC: 'fx_last_sync_timestamp',
+  AI_CHAT_MESSAGES: 'fx_ai_copilot_chat_history_v2',
 };
 
 export const PersistenceManager = {
@@ -193,6 +194,41 @@ export const PersistenceManager = {
   saveElev8Trades(trades: any[]): void {
     try {
       localStorage.setItem(STORAGE_KEYS.ELEV8_TRADES, JSON.stringify(trades));
+    } catch {
+      // ignore
+    }
+  },
+
+  getAiChatMessages(): any[] | null {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.AI_CHAT_MESSAGES);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  },
+
+  saveAiChatMessages(messages: any[]): void {
+    try {
+      // Filter out temporary pending/generating placeholders before saving
+      const validMessages = messages
+        .filter(m => !m.isGenerating)
+        .slice(-100); // Keep last 100 messages
+      localStorage.setItem(STORAGE_KEYS.AI_CHAT_MESSAGES, JSON.stringify(validMessages));
+    } catch {
+      // ignore
+    }
+  },
+
+  clearAiChatMessages(): void {
+    try {
+      localStorage.removeItem(STORAGE_KEYS.AI_CHAT_MESSAGES);
     } catch {
       // ignore
     }

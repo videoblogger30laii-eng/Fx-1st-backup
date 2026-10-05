@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ForexSignal } from '../types';
+import { ForexSignal, getAssetCategory } from '../types';
 import {
   formatPrice,
   calculatePips,
@@ -12,6 +12,7 @@ import {
   getTpProgressRatio
 } from '../services/marketData';
 import { realPriceService } from '../services/RealPriceService';
+import { economicCalendarService } from '../services/economicCalendarService';
 import {
   Star,
   Bell,
@@ -27,7 +28,9 @@ import {
   Clock,
   Timer,
   Target,
-  Zap
+  Zap,
+  Flame,
+  AlertTriangle
 } from 'lucide-react';
 
 interface Props {
@@ -59,6 +62,7 @@ export const SignalCard: React.FC<Props> = ({
   const isTimeExpired = isPending && getRemainingValidityMs(signal, nowClockMs) <= 0;
   const isClosed = signal.status === 'HIT_TP' || signal.status === 'HIT_SL' || isTimeExpired;
   const countdown = getFormattedCountdown(signal, nowClockMs);
+  const newsGuard = economicCalendarService.getNewsGuard(signal.pair.symbol);
 
   // Live real-time price hook from Deriv/Twelve Data
   const [livePrice, setLivePrice] = useState<number>(() => {
@@ -116,6 +120,26 @@ export const SignalCard: React.FC<Props> = ({
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="flex items-center flex-wrap gap-2">
           <span className="text-base font-black text-[#F1F5F9]">{signal.pair.symbol}</span>
+          
+          {/* Asset Category Badge */}
+          {(() => {
+            const cat = getAssetCategory(signal.pair.symbol);
+            const badgeMap = {
+              MAJORS: { label: 'MAJOR', cls: 'bg-[#2979FF]/15 text-[#2979FF] border-[#2979FF]/30' },
+              MINORS: { label: 'CROSS', cls: 'bg-[#A855F7]/15 text-[#A855F7] border-[#A855F7]/30' },
+              EXOTICS: { label: 'EXOTIC', cls: 'bg-[#00E5FF]/15 text-[#00E5FF] border-[#00E5FF]/30' },
+              METALS: { label: 'METAL', cls: 'bg-[#FFD700]/15 text-[#FFD700] border-[#FFD700]/30' },
+              INDICES: { label: 'INDEX', cls: 'bg-[#FF9100]/15 text-[#FF9100] border-[#FF9100]/30' },
+              CRYPTO: { label: 'CRYPTO', cls: 'bg-[#10B981]/15 text-[#10B981] border-[#10B981]/30' }
+            };
+            const b = badgeMap[cat];
+            return (
+              <span className={`text-[8.5px] font-black px-1.5 py-0.5 rounded border ${b.cls}`}>
+                {b.label}
+              </span>
+            );
+          })()}
+
           <span
             className={`text-[9.5px] font-black px-2 py-0.5 rounded ${
               isBuy
@@ -128,6 +152,16 @@ export const SignalCard: React.FC<Props> = ({
           <span className="text-[9.5px] font-bold text-[#FFD700] bg-[#FFD700]/10 px-1.5 py-0.5 rounded border border-[#FFD700]/25">
             {signal.confluenceScore}%
           </span>
+
+          {newsGuard && newsGuard.isWarning && (
+            <span
+              className="text-[9px] font-bold text-[#FF3366] bg-[#FF3366]/20 px-1.5 py-0.5 rounded border border-[#FF3366]/50 flex items-center gap-1 animate-pulse"
+              title={`⚠️ High-Impact News: ${newsGuard.eventTitle} in ${newsGuard.minutesUntil} minutes!`}
+            >
+              <Flame className="w-2.5 h-2.5 text-[#FF3366]" />
+              <span>News {newsGuard.minutesUntil > 0 ? `in ${newsGuard.minutesUntil}m` : 'Live'}</span>
+            </span>
+          )}
 
           {/* Integrated Live Real-Time Price Pill */}
           <div
@@ -198,7 +232,7 @@ export const SignalCard: React.FC<Props> = ({
         <span className="font-mono bg-[#182033] px-2 py-0.5 rounded border border-[#222F47] text-[#F1F5F9] flex items-center gap-1">
           <span>{signal.timeframe}</span>
           {isPending && (
-            <span className="text-[9px] text-[#FFD700] font-semibold">({getFormattedTotalValidity(signal)} Entry Window)</span>
+            <span className="text-[9px] text-[#FFD700] font-semibold">({getFormattedTotalValidity(signal)})</span>
           )}
         </span>
       </div>

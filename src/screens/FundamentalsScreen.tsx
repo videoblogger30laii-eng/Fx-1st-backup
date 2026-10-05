@@ -16,6 +16,7 @@ export const FundamentalsScreen: React.FC<Props> = ({
   onRefreshMacro
 }) => {
   const [expandedNewsId, setExpandedNewsId] = useState<number | null>(null);
+  const [selectedPairByEvent, setSelectedPairByEvent] = useState<Record<string, string>>({});
 
   const getImpactBadge = (impact: ImpactLevel) => {
     switch (impact) {
@@ -225,30 +226,130 @@ export const FundamentalsScreen: React.FC<Props> = ({
           Upcoming High-Impact Economic Calendar
         </div>
 
-        <div className="space-y-2">
-          {economicEvents.map(event => (
-            <div
-              key={event.id}
-              className="bg-[#101522] border border-[#222F47] rounded-xl p-3 flex items-start justify-between gap-3"
-            >
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs font-mono font-bold text-[#F1F5F9] bg-[#182033] px-2 py-0.5 rounded border border-[#222F47]">
-                    {event.currency}
-                  </span>
-                  <span className="text-xs font-bold text-[#F1F5F9]">{event.title}</span>
-                </div>
-                <div className="text-[10px] text-[#94A3B8]">
-                  Time: {event.time} • Forecast: {event.forecast} • Prior: {event.previous}
-                </div>
-                <div className="text-[10px] text-[#2979FF] mt-1 font-medium">{event.bias}</div>
-              </div>
+        <div className="space-y-3">
+          {economicEvents.map(event => {
+            const isReleased = Date.now() >= event.timestamp;
+            const pairList = event.pairImpacts || [];
+            const selectedPairSym =
+              selectedPairByEvent[event.id] ||
+              pairList[0]?.pair ||
+              event.affectedPairs?.[0] ||
+              `${event.currency}/USD`;
+            const selectedPairImpact =
+              pairList.find(p => p.pair === selectedPairSym) || pairList[0];
+            const beatMakesPairBullish = selectedPairImpact
+              ? selectedPairImpact.ifBullishCurrency.startsWith('BUY')
+              : true;
 
-              <span className={`text-[9px] font-black px-2 py-0.5 rounded border uppercase shrink-0 ${getImpactBadge(event.impact)}`}>
-                {event.impact}
-              </span>
-            </div>
-          ))}
+            return (
+              <div
+                key={event.id}
+                className="bg-[#101522] border border-[#222F47] rounded-xl p-3.5 space-y-2.5"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="text-xs font-mono font-bold text-[#F1F5F9] bg-[#182033] px-2 py-0.5 rounded border border-[#222F47]">
+                        {event.currency}
+                      </span>
+                      <span className="text-xs font-bold text-[#F1F5F9]">{event.title}</span>
+                      <span className={`text-[9px] font-bold px-2 py-0.5 rounded ${
+                        isReleased
+                          ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
+                          : 'bg-[#FFD700]/15 text-[#FFD700] border border-[#FFD700]/30'
+                      }`}>
+                        {isReleased ? `✅ RELEASED (Actual: ${event.actual})` : `⏳ Scheduled (${event.timeFormatted})`}
+                      </span>
+                    </div>
+                    <div className="text-[10.5px] text-[#94A3B8] font-mono">
+                      Time: {event.timeFormatted || event.time} • Actual: <strong className={isReleased ? 'text-[#00E676]' : 'text-[#FFD700]'}>{event.actual || 'Pending'}</strong> • Forecast: <strong className="text-[#2979FF]">{event.forecast}</strong> • Prior: {event.previous}
+                    </div>
+                  </div>
+
+                  <span className={`text-[9px] font-black px-2 py-0.5 rounded border uppercase shrink-0 ${getImpactBadge(event.impact)}`}>
+                    {event.impact}
+                  </span>
+                </div>
+
+                {/* Impact Analysis Section */}
+                <div className="bg-[#080B11] border border-[#2979FF]/35 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2 py-0.5 rounded bg-[#2979FF]/20 border border-[#2979FF]/40 text-[#2979FF] text-[9.5px] font-black uppercase">
+                        Impact Analysis
+                      </span>
+                      <span className="text-[11px] font-bold text-[#F1F5F9]">
+                        Pair Impact & Strategy Adjustment ({selectedPairSym})
+                      </span>
+                    </div>
+
+                    {pairList.length > 0 && (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {pairList.map(pi => (
+                          <button
+                            key={pi.pair}
+                            type="button"
+                            onClick={() =>
+                              setSelectedPairByEvent(prev => ({ ...prev, [event.id]: pi.pair }))
+                            }
+                            className={`px-2 py-0.5 rounded font-mono text-[9.5px] font-bold border transition-colors ${
+                              pi.pair === selectedPairSym
+                                ? 'bg-[#2979FF] text-white border-[#2979FF]'
+                                : 'bg-[#121826] text-[#94A3B8] border-[#222F47] hover:text-white'
+                            }`}
+                          >
+                            {pi.pair}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px]">
+                    <div className="bg-[#00E676]/10 border border-[#00E676]/30 rounded-lg p-2 space-y-1">
+                      <div className="font-black text-[#00E676] uppercase">
+                        🟢 Bullish on {selectedPairSym} (▲ BUY)
+                      </div>
+                      <div className="text-[#94A3B8] font-mono text-[9.5px]">
+                        {beatMakesPairBullish
+                          ? `If ${event.currency} Actual > ${event.forecast}`
+                          : `If ${event.currency} Actual < ${event.forecast}`}
+                      </div>
+                      <p className="text-[#E2E8F0]">
+                        <strong>Strategy:</strong> Hold BUY trades & move SL to Breakeven; close opposing SELL trades; enter new BUY on M5/M15 Order Block pullback.
+                      </p>
+                    </div>
+
+                    <div className="bg-[#FF3366]/10 border border-[#FF3366]/30 rounded-lg p-2 space-y-1">
+                      <div className="font-black text-[#FF3366] uppercase">
+                        🔴 Bearish on {selectedPairSym} (▼ SELL)
+                      </div>
+                      <div className="text-[#94A3B8] font-mono text-[9.5px]">
+                        {beatMakesPairBullish
+                          ? `If ${event.currency} Actual < ${event.forecast}`
+                          : `If ${event.currency} Actual > ${event.forecast}`}
+                      </div>
+                      <p className="text-[#E2E8F0]">
+                        <strong>Strategy:</strong> Hold SELL trades & lock SL at Breakeven; exit BUY trades early; enter new SELL after liquidity sweep & M15 displacement.
+                      </p>
+                    </div>
+
+                    <div className="bg-[#FFD700]/10 border border-[#FFD700]/30 rounded-lg p-2 space-y-1">
+                      <div className="font-black text-[#FFD700] uppercase">
+                        🟡 Neutral on {selectedPairSym} (↔ RANGE)
+                      </div>
+                      <div className="text-[#94A3B8] font-mono text-[9.5px]">
+                        If {event.currency} Actual = {event.forecast} (In-Line)
+                      </div>
+                      <p className="text-[#E2E8F0]">
+                        <strong>Strategy:</strong> Keep pre-news technical SL/TP intact, secure 50% partial profit at TP1, and avoid chasing initial whip-saw wicks.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

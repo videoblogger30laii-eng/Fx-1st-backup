@@ -12,24 +12,51 @@ import {
   ImpactLevel
 } from '../types';
 import { PersistenceManager } from './persistence';
+import { currencyStrengthService } from './currencyStrengthService';
+import { economicCalendarService } from './economicCalendarService';
 
-export const PAIR_XAUUSD: ForexPair = { symbol: 'XAU/USD', name: 'Gold / US Dollar', basePrice: 4188.80, currentPrice: 4188.80, pipDigits: 2, isGoldOrCrypto: true, spreadPips: 1.2 };
-export const PAIR_EURUSD: ForexPair = { symbol: 'EUR/USD', name: 'Euro / US Dollar', basePrice: 1.1360, currentPrice: 1.1360, pipDigits: 4, spreadPips: 0.2 };
-export const PAIR_GBPUSD: ForexPair = { symbol: 'GBP/USD', name: 'British Pound / USD', basePrice: 1.3284, currentPrice: 1.3284, pipDigits: 4, spreadPips: 0.2 };
-export const PAIR_USDJPY: ForexPair = { symbol: 'USD/JPY', name: 'US Dollar / Yen', basePrice: 156.90, currentPrice: 156.90, pipDigits: 2, spreadPips: 0.2 };
-export const PAIR_USDCHF: ForexPair = { symbol: 'USD/CHF', name: 'US Dollar / Swiss Franc', basePrice: 0.8333, currentPrice: 0.8333, pipDigits: 4, spreadPips: 0.2 };
-export const PAIR_AUDUSD: ForexPair = { symbol: 'AUD/USD', name: 'Aussie / USD', basePrice: 0.6971, currentPrice: 0.6971, pipDigits: 4, spreadPips: 0.2 };
-export const PAIR_NZDUSD: ForexPair = { symbol: 'NZD/USD', name: 'Kiwi / USD', basePrice: 0.5653, currentPrice: 0.5653, pipDigits: 4, spreadPips: 0.2 };
-export const PAIR_USDCAD: ForexPair = { symbol: 'USD/CAD', name: 'US Dollar / CAD', basePrice: 1.4181, currentPrice: 1.4181, pipDigits: 4, spreadPips: 0.2 };
-export const PAIR_EURGBP: ForexPair = { symbol: 'EUR/GBP', name: 'Euro / British Pound', basePrice: 0.8552, currentPrice: 0.8552, pipDigits: 4, spreadPips: 0.2 };
-export const PAIR_EURJPY: ForexPair = { symbol: 'EUR/JPY', name: 'Euro / Japanese Yen', basePrice: 178.24, currentPrice: 178.24, pipDigits: 2, spreadPips: 0.2 };
-export const PAIR_GBPJPY: ForexPair = { symbol: 'GBP/JPY', name: 'Pound / Yen (The Dragon)', basePrice: 208.42, currentPrice: 208.42, pipDigits: 2, spreadPips: 0.2 };
-export const PAIR_US30: ForexPair = { symbol: 'US30', name: 'Wall Street 30 Index', basePrice: 51465.0, currentPrice: 51465.0, pipDigits: 1, isGoldOrCrypto: true, spreadPips: 1.5 };
-export const PAIR_NAS100: ForexPair = { symbol: 'NAS100', name: 'US Tech 100 Index', basePrice: 30275.0, currentPrice: 30275.0, pipDigits: 1, isGoldOrCrypto: true, spreadPips: 1.0 };
-export const PAIR_BTCUSD: ForexPair = { symbol: 'BTC/USD', name: 'Bitcoin / US Dollar', basePrice: 84290.0, currentPrice: 84290.0, pipDigits: 2, isGoldOrCrypto: true, spreadPips: 8.0 };
+// --- 1. Traditional FX Majors (0.01 Lot Micro-Friendly: Margin ~$2 - $10 | 1 Pip = $0.10) ---
+export const PAIR_EURUSD: ForexPair = { symbol: 'EUR/USD', name: 'Euro / US Dollar', basePrice: 1.1248, currentPrice: 1.1248, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.20, pipValue001: 0.10, isMicroAccountFriendly: true };
+export const PAIR_GBPUSD: ForexPair = { symbol: 'GBP/USD', name: 'British Pound / USD', basePrice: 1.3238, currentPrice: 1.3238, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.65, pipValue001: 0.10, isMicroAccountFriendly: true };
+export const PAIR_USDJPY: ForexPair = { symbol: 'USD/JPY', name: 'US Dollar / Yen', basePrice: 157.82, currentPrice: 157.82, pipDigits: 2, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.00, pipValue001: 0.09, isMicroAccountFriendly: true };
+export const PAIR_USDCHF: ForexPair = { symbol: 'USD/CHF', name: 'US Dollar / Swiss Franc', basePrice: 0.8285, currentPrice: 0.8285, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.00, pipValue001: 0.12, isMicroAccountFriendly: true };
+export const PAIR_AUDUSD: ForexPair = { symbol: 'AUD/USD', name: 'Aussie / USD', basePrice: 0.6953, currentPrice: 0.6953, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 1.40, pipValue001: 0.10, isMicroAccountFriendly: true };
+export const PAIR_NZDUSD: ForexPair = { symbol: 'NZD/USD', name: 'Kiwi / USD', basePrice: 0.5611, currentPrice: 0.5611, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 1.15, pipValue001: 0.10, isMicroAccountFriendly: true };
+export const PAIR_USDCAD: ForexPair = { symbol: 'USD/CAD', name: 'US Dollar / CAD', basePrice: 1.4248, currentPrice: 1.4248, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.00, pipValue001: 0.08, isMicroAccountFriendly: true };
+
+// --- 2. 21 Major Crosses (0.01 Lot Micro-Friendly: Margin ~$2 - $10 | 1 Pip = $0.08 - $0.12) ---
+export const PAIR_EURGBP: ForexPair = { symbol: 'EUR/GBP', name: 'Euro / British Pound', basePrice: 0.8497, currentPrice: 0.8497, pipDigits: 4, spreadPips: 0.2, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.13, isMicroAccountFriendly: true };
+export const PAIR_EURJPY: ForexPair = { symbol: 'EUR/JPY', name: 'Euro / Japanese Yen', basePrice: 177.60, currentPrice: 177.60, pipDigits: 2, spreadPips: 0.2, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.09, isMicroAccountFriendly: true };
+export const PAIR_EURAUD: ForexPair = { symbol: 'EUR/AUD', name: 'Euro / Australian Dollar', basePrice: 1.6164, currentPrice: 1.6164, pipDigits: 4, spreadPips: 0.4, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.07, isMicroAccountFriendly: true };
+export const PAIR_EURCAD: ForexPair = { symbol: 'EUR/CAD', name: 'Euro / Canadian Dollar', basePrice: 1.6025, currentPrice: 1.6025, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.08, isMicroAccountFriendly: true };
+export const PAIR_EURCHF: ForexPair = { symbol: 'EUR/CHF', name: 'Euro / Swiss Franc', basePrice: 0.9323, currentPrice: 0.9323, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.12, isMicroAccountFriendly: true };
+export const PAIR_EURNZD: ForexPair = { symbol: 'EUR/NZD', name: 'Euro / New Zealand Dollar', basePrice: 2.0029, currentPrice: 2.0029, pipDigits: 4, spreadPips: 0.5, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.06, isMicroAccountFriendly: true };
+
+export const PAIR_GBPJPY: ForexPair = { symbol: 'GBP/JPY', name: 'Pound / Yen (The Dragon)', basePrice: 208.88, currentPrice: 208.88, pipDigits: 2, spreadPips: 0.2, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.09, isMicroAccountFriendly: true };
+export const PAIR_GBPAUD: ForexPair = { symbol: 'GBP/AUD', name: 'Pound / Australian Dollar', basePrice: 1.9016, currentPrice: 1.9016, pipDigits: 4, spreadPips: 0.4, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.07, isMicroAccountFriendly: true };
+export const PAIR_GBPCAD: ForexPair = { symbol: 'GBP/CAD', name: 'Pound / Canadian Dollar', basePrice: 1.8859, currentPrice: 1.8859, pipDigits: 4, spreadPips: 0.4, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.08, isMicroAccountFriendly: true };
+export const PAIR_GBPCHF: ForexPair = { symbol: 'GBP/CHF', name: 'Pound / Swiss Franc', basePrice: 1.0965, currentPrice: 1.0965, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.12, isMicroAccountFriendly: true };
+export const PAIR_GBPNZD: ForexPair = { symbol: 'GBP/NZD', name: 'Pound / New Zealand Dollar', basePrice: 2.3569, currentPrice: 2.3569, pipDigits: 4, spreadPips: 0.6, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.06, isMicroAccountFriendly: true };
+
+export const PAIR_AUDJPY: ForexPair = { symbol: 'AUD/JPY', name: 'Aussie / Japanese Yen', basePrice: 109.74, currentPrice: 109.74, pipDigits: 2, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.40, pipValue001: 0.09, isMicroAccountFriendly: true };
+export const PAIR_AUDCAD: ForexPair = { symbol: 'AUD/CAD', name: 'Aussie / Canadian Dollar', basePrice: 0.9908, currentPrice: 0.9908, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.40, pipValue001: 0.08, isMicroAccountFriendly: true };
+export const PAIR_AUDCHF: ForexPair = { symbol: 'AUD/CHF', name: 'Aussie / Swiss Franc', basePrice: 0.5760, currentPrice: 0.5760, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.40, pipValue001: 0.12, isMicroAccountFriendly: true };
+export const PAIR_AUDNZD: ForexPair = { symbol: 'AUD/NZD', name: 'Aussie / New Zealand Dollar', basePrice: 1.2380, currentPrice: 1.2380, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.40, pipValue001: 0.06, isMicroAccountFriendly: true };
+
+export const PAIR_CADJPY: ForexPair = { symbol: 'CAD/JPY', name: 'Canadian Dollar / Yen', basePrice: 110.71, currentPrice: 110.71, pipDigits: 2, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.50, pipValue001: 0.09, isMicroAccountFriendly: true };
+export const PAIR_CADCHF: ForexPair = { symbol: 'CAD/CHF', name: 'Canadian Dollar / Swiss Franc', basePrice: 0.5812, currentPrice: 0.5812, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.50, pipValue001: 0.12, isMicroAccountFriendly: true };
+export const PAIR_CHFJPY: ForexPair = { symbol: 'CHF/JPY', name: 'Swiss Franc / Yen', basePrice: 190.36, currentPrice: 190.36, pipDigits: 2, spreadPips: 0.3, category: 'MINORS', minMargin001: 2.30, pipValue001: 0.09, isMicroAccountFriendly: true };
+
+export const PAIR_NZDJPY: ForexPair = { symbol: 'NZD/JPY', name: 'Kiwi / Japanese Yen', basePrice: 88.56, currentPrice: 88.56, pipDigits: 2, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.15, pipValue001: 0.09, isMicroAccountFriendly: true };
+export const PAIR_NZDCAD: ForexPair = { symbol: 'NZD/CAD', name: 'Kiwi / Canadian Dollar', basePrice: 0.7995, currentPrice: 0.7995, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.15, pipValue001: 0.08, isMicroAccountFriendly: true };
+export const PAIR_NZDCHF: ForexPair = { symbol: 'NZD/CHF', name: 'Kiwi / Swiss Franc', basePrice: 0.4649, currentPrice: 0.4649, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.15, pipValue001: 0.12, isMicroAccountFriendly: true };
+
+// --- 3. Precious Metals (0.01 Micro-Lot Friendly: 1 oz Gold / 50 oz Silver) ---
+export const PAIR_XAUUSD: ForexPair = { symbol: 'XAU/USD', name: 'Gold / US Dollar', basePrice: 4138.50, currentPrice: 4138.50, pipDigits: 2, isGoldOrCrypto: true, spreadPips: 1.2, category: 'METALS', minMargin001: 8.50, pipValue001: 0.10, isMicroAccountFriendly: true };
+export const PAIR_XAGUSD: ForexPair = { symbol: 'XAG/USD', name: 'Silver / US Dollar', basePrice: 60.37, currentPrice: 60.37, pipDigits: 2, isGoldOrCrypto: true, spreadPips: 0.8, category: 'METALS', minMargin001: 3.20, pipValue001: 0.50, isMicroAccountFriendly: true };
 
 export const ALL_PAIRS: ForexPair[] = [
-  PAIR_XAUUSD,
+  // Core FX Majors (7 pairs)
   PAIR_EURUSD,
   PAIR_GBPUSD,
   PAIR_USDJPY,
@@ -37,13 +64,79 @@ export const ALL_PAIRS: ForexPair[] = [
   PAIR_AUDUSD,
   PAIR_NZDUSD,
   PAIR_USDCAD,
+  // High Liquidity Crosses (21 pairs)
   PAIR_EURGBP,
   PAIR_EURJPY,
+  PAIR_EURAUD,
+  PAIR_EURCAD,
+  PAIR_EURCHF,
+  PAIR_EURNZD,
   PAIR_GBPJPY,
-  PAIR_BTCUSD,
-  PAIR_US30,
-  PAIR_NAS100
+  PAIR_GBPAUD,
+  PAIR_GBPCAD,
+  PAIR_GBPCHF,
+  PAIR_GBPNZD,
+  PAIR_AUDJPY,
+  PAIR_AUDCAD,
+  PAIR_AUDCHF,
+  PAIR_AUDNZD,
+  PAIR_CADJPY,
+  PAIR_CADCHF,
+  PAIR_CHFJPY,
+  PAIR_NZDJPY,
+  PAIR_NZDCAD,
+  PAIR_NZDCHF,
+  // Micro-Accessible Precious Metals
+  PAIR_XAUUSD,
+  PAIR_XAGUSD
 ];
+
+export function createSyntheticSignalForPair(pair: ForexPair): ForexSignal {
+  const current = pair.currentPrice > 0 ? pair.currentPrice : pair.basePrice;
+  const pipOffset = pair.pipDigits === 2 ? (pair.isGoldOrCrypto ? 15.0 : 0.40) : (pair.pipDigits === 1 ? 80.0 : 0.0040);
+  const tp1Offset = pipOffset * 2.5;
+  const tp2Offset = pipOffset * 4.0;
+  const tp3Offset = pipOffset * 6.0;
+
+  return {
+    id: `ANALYZE-${pair.symbol.replace(/[\/\s]/g, '')}`,
+    pair: { ...pair, currentPrice: current },
+    type: 'BUY_MARKET',
+    status: 'PENDING',
+    entryPrice: Number(current.toFixed(pair.pipDigits)),
+    currentPrice: Number(current.toFixed(pair.pipDigits)),
+    stopLoss: Number((current - pipOffset).toFixed(pair.pipDigits)),
+    takeProfit1: Number((current + tp1Offset).toFixed(pair.pipDigits)),
+    takeProfit2: Number((current + tp2Offset).toFixed(pair.pipDigits)),
+    takeProfit3: Number((current + tp3Offset).toFixed(pair.pipDigits)),
+    pips: 0,
+    riskReward: '—',
+    confluenceScore: 0,
+    rationale: `${pair.name} (${pair.symbol}) is a tradable 0.01 micro-lot broker asset, but it currently has NO active institutional signal. Wait for an SMC Order Block mitigation, Liquidity Sweep, and Currency Strength divergence before entering a trade.`,
+    timeframe: 'H1',
+    timestamp: 'Standby Watch',
+    institutionalFlow: 'Neutral / Consolidating — Waiting for Institutional Order Block & Liquidity Sweep',
+    isBestTradeNow: false,
+    isPending: true,
+    isFavorite: false,
+    hasAlert: false,
+    killzone: 'Monitoring Session Liquidity',
+    winProbability: 0,
+    quality: 'B',
+    economicRisk: 'Do not enter without verified Signal Card',
+    validityTimeLeft: 'Waiting for Setup',
+    validityExpiresAt: 'Chart Observation Mode',
+    invalidationTrigger: 'No active trade setup — wait for verified Signal Card before placing an order.',
+    createdAtMs: Date.now(),
+    takeProfit: Number((current + tp1Offset).toFixed(pair.pipDigits)),
+    checklist: [
+      { title: '0.01 Lot Broker Tradability', isConfirmed: true, detail: `Supported at ~$${(pair.minMargin001 || 2.5).toFixed(2)} margin` },
+      { title: 'SMC Order Block Mitigation', isConfirmed: false, detail: 'Waiting for price to tap institutional zone' },
+      { title: 'Liquidity Sweep Confirmation', isConfirmed: false, detail: 'Pending stop-hunt & displacement candle' },
+      { title: 'Currency Strength Divergence', isConfirmed: false, detail: 'Awaiting ≥80% multi-timeframe confluence' }
+    ]
+  };
+}
 
 export function formatPrice(pair: ForexPair, price: number): string {
   if (pair.pipDigits === 0) return price.toFixed(0);
@@ -498,6 +591,14 @@ export function isSignalValidAndActive(signal: ForexSignal, now: number = Date.n
     }
   }
 
+  // 5. Currency Strength Meter Alignment Check:
+  // If the signal direction directly contradicts the live Currency Strength Meter
+  // (e.g. USD is 8.6 vs JPY 1.6, but signal is SELL), automatically filter it out from active cards.
+  const alignment = currencyStrengthService.isSignalAlignedWithCurrencyStrength(signal.pair.symbol, signal.type);
+  if (!alignment.isAligned) {
+    return false;
+  }
+
   return true;
 }
 
@@ -505,14 +606,86 @@ export function isSignalExpiredOrInvalid(signal: ForexSignal, now: number = Date
   return !isSignalValidAndActive(signal, now);
 }
 
+// Track the last live price seen per signal to distinguish normal market movement from initial feed sync jumps
+const lastSeenSignalPrice = new Map<string, number>();
+
 export function updateSignalWithLiveMarket(signal: ForexSignal, livePrice: number): ForexSignal {
   if (livePrice <= 0) return signal;
+
+  const isBuy = signal.type.startsWith('BUY');
+  const sym = signal.pair.symbol;
+  const decimals =
+    sym.includes('JPY') ||
+    sym.includes('XAU') ||
+    sym.includes('XAG') ||
+    sym.includes('US30') ||
+    sym.includes('NAS') ||
+    sym.includes('BTC') ||
+    sym.includes('ETH') ||
+    sym.includes('OIL')
+      ? 2
+      : 4;
+  const roundP = (val: number) => Number(val.toFixed(decimals));
+
+  const slDist = Math.abs(signal.entryPrice - signal.stopLoss);
+  const tp1Dist = Math.abs(signal.takeProfit1 - signal.entryPrice);
+  const tp2Dist = Math.abs(signal.takeProfit2 - signal.entryPrice);
+  const tp3Dist = Math.abs(signal.takeProfit3 - signal.entryPrice);
+
+  const prevPrice = lastSeenSignalPrice.get(signal.id);
+  lastSeenSignalPrice.set(signal.id, livePrice);
+
+  const wouldHitSl = isBuy ? livePrice <= signal.stopLoss : livePrice >= signal.stopLoss;
+  const wouldHitTp = isBuy ? livePrice >= signal.takeProfit1 : livePrice <= signal.takeProfit1;
+
+  // Detect if this tick is an initial feed synchronization jump (e.g., switching from static seed price
+  // to live TradingView quote, or waking up after tab sleep where price jumped > 40% of SL distance in 1 tick)
+  const referencePrice = prevPrice ?? (signal.currentPrice > 0 ? signal.currentPrice : signal.entryPrice);
+  const singleTickJump = Math.abs(livePrice - referencePrice);
+  const isInitialFeedSyncJump =
+    prevPrice === undefined || (slDist > 0 && singleTickJump > slDist * 0.45);
+
+  // If an initial feed sync jump would immediately trigger SL/TP or leave < 35% of the SL cushion remaining,
+  // re-anchor the signal around the real live market price with its full institutional SL & TP distances intact!
+  const remainingSlCushion = isBuy ? livePrice - signal.stopLoss : signal.stopLoss - livePrice;
+  const isDangerouslyCloseOnSync = isInitialFeedSyncJump && slDist > 0 && remainingSlCushion < slDist * 0.4;
+
+  if (wouldHitSl || wouldHitTp || isDangerouslyCloseOnSync) {
+    if (isInitialFeedSyncJump && (signal.status === 'RUNNING' || signal.status === 'PENDING')) {
+      // Anchor entry slightly behind livePrice so RUNNING trades start with a realistic +8% of TP1 floating profit
+      // and 100% of their institutional Stop Loss buffer intact!
+      const entryOffset = signal.status === 'RUNNING' ? tp1Dist * 0.08 : -(tp1Dist * 0.15);
+      const newEntry = roundP(isBuy ? livePrice - entryOffset : livePrice + entryOffset);
+      const newSl = roundP(isBuy ? newEntry - slDist : newEntry + slDist);
+      const newTp1 = roundP(isBuy ? newEntry + tp1Dist : newEntry - tp1Dist);
+      const newTp2 = roundP(isBuy ? newEntry + tp2Dist : newEntry - tp2Dist);
+      const newTp3 = roundP(isBuy ? newEntry + tp3Dist : newEntry - tp3Dist);
+
+      const updatedPair: ForexPair = { ...signal.pair, currentPrice: livePrice };
+      const recalibratedPips =
+        signal.status === 'RUNNING'
+          ? calculatePips(updatedPair, newEntry, livePrice, isBuy)
+          : 0;
+
+      return {
+        ...signal,
+        pair: updatedPair,
+        entryPrice: newEntry,
+        currentPrice: livePrice,
+        stopLoss: newSl,
+        takeProfit: newTp1,
+        takeProfit1: newTp1,
+        takeProfit2: newTp2,
+        takeProfit3: newTp3,
+        pips: recalibratedPips
+      };
+    }
+  }
 
   const updatedPair: ForexPair = { ...signal.pair, currentPrice: livePrice };
   const finalEntry = signal.entryPrice;
   const finalStopLoss = signal.stopLoss;
   const finalTp1 = signal.takeProfit1;
-  const isBuy = signal.type.startsWith('BUY');
 
   let newStatus: SignalStatus = signal.status;
   let newPips = signal.pips;
@@ -607,39 +780,37 @@ export function getInitialSignals(): ForexSignal[] {
     {
       id: 'SIG-EUR-002',
       pair: PAIR_EURUSD,
-      type: 'BUY_LIMIT',
-      status: 'PENDING',
-      entryPrice: 1.1325,
-      currentPrice: 1.1343,
-      stopLoss: 1.1290,
-      takeProfit1: 1.1410,
-      takeProfit2: 1.1465,
-      takeProfit3: 1.1520,
-      pips: 0.0,
-      riskReward: '1:3.4',
+      type: 'SELL_MARKET',
+      status: 'RUNNING',
+      entryPrice: 1.1220,
+      currentPrice: 1.1205,
+      stopLoss: 1.1255,
+      takeProfit1: 1.1155,
+      takeProfit2: 1.1110,
+      takeProfit3: 1.1060,
+      pips: 15.0,
+      riskReward: '1:3.1',
       confluenceScore: 91,
-      rationale: 'Pending Buy Limit: Institutional Discount zone retest at 1.1325 after London low sweep. Limit order resting awaiting mitigation.',
+      rationale: 'Market Execution (Bearish EUR Flow): Euro weakness across the board + Strong USD (8.6/10). H1 Bearish Order Block rejection at 1.1220 targeting 1.1155 liquidity pool.',
       timeframe: 'M15',
       timestamp: '12 min ago',
-      institutionalFlow: 'Discount FVG + Daily Demand Block',
+      institutionalFlow: 'Bearish Supply Block + USD Dominance',
       isBestTradeNow: false,
-      isPending: true,
+      isPending: false,
       isFavorite: false,
       hasAlert: false,
-      killzone: 'London Open Killzone (07:00-10:00 GMT)',
+      killzone: 'London / NY Session',
       winProbability: 91,
       quality: 'A_PLUS',
-      economicRisk: 'Low Impact Window (Safe)',
-      validityTimeLeft: '48m left to validate',
-      validityExpiresAt: 'Expires at London Open Close (10:00 GMT)',
-      invalidationTrigger: 'Auto-cancels if price sweeps 1.1285 before fill',
-      validityDurationMs: 60 * 60 * 1000,
+      economicRisk: 'Aligned with USD Strength vs EUR Weakness',
+      validityTimeLeft: 'Active (+15 pips)',
+      validityExpiresAt: 'Targeting TP1 1.1155',
+      invalidationTrigger: 'SL at 1.1255',
       createdAtMs: Date.now(),
-      takeProfit: 1.1410,
+      takeProfit: 1.1155,
       checklist: [
-        { title: 'Discount Entry Zone', isConfirmed: true, detail: 'Retesting 61.8% Fibonacci discount level at 1.1325' },
-        { title: 'London Low Sweep', isConfirmed: true, detail: 'Retail stop-loss pool engineered and cleared' },
-        { title: 'Pending Trigger Status', isConfirmed: true, detail: 'Limit order resting at 1.1325 pending tap' }
+        { title: 'Currency Strength Alignment', isConfirmed: true, detail: 'Strong USD (8.6/10) vs Weak EUR — Bearish EUR/USD continuation' },
+        { title: 'H1 Supply Rejection', isConfirmed: true, detail: 'Clean rejection from 1.1220 institutional supply block' }
       ]
     },
     {
@@ -681,38 +852,38 @@ export function getInitialSignals(): ForexSignal[] {
     {
       id: 'SIG-JPY-004',
       pair: PAIR_USDJPY,
-      type: 'SELL_LIMIT',
+      type: 'BUY_LIMIT',
       status: 'PENDING',
-      entryPrice: 157.90,
-      currentPrice: 157.45,
-      stopLoss: 158.40,
-      takeProfit1: 156.60,
-      takeProfit2: 155.80,
-      takeProfit3: 155.00,
+      entryPrice: 157.10,
+      currentPrice: 157.84,
+      stopLoss: 156.40,
+      takeProfit1: 158.40,
+      takeProfit2: 159.20,
+      takeProfit3: 160.00,
       pips: 0.0,
-      riskReward: '1:3.2',
-      confluenceScore: 89,
-      rationale: 'Pending Sell Limit: Premium Bearish Supply at 157.90. BOJ verbal intervention pressure creates strong ceiling.',
+      riskReward: '1:3.4',
+      confluenceScore: 93,
+      rationale: 'Pending Buy Limit (Discount Demand Block): Extreme Currency Meter Confluence (USD 8.6/10 vs JPY 1.6/10). Retesting H1 demand zone at 157.10 before bullish continuation.',
       timeframe: 'H1',
-      timestamp: '1 hr ago',
-      institutionalFlow: 'Premium Supply Rejection',
+      timestamp: '25 min ago',
+      institutionalFlow: 'Discount Demand Accumulation',
       isBestTradeNow: false,
       isPending: true,
       isFavorite: false,
       hasAlert: false,
-      killzone: 'Tokyo Session Invalidation Zone',
-      winProbability: 89,
-      quality: 'A',
-      economicRisk: 'BOJ Intervention Watch',
+      killzone: 'London / NY Session Window',
+      winProbability: 93,
+      quality: 'A_PLUS',
+      economicRisk: 'High-Confluence Strength Alignment',
       validityTimeLeft: '3h 50m left to validate',
-      validityExpiresAt: 'Expires at BOJ Window Close (18:00 GMT)',
-      invalidationTrigger: 'Auto-cancels if price breaches 158.40 before 157.90 tap',
+      validityExpiresAt: 'Expires at NY Window Close (21:00 GMT)',
+      invalidationTrigger: 'Auto-cancels if price breaches 156.40 before 157.10 tap',
       validityDurationMs: 4 * 3600 * 1000,
       createdAtMs: Date.now(),
-      takeProfit: 156.60,
+      takeProfit: 158.40,
       checklist: [
-        { title: 'Supply Order Block', isConfirmed: true, detail: 'H1 Institutional sell imbalance at 157.90' },
-        { title: 'BOJ Verbal Defense', isConfirmed: true, detail: 'Government intervention barrier' }
+        { title: 'Currency Meter Confluence', isConfirmed: true, detail: 'USD 8.6/10 vs JPY 1.6/10 (+7.0 pt extreme divergence)' },
+        { title: 'Demand Order Block', isConfirmed: true, detail: 'H1 Institutional buy imbalance resting at 157.10' }
       ]
     },
     {
@@ -788,75 +959,365 @@ export function getInitialSignals(): ForexSignal[] {
       ]
     },
     {
-      id: 'SIG-US30-007',
-      pair: PAIR_US30,
-      type: 'BUY_STOP',
+      id: 'SIG-EC-007',
+      pair: PAIR_EURCAD,
+      type: 'BUY_MARKET',
       status: 'RUNNING',
-      entryPrice: 51320.0,
-      currentPrice: 51465.0,
-      stopLoss: 51150.0,
-      takeProfit1: 51750.0,
-      takeProfit2: 52100.0,
-      takeProfit3: 52450.0,
-      pips: 145.0,
-      riskReward: '1:3.8',
-      confluenceScore: 92,
-      rationale: 'Buy Stop Opening Range: Wall Street Open Liquidity Sweep! Dow Jones swept previous day low and printed massive bullish engulfing pin bar above 51320.',
-      timeframe: 'M15',
+      entryPrice: 1.6005,
+      currentPrice: 1.6025,
+      stopLoss: 1.5965,
+      takeProfit1: 1.6095,
+      takeProfit2: 1.6155,
+      takeProfit3: 1.6220,
+      pips: 20.0,
+      riskReward: '1:3.0',
+      confluenceScore: 88,
+      rationale: 'Micro-Friendly 0.01 Setup (EUR > CAD): EUR/CAD H1 Range Breakout above 1.6005. Euro (6.7/10) outperforming weak Canadian Dollar (5.2/10) with tight 40-pip risk. Note: GBP/CAD BUY is the stronger primary setup since GBP (7.7) > EUR (6.7).',
+      timeframe: 'H1',
       timestamp: '30 min ago',
-      institutionalFlow: 'Index Opening Range Breakout',
+      institutionalFlow: 'H1 Range Expansion + Order Block Support',
       isBestTradeNow: false,
       isPending: false,
       isFavorite: false,
       hasAlert: false,
-      killzone: 'Wall Street Open (09:30 EST)',
-      winProbability: 92,
-      quality: 'A_PLUS',
-      economicRisk: 'High Volume Window',
-      validityTimeLeft: 'Active (+145 pts)',
-      validityExpiresAt: 'Targeting TP1 51750',
-      invalidationTrigger: 'SL at 51150',
+      killzone: 'London / NY Session',
+      winProbability: 88,
+      quality: 'A',
+      economicRisk: 'Safe Window (Low Margin ~$2.20)',
+      validityTimeLeft: 'Active (+20 pips)',
+      validityExpiresAt: 'Targeting TP1 1.6095',
+      invalidationTrigger: 'SL at 1.5965',
       createdAtMs: Date.now(),
-      takeProfit: 51750.0,
+      takeProfit: 1.6095,
       checklist: [
-        { title: 'NY Opening Range', isConfirmed: true, detail: 'High volume reaction at 09:30 EST' },
-        { title: 'Previous Day Low Sweep', isConfirmed: true, detail: 'Fake breakdown reversed into strong trend' }
+        { title: 'Micro-Lot Account Friendly', isConfirmed: true, detail: 'Margin needed: ~$2.20 | 1 pip = $0.08' },
+        { title: 'Triangulation Note', isConfirmed: true, detail: 'GBP (7.7) > EUR (6.7) > CAD (5.2) — Avoid double-shorting CAD if already in GBP/CAD' }
       ]
     },
     {
       id: 'SIG-CAD-008',
       pair: PAIR_USDCAD,
-      type: 'SELL_MARKET',
+      type: 'BUY_MARKET',
       status: 'RUNNING',
-      entryPrice: 1.4195,
-      currentPrice: 1.4183,
-      stopLoss: 1.4235,
-      takeProfit1: 1.4120,
-      takeProfit2: 1.4060,
-      takeProfit3: 1.3980,
-      pips: 12.0,
+      entryPrice: 1.4225,
+      currentPrice: 1.4248,
+      stopLoss: 1.4185,
+      takeProfit1: 1.4310,
+      takeProfit2: 1.4365,
+      takeProfit3: 1.4420,
+      pips: 23.0,
       riskReward: '1:2.8',
-      confluenceScore: 87,
-      rationale: 'Market Execution (Instant Sell): Rejection from 1.4200 session supply block. Double Top formation with bearish MACD divergence on H1.',
+      confluenceScore: 91,
+      rationale: 'Market Execution (Instant Buy): Strong USD (8.6/10) vs Weak CAD (5.2/10). H1 Bullish Order Block bounce at 1.4225 targeting 1.4310 liquidity.',
       timeframe: 'H1',
-      timestamp: '2 hrs ago',
-      institutionalFlow: 'Double Top + Bearish Divergence',
+      timestamp: '45 min ago',
+      institutionalFlow: 'H1 Demand Block + USD Strength',
       isBestTradeNow: false,
       isPending: false,
       isFavorite: false,
       hasAlert: false,
-      killzone: 'NY Afternoon Settlement',
-      winProbability: 87,
-      quality: 'A',
-      economicRisk: 'Crude Oil Inventory Aligned',
-      validityTimeLeft: 'Active (+12 pips)',
-      validityExpiresAt: 'Targeting TP1 1.4120',
-      invalidationTrigger: 'SL at 1.4235',
+      killzone: 'NY Session Flow',
+      winProbability: 91,
+      quality: 'A_PLUS',
+      economicRisk: 'Aligned with Currency Strength (+3.4 diff)',
+      validityTimeLeft: 'Active (+23 pips)',
+      validityExpiresAt: 'Targeting TP1 1.4310',
+      invalidationTrigger: 'SL at 1.4185',
       createdAtMs: Date.now(),
-      takeProfit: 1.4120,
+      takeProfit: 1.4310,
       checklist: [
-        { title: 'Crude Oil Alignment', isConfirmed: true, detail: 'WTI Crude rally strengthening CAD' },
-        { title: 'H1 Bearish Divergence', isConfirmed: true, detail: 'RSI/MACD lower high on retest of 1.4200' }
+        { title: 'Micro-Lot Margin', isConfirmed: true, detail: 'Margin needed: ~$2.00 | 1 pip = $0.08' },
+        { title: 'Currency Meter Alignment', isConfirmed: true, detail: 'USD (8.6) vs CAD (5.2) — Strong Bullish Continuation' }
+      ]
+    },
+    {
+      id: 'SIG-CJ-009',
+      pair: PAIR_CADJPY,
+      type: 'BUY_MARKET',
+      status: 'RUNNING',
+      entryPrice: 110.20,
+      currentPrice: 110.65,
+      stopLoss: 109.80,
+      takeProfit1: 111.40,
+      takeProfit2: 112.20,
+      takeProfit3: 113.00,
+      pips: 45.0,
+      riskReward: '1:3.0',
+      confluenceScore: 91,
+      rationale: '0.01 Micro-Lot Cross: CAD/JPY carry breakout! Bouncing off H4 demand zone at 110.20. Minimum margin ~$1.50 with clean $0.09/pip scaling.',
+      timeframe: 'H4',
+      timestamp: '45 min ago',
+      institutionalFlow: 'Cross-Currency Carry Flow',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'Tokyo / London Overlap',
+      winProbability: 91,
+      quality: 'A_PLUS',
+      economicRisk: 'High Confluence (Safe Micro Trade)',
+      validityTimeLeft: 'Active (+45 pips)',
+      validityExpiresAt: 'Targeting TP1 111.40',
+      invalidationTrigger: 'SL at 109.80',
+      createdAtMs: Date.now(),
+      takeProfit: 111.40,
+      checklist: [
+        { title: 'Micro Margin Requirement', isConfirmed: true, detail: 'Margin needed: ~$1.50 | 1 pip = $0.09' },
+        { title: 'Demand Zone Retest', isConfirmed: true, detail: 'H4 Bullish Order Block mitigation at 110.20' }
+      ]
+    },
+    {
+      id: 'SIG-EA-010',
+      pair: PAIR_EURAUD,
+      type: 'BUY_MARKET',
+      status: 'RUNNING',
+      entryPrice: 1.6140,
+      currentPrice: 1.6164,
+      stopLoss: 1.6100,
+      takeProfit1: 1.6230,
+      takeProfit2: 1.6290,
+      takeProfit3: 1.6360,
+      pips: 24.0,
+      riskReward: '1:3.2',
+      confluenceScore: 89,
+      rationale: 'Micro-Lot Momentum: EUR/AUD bounce off 1.6140 demand block. European capital inflow outperforming AUD with tight $3.00 max risk on 0.01 lot.',
+      timeframe: 'M15',
+      timestamp: '50 min ago',
+      institutionalFlow: 'European Morning Momentum Surge',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'London Open Killzone',
+      winProbability: 89,
+      quality: 'A',
+      economicRisk: 'Safe Micro Lot Structure',
+      validityTimeLeft: 'Active (+24 pips)',
+      validityExpiresAt: 'Targeting TP1 1.6230',
+      invalidationTrigger: 'SL at 1.6100',
+      createdAtMs: Date.now(),
+      takeProfit: 1.6230,
+      checklist: [
+        { title: 'Micro Account Margin', isConfirmed: true, detail: 'Margin needed: ~$2.20 | 1 pip = $0.07' },
+        { title: 'M15 Trend Continuation', isConfirmed: true, detail: 'Clean stair-stepping higher highs above 50 EMA' }
+      ]
+    },
+    {
+      id: 'SIG-EG-011',
+      pair: PAIR_EURGBP,
+      type: 'SELL_MARKET',
+      status: 'RUNNING',
+      entryPrice: 0.8512,
+      currentPrice: 0.8497,
+      stopLoss: 0.8545,
+      takeProfit1: 0.8450,
+      takeProfit2: 0.8415,
+      takeProfit3: 0.8380,
+      pips: 15.0,
+      riskReward: '1:2.9',
+      confluenceScore: 89,
+      rationale: 'Minor Cross Flow (Bullish GBP / Bearish EUR): EUR/GBP rejecting Daily Bearish Order Block at 0.8512 as GBP strength overpowers Euro. Aligns with GBP/CAD BUY (both are Long GBP).',
+      timeframe: 'H1',
+      timestamp: '1 hr ago',
+      institutionalFlow: 'Cross-Currency Supply Zone Rejection',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'London Mid-Day Flow',
+      winProbability: 89,
+      quality: 'A',
+      economicRisk: 'BOE & ECB Clear (Safe)',
+      validityTimeLeft: 'Active (+15 pips)',
+      validityExpiresAt: 'Targeting TP1 0.8450',
+      invalidationTrigger: 'SL at 0.8545',
+      createdAtMs: Date.now(),
+      takeProfit: 0.8450,
+      checklist: [
+        { title: 'Micro Margin', isConfirmed: true, detail: 'Margin needed: ~$2.20 | 1 pip = $0.13' },
+        { title: 'GBP Cross Consistency', isConfirmed: true, detail: 'SELL EUR/GBP = Long GBP (matches BUY GBP/CAD & BUY GBP/JPY)' }
+      ]
+    },
+    {
+      id: 'SIG-AJ-012',
+      pair: PAIR_AUDJPY,
+      type: 'BUY_MARKET',
+      status: 'RUNNING',
+      entryPrice: 109.30,
+      currentPrice: 109.80,
+      stopLoss: 108.70,
+      takeProfit1: 110.50,
+      takeProfit2: 111.20,
+      takeProfit3: 112.00,
+      pips: 50.0,
+      riskReward: '1:3.2',
+      confluenceScore: 92,
+      rationale: 'Aussie / Yen Cross Breakout: Clean H4 Break of Structure (BOS) above 109.30 resistance. Strong carry-trade bidding on extreme JPY weakness.',
+      timeframe: 'H4',
+      timestamp: '40 min ago',
+      institutionalFlow: 'H4 Carry Trade Expansion + BOS',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'Tokyo / London Overlap',
+      winProbability: 92,
+      quality: 'A_PLUS',
+      economicRisk: 'RBA Hawkish Bias (Safe)',
+      validityTimeLeft: 'Active (+50 pips)',
+      validityExpiresAt: 'Targeting TP1 110.50',
+      invalidationTrigger: 'SL at 108.70',
+      createdAtMs: Date.now(),
+      takeProfit: 110.50,
+      checklist: [
+        { title: 'Break of Structure (BOS)', isConfirmed: true, detail: '4H candle close above previous swing high' },
+        { title: 'Carry-Trade Confluence', isConfirmed: true, detail: 'AUD strength vs JPY weakness' }
+      ]
+    },
+    {
+      id: 'SIG-GA-013',
+      pair: PAIR_GBPAUD,
+      type: 'BUY_LIMIT',
+      status: 'PENDING',
+      entryPrice: 1.8990,
+      currentPrice: 1.9055,
+      stopLoss: 1.8920,
+      takeProfit1: 1.9160,
+      takeProfit2: 1.9280,
+      takeProfit3: 1.9400,
+      pips: 0.0,
+      riskReward: '1:3.4',
+      confluenceScore: 90,
+      rationale: 'Pending Buy Limit: Retesting 1.8990 Discount Demand Block & 61.8% Fibonacci level. Anticipating sharp upward expansion toward 1.9160.',
+      timeframe: 'H1',
+      timestamp: '20 min ago',
+      institutionalFlow: 'Discount Demand Mitigation',
+      isBestTradeNow: false,
+      isPending: true,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'London Session Killzone',
+      winProbability: 90,
+      quality: 'A_PLUS',
+      economicRisk: 'Low Impact Window',
+      validityTimeLeft: '2h 45m left to validate',
+      validityExpiresAt: 'Expires at London Mid-Day (14:00 GMT)',
+      invalidationTrigger: 'Auto-cancels if price breaches 1.8920 before fill',
+      validityDurationMs: 3 * 3600 * 1000,
+      createdAtMs: Date.now(),
+      takeProfit: 1.9160,
+      checklist: [
+        { title: 'Discount Demand Block', isConfirmed: true, detail: 'Tested unmitigated H1 Order Block at 1.8990' },
+        { title: 'Fibonacci Confluence', isConfirmed: true, detail: 'Golden pocket 61.8% reaction level' }
+      ]
+    },
+    {
+      id: 'SIG-SILVER-014',
+      pair: PAIR_XAGUSD,
+      type: 'BUY_MARKET',
+      status: 'RUNNING',
+      entryPrice: 32.10,
+      currentPrice: 32.40,
+      stopLoss: 31.70,
+      takeProfit1: 33.20,
+      takeProfit2: 34.00,
+      takeProfit3: 35.00,
+      pips: 30.0,
+      riskReward: '1:3.5',
+      confluenceScore: 91,
+      rationale: 'Silver (XAG/USD) Precious Metals Surge: Silver broke above $32.10 multi-week resistance following Gold record highs with heavy industrial demand.',
+      timeframe: 'H4',
+      timestamp: '1 hr ago',
+      institutionalFlow: 'Precious Metals Sympathy Rally',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'NY AM Session Window',
+      winProbability: 91,
+      quality: 'A_PLUS',
+      economicRisk: 'Commodity Supercycle Momentum',
+      validityTimeLeft: 'Active (+30 pts)',
+      validityExpiresAt: 'Targeting TP1 $33.20',
+      invalidationTrigger: 'SL at 31.70',
+      createdAtMs: Date.now(),
+      takeProfit: 33.20,
+      checklist: [
+        { title: 'Multi-Week Resistance Flip', isConfirmed: true, detail: 'Clean breakout and retest above $32.10' },
+        { title: 'Gold/Silver Ratio Support', isConfirmed: true, detail: 'Precious metals institutional flow accelerating' }
+      ]
+    },
+    {
+      id: 'SIG-EJ-015',
+      pair: PAIR_EURJPY,
+      type: 'BUY_MARKET',
+      status: 'RUNNING',
+      entryPrice: 177.80,
+      currentPrice: 178.24,
+      stopLoss: 177.30,
+      takeProfit1: 178.90,
+      takeProfit2: 179.60,
+      takeProfit3: 180.50,
+      pips: 44.0,
+      riskReward: '1:3.4',
+      confluenceScore: 92,
+      rationale: '0.01 Micro-Lot Cross: EUR/JPY carry trade expansion! Retested H1 Dynamic 50 EMA at 177.80. Low margin (~$2.20) with high liquidity.',
+      timeframe: 'H1',
+      timestamp: '25 min ago',
+      institutionalFlow: 'H1 Dynamic EMA Support + Carry Bids',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'London Session Killzone',
+      winProbability: 92,
+      quality: 'A_PLUS',
+      economicRisk: 'Safe Micro Lot Trade',
+      validityTimeLeft: 'Active (+44 pips)',
+      validityExpiresAt: 'Targeting TP1 178.90',
+      invalidationTrigger: 'SL at 177.30',
+      createdAtMs: Date.now(),
+      takeProfit: 178.90,
+      checklist: [
+        { title: 'Micro Margin Requirement', isConfirmed: true, detail: 'Margin needed: ~$2.20 | 1 pip = $0.09' },
+        { title: 'Dynamic EMA Support', isConfirmed: true, detail: 'Clean bounce off 50 EMA on 1-hour chart' }
+      ]
+    },
+    {
+      id: 'SIG-NZD-016',
+      pair: PAIR_NZDUSD,
+      type: 'BUY_LIMIT',
+      status: 'PENDING',
+      entryPrice: 0.5630,
+      currentPrice: 0.5653,
+      stopLoss: 0.5600,
+      takeProfit1: 0.5700,
+      takeProfit2: 0.5750,
+      takeProfit3: 0.5820,
+      pips: 0.0,
+      riskReward: '1:3.3',
+      confluenceScore: 90,
+      rationale: 'Ultra-Low Margin 0.01 Setup: NZD/USD Discount Demand Zone at 0.5630. Lowest margin required (~$1.15) with tight $3.00 stop loss risk.',
+      timeframe: 'M15',
+      timestamp: '35 min ago',
+      institutionalFlow: 'Discount Demand Mitigation',
+      isBestTradeNow: false,
+      isPending: true,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'Asian / London Handover',
+      winProbability: 90,
+      quality: 'A_PLUS',
+      economicRisk: 'Lowest Margin Forex Major (~$1.15)',
+      validityTimeLeft: '3h 10m left to validate',
+      validityExpiresAt: 'Expires at NY Window (18:00 GMT)',
+      invalidationTrigger: 'Auto-cancels if price sweeps 0.5600 before fill',
+      validityDurationMs: 4 * 3600 * 1000,
+      createdAtMs: Date.now(),
+      takeProfit: 0.5700,
+      checklist: [
+        { title: 'Micro Margin Requirement', isConfirmed: true, detail: 'Margin needed: ~$1.15 | 1 pip = $0.10' },
+        { title: 'Discount FVG Mitigation', isConfirmed: true, detail: '15M Fair Value Gap retest at 0.5630' }
       ]
     }
   ];
@@ -987,13 +1448,7 @@ export function generateCandles(pair: ForexPair, timeframe: Timeframe, count: nu
 }
 
 export function getEconomicEvents(): EconomicEvent[] {
-  return [
-    { id: 'ECO-1', currency: 'USD', title: 'Core CPI (MoM)', time: '13:30 GMT', impact: 'HIGH', actual: '0.3%', forecast: '0.2%', previous: '0.2%', bias: 'Bullish USD if > 0.3%' },
-    { id: 'ECO-2', currency: 'USD', title: 'Non-Farm Payrolls (NFP)', time: 'Tomorrow', impact: 'HIGH', actual: '---', forecast: '165K', previous: '142K', bias: 'High Volatility Warning' },
-    { id: 'ECO-3', currency: 'EUR', title: 'ECB President Lagarde Speech', time: '15:00 GMT', impact: 'MEDIUM', actual: '---', forecast: '---', previous: '---', bias: 'Hawkish tone expected' },
-    { id: 'ECO-4', currency: 'GBP', title: 'GDP (MoM)', time: '07:00 GMT', impact: 'HIGH', actual: '0.2%', forecast: '0.0%', previous: '-0.1%', bias: 'Bullish for GBP/USD' },
-    { id: 'ECO-5', currency: 'JPY', title: 'BOJ Policy Rate', time: 'Friday', impact: 'HIGH', actual: '---', forecast: '0.25%', previous: '0.25%', bias: 'Potential rate hike speculation' }
-  ];
+  return economicCalendarService.getAllEvents();
 }
 
 export function getCurrencyStrengths(): CurrencyStrength[] {

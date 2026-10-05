@@ -36,20 +36,53 @@ class RealPriceService {
   public activeSource: string = 'TRADINGVIEW_FEED';
 
   public latestPrices: Record<string, number> = {
-    'XAU/USD': 4188.80,
-    'EUR/USD': 1.13600,
-    'GBP/USD': 1.32840,
-    'USD/JPY': 156.90,
-    'USD/CHF': 0.83330,
-    'AUD/USD': 0.69710,
-    'NZD/USD': 0.56530,
-    'USD/CAD': 1.41810,
-    'EUR/GBP': 0.85520,
-    'EUR/JPY': 178.24,
-    'GBP/JPY': 208.42,
-    'BTC/USD': 84290.0,
-    'US30': 51465.0,
-    'NAS100': 30275.0
+    // Majors
+    'EUR/USD': 1.12053,
+    'GBP/USD': 1.32270,
+    'USD/JPY': 157.969,
+    'USD/CHF': 0.82974,
+    'AUD/USD': 0.69617,
+    'NZD/USD': 0.55924,
+    'USD/CAD': 1.42474,
+    // Crosses / Minors
+    'EUR/GBP': 0.84715,
+    'EUR/JPY': 176.993,
+    'EUR/AUD': 1.60942,
+    'EUR/CAD': 1.59635,
+    'EUR/CHF': 0.92975,
+    'EUR/NZD': 2.00365,
+    'GBP/JPY': 208.932,
+    'GBP/AUD': 1.89987,
+    'GBP/CAD': 1.88441,
+    'GBP/CHF': 1.09750,
+    'GBP/NZD': 2.36510,
+    'AUD/JPY': 109.974,
+    'AUD/CAD': 0.99186,
+    'AUD/CHF': 0.57764,
+    'AUD/NZD': 1.24485,
+    'CAD/JPY': 110.870,
+    'CAD/CHF': 0.58238,
+    'CHF/JPY': 190.380,
+    'NZD/JPY': 88.342,
+    'NZD/CAD': 0.79677,
+    'NZD/CHF': 0.46402,
+    // Metals & Commodities
+    'XAU/USD': 4138.50,
+    'XAG/USD': 60.37,
+    'USOIL': 71.40,
+    'UKOIL': 75.20,
+    // Indices
+    'US30': 51176.9,
+    'NAS100': 30807.9,
+    'SPX500': 5980.0,
+    'GER40': 19420.0,
+    'UK100': 8280.0,
+    'JP225': 38650.0,
+    // Crypto
+    'BTC/USD': 84800.0,
+    'ETH/USD': 2692.9,
+    'SOL/USD': 120.25,
+    'XRP/USD': 1.4884
   };
 
   public ohlcStore: Record<string, PairOHLC> = {};
@@ -182,15 +215,52 @@ class RealPriceService {
     this.isStarted = false;
   }
 
+  private async fetchTvScan(market: 'forex' | 'cfd' | 'america' | 'crypto', tickers: string[]): Promise<any> {
+    try {
+      const proxyController = new AbortController();
+      const proxyTimeout = setTimeout(() => proxyController.abort(), 5000);
+      const proxyRes = await fetch('/api/market/tv-scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          market,
+          tickers,
+          columns: ['close', 'change', 'high', 'low', 'open']
+        }),
+        signal: proxyController.signal
+      });
+      clearTimeout(proxyTimeout);
+      if (proxyRes.ok) {
+        return await proxyRes.json();
+      }
+    } catch {
+      // Fallback to direct scanner call
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`https://scanner.tradingview.com/${market}/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        symbols: { tickers },
+        columns: ['close', 'change', 'high', 'low', 'open']
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    if (res.ok) {
+      return await res.json();
+    }
+    return null;
+  }
+
   /**
    * Primary Provider: TradingView Official Live Scanner API
    * Exactly matches the TradingView charts in the UI down to the pip.
    */
   public async pollTradingViewQuotes(): Promise<boolean> {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
-
       const forexTickers = [
         'FX:EURUSD',
         'FX:GBPUSD',
@@ -201,27 +271,31 @@ class RealPriceService {
         'FX:NZDUSD',
         'FX:EURGBP',
         'FX:EURJPY',
-        'FX:GBPJPY',
         'FX:EURAUD',
+        'FX:EURCAD',
+        'FX:EURCHF',
+        'FX:EURNZD',
+        'FX:GBPJPY',
         'FX:GBPAUD',
+        'FX:GBPCAD',
+        'FX:GBPCHF',
+        'FX:GBPNZD',
         'FX:AUDJPY',
-        'FX:XAUUSD'
+        'FX:AUDCAD',
+        'FX:AUDCHF',
+        'FX:AUDNZD',
+        'FX:CADJPY',
+        'FX:CADCHF',
+        'FX:CHFJPY',
+        'FX:NZDJPY',
+        'FX:NZDCAD',
+        'FX:NZDCHF',
+        'FX:XAUUSD',
+        'FX:XAGUSD'
       ];
 
-      const res = await fetch('https://scanner.tradingview.com/forex/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({
-          symbols: { tickers: forexTickers },
-          columns: ['close', 'change', 'high', 'low', 'open']
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const json = await res.json();
-        if (json?.data && Array.isArray(json.data)) {
+      const json = await this.fetchTvScan('forex', forexTickers);
+      if (json?.data && Array.isArray(json.data)) {
           const mapping: Record<string, string> = {
             'FX:EURUSD': 'EUR/USD',
             'FX:GBPUSD': 'GBP/USD',
@@ -232,18 +306,34 @@ class RealPriceService {
             'FX:NZDUSD': 'NZD/USD',
             'FX:EURGBP': 'EUR/GBP',
             'FX:EURJPY': 'EUR/JPY',
-            'FX:GBPJPY': 'GBP/JPY',
             'FX:EURAUD': 'EUR/AUD',
+            'FX:EURCAD': 'EUR/CAD',
+            'FX:EURCHF': 'EUR/CHF',
+            'FX:EURNZD': 'EUR/NZD',
+            'FX:GBPJPY': 'GBP/JPY',
             'FX:GBPAUD': 'GBP/AUD',
+            'FX:GBPCAD': 'GBP/CAD',
+            'FX:GBPCHF': 'GBP/CHF',
+            'FX:GBPNZD': 'GBP/NZD',
             'FX:AUDJPY': 'AUD/JPY',
-            'FX:XAUUSD': 'XAU/USD'
+            'FX:AUDCAD': 'AUD/CAD',
+            'FX:AUDCHF': 'AUD/CHF',
+            'FX:AUDNZD': 'AUD/NZD',
+            'FX:CADJPY': 'CAD/JPY',
+            'FX:CADCHF': 'CAD/CHF',
+            'FX:CHFJPY': 'CHF/JPY',
+            'FX:NZDJPY': 'NZD/JPY',
+            'FX:NZDCAD': 'NZD/CAD',
+            'FX:NZDCHF': 'NZD/CHF',
+            'FX:XAUUSD': 'XAU/USD',
+            'FX:XAGUSD': 'XAG/USD'
           };
 
           json.data.forEach((item: any) => {
             const sym = mapping[item.s];
             const close = Number(item.d?.[0]);
             if (sym && !isNaN(close) && close > 0) {
-              const digits = sym.includes('JPY') || sym.includes('XAU') ? 2 : 5;
+              const digits = sym.includes('JPY') || sym.includes('XAU') || sym.includes('XAG') ? 2 : 5;
               const formattedPrice = Number(close.toFixed(digits));
               this.lastLiveTickTime[sym] = Date.now();
               this.activeSource = 'TRADINGVIEW_FEED';
@@ -253,7 +343,6 @@ class RealPriceService {
 
           this.notifyAllPrices();
           return true;
-        }
       }
     } catch {
       // Fallback to interbank benchmark rates if TradingView fails
@@ -263,91 +352,106 @@ class RealPriceService {
   }
 
   /**
-   * Primary Provider for Gold CFD and US Indices (US30 / NAS100)
+   * Primary Provider for Gold CFD, Silver, Commodities and Stock Indices (US30 / NAS100 / SPX500 / GER40 / UK100 / JP225)
    */
   public async pollTradingViewCfdAndIndices(): Promise<void> {
     try {
-      // 1. Gold Spot from CFD
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch('https://scanner.tradingview.com/cfd/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({
-          symbols: { tickers: ['TVC:GOLD', 'FX:XAUUSD'] },
-          columns: ['close', 'change', 'high', 'low', 'open']
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const json = await res.json();
-        const goldItem = json?.data?.find((d: any) => d.s === 'TVC:GOLD' || d.s === 'FX:XAUUSD');
-        if (goldItem && goldItem.d?.[0]) {
-          const goldPrice = Number(Number(goldItem.d[0]).toFixed(2));
+      // 1. Gold & Silver Spot & Oil from CFD
+      const json = await this.fetchTvScan('cfd', [
+        'TVC:GOLD',
+        'FX:XAUUSD',
+        'FOREXCOM:XAUUSD',
+        'TVC:SILVER',
+        'FX:XAGUSD',
+        'FOREXCOM:XAGUSD',
+        'TVC:USOIL',
+        'TVC:UKOIL'
+      ]);
+      json?.data?.forEach((d: any) => {
+        if ((d.s === 'TVC:GOLD' || d.s === 'FX:XAUUSD' || d.s === 'FOREXCOM:XAUUSD') && d.d?.[0]) {
+          const goldPrice = Number(Number(d.d[0]).toFixed(2));
           this.lastLiveTickTime['XAU/USD'] = Date.now();
           this.updatePrice('XAU/USD', goldPrice, 'TradingView Gold Feed');
         }
-      }
-    } catch {}
-
-    try {
-      // 2. US30 (DJIA) and NAS100 from America Equities & Index Scan
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch('https://scanner.tradingview.com/america/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({
-          symbols: { tickers: ['DJ:DJI', 'NASDAQ:NDX'] },
-          columns: ['close', 'change', 'high', 'low', 'open']
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const json = await res.json();
-        json?.data?.forEach((d: any) => {
-          if (d.s === 'DJ:DJI' && d.d?.[0]) {
-            const us30 = Number(Number(d.d[0]).toFixed(1));
-            this.lastLiveTickTime['US30'] = Date.now();
-            this.updatePrice('US30', us30, 'TradingView DJIA Feed');
-          }
-          if (d.s === 'NASDAQ:NDX' && d.d?.[0]) {
-            const nas = Number(Number(d.d[0]).toFixed(1));
-            this.lastLiveTickTime['NAS100'] = Date.now();
-            this.updatePrice('NAS100', nas, 'TradingView NDX Feed');
-          }
-        });
-      }
-    } catch {}
-
-    try {
-      // 3. Real Bitcoin from TradingView Crypto Scan
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch('https://scanner.tradingview.com/crypto/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({
-          symbols: { tickers: ['BINANCE:BTCUSDT'] },
-          columns: ['close', 'change', 'high', 'low', 'open']
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const json = await res.json();
-        const btcItem = json?.data?.find((d: any) => d.s === 'BINANCE:BTCUSDT');
-        if (btcItem && btcItem.d?.[0]) {
-          const btcPrice = Number(Number(btcItem.d[0]).toFixed(2));
-          this.lastLiveTickTime['BTC/USD'] = Date.now();
-          this.updatePrice('BTC/USD', btcPrice, 'TradingView BTC Feed');
+        if ((d.s === 'TVC:SILVER' || d.s === 'FX:XAGUSD' || d.s === 'FOREXCOM:XAGUSD') && d.d?.[0]) {
+          const silverPrice = Number(Number(d.d[0]).toFixed(2));
+          this.lastLiveTickTime['XAG/USD'] = Date.now();
+          this.updatePrice('XAG/USD', silverPrice, 'TradingView Silver Feed');
         }
-      }
+        if (d.s === 'TVC:USOIL' && d.d?.[0]) {
+          this.updatePrice('USOIL', Number(Number(d.d[0]).toFixed(2)), 'TradingView Oil');
+        }
+        if (d.s === 'TVC:UKOIL' && d.d?.[0]) {
+          this.updatePrice('UKOIL', Number(Number(d.d[0]).toFixed(2)), 'TradingView Oil');
+        }
+      });
+    } catch {}
+
+    try {
+      // 2. Indices from America & Global Scan
+      const json = await this.fetchTvScan('america', [
+        'DJ:DJI',
+        'TVC:DJI',
+        'FOREXCOM:DJ30',
+        'NASDAQ:NDX',
+        'FOREXCOM:NAS100',
+        'FOREXCOM:SPX500',
+        'FOREXCOM:GER40',
+        'FOREXCOM:UK100',
+        'TVC:NI225'
+      ]);
+      json?.data?.forEach((d: any) => {
+        if ((d.s === 'DJ:DJI' || d.s === 'TVC:DJI' || d.s === 'FOREXCOM:DJ30') && d.d?.[0]) {
+          const us30 = Number(Number(d.d[0]).toFixed(1));
+          this.lastLiveTickTime['US30'] = Date.now();
+          this.updatePrice('US30', us30, 'TradingView DJIA Feed');
+        }
+        if ((d.s === 'NASDAQ:NDX' || d.s === 'FOREXCOM:NAS100') && d.d?.[0]) {
+          const nas = Number(Number(d.d[0]).toFixed(1));
+          this.lastLiveTickTime['NAS100'] = Date.now();
+          this.updatePrice('NAS100', nas, 'TradingView NDX Feed');
+        }
+        if (d.s === 'FOREXCOM:SPX500' && d.d?.[0]) {
+          this.updatePrice('SPX500', Number(Number(d.d[0]).toFixed(1)), 'TradingView SPX');
+        }
+        if (d.s === 'FOREXCOM:GER40' && d.d?.[0]) {
+          this.updatePrice('GER40', Number(Number(d.d[0]).toFixed(1)), 'TradingView DAX');
+        }
+        if (d.s === 'FOREXCOM:UK100' && d.d?.[0]) {
+          this.updatePrice('UK100', Number(Number(d.d[0]).toFixed(1)), 'TradingView FTSE');
+        }
+        if (d.s === 'TVC:NI225' && d.d?.[0]) {
+          this.updatePrice('JP225', Number(Number(d.d[0]).toFixed(1)), 'TradingView Nikkei');
+        }
+      });
+    } catch {}
+
+    try {
+      // 3. Real Crypto from TradingView Crypto Scan
+      const json = await this.fetchTvScan('crypto', [
+        'BINANCE:BTCUSDT',
+        'BINANCE:ETHUSDT',
+        'BINANCE:SOLUSDT',
+        'BINANCE:XRPUSDT'
+      ]);
+      json?.data?.forEach((item: any) => {
+        if (item.s === 'BINANCE:BTCUSDT' && item.d?.[0]) {
+          this.lastLiveTickTime['BTC/USD'] = Date.now();
+          this.updatePrice('BTC/USD', Number(Number(item.d[0]).toFixed(2)), 'TradingView BTC Feed');
+        }
+        if (item.s === 'BINANCE:ETHUSDT' && item.d?.[0]) {
+          this.lastLiveTickTime['ETH/USD'] = Date.now();
+          this.updatePrice('ETH/USD', Number(Number(item.d[0]).toFixed(2)), 'TradingView ETH Feed');
+        }
+        if (item.s === 'BINANCE:SOLUSDT' && item.d?.[0]) {
+          this.lastLiveTickTime['SOL/USD'] = Date.now();
+          this.updatePrice('SOL/USD', Number(Number(item.d[0]).toFixed(2)), 'TradingView SOL Feed');
+        }
+        if (item.s === 'BINANCE:XRPUSDT' && item.d?.[0]) {
+          this.lastLiveTickTime['XRP/USD'] = Date.now();
+          this.updatePrice('XRP/USD', Number(Number(item.d[0]).toFixed(4)), 'TradingView XRP Feed');
+        }
+      });
     } catch {}
   }
 
@@ -504,23 +608,21 @@ class RealPriceService {
    */
   private updateAllFxPairs(rates: Record<string, number>) {
     const fxPairs = [
-      'EUR/USD',
-      'GBP/USD',
-      'USD/JPY',
-      'USD/CHF',
-      'AUD/USD',
-      'NZD/USD',
-      'USD/CAD',
-      'EUR/GBP',
-      'EUR/JPY',
-      'GBP/JPY'
+      // Majors
+      'EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CHF', 'AUD/USD', 'NZD/USD', 'USD/CAD',
+      // Minors & Crosses
+      'EUR/GBP', 'EUR/JPY', 'EUR/AUD', 'EUR/CAD', 'EUR/CHF', 'EUR/NZD',
+      'GBP/JPY', 'GBP/AUD', 'GBP/CAD', 'GBP/CHF', 'GBP/NZD',
+      'AUD/JPY', 'AUD/CAD', 'AUD/CHF', 'AUD/NZD',
+      'CAD/JPY', 'CAD/CHF', 'CHF/JPY',
+      'NZD/JPY', 'NZD/CAD', 'NZD/CHF'
     ];
 
     const now = Date.now();
     let hasUpdated = false;
 
     fxPairs.forEach(symbol => {
-      // If Deriv or Twelve Data updated this pair in the last 45 seconds, DO NOT overwrite with central bank daily rate!
+      // If TradingView, Deriv or Twelve Data updated this pair in the last 45 seconds, DO NOT overwrite with central bank daily rate!
       if (this.lastLiveTickTime[symbol] && (now - this.lastLiveTickTime[symbol] < 45000)) {
         return;
       }
@@ -548,12 +650,13 @@ class RealPriceService {
    */
   public async fetchSymbolImmediate(symbol: string): Promise<number> {
     // 1. Fetch real-time TradingView quotes directly
-    await this.pollTradingViewQuotes();
-    if (symbol.includes('XAU') || symbol.includes('US30') || symbol.includes('NAS')) {
+    if (symbol.includes('XAU') || symbol.includes('XAG') || symbol.includes('USOIL') || symbol.includes('UKOIL') || symbol.includes('US30') || symbol.includes('NAS') || symbol.includes('SPX') || symbol.includes('GER') || symbol.includes('UK100') || symbol.includes('JP225')) {
       await this.pollTradingViewCfdAndIndices();
-    }
-    if (symbol === 'BTC/USD') {
+    } else if (symbol.includes('BTC') || symbol.includes('ETH') || symbol.includes('SOL') || symbol.includes('XRP')) {
+      await this.pollTradingViewCfdAndIndices();
       await this.pollBtcPrice();
+    } else {
+      await this.pollTradingViewQuotes();
     }
 
     if (this.latestPrices[symbol] && this.latestPrices[symbol] > 0) {

@@ -38,6 +38,30 @@ export interface ConfluenceChecklistItem {
   detail: string;
 }
 
+export type AssetCategory = 'ALL' | 'MAJORS' | 'MINORS' | 'METALS' | 'INDICES' | 'CRYPTO' | 'EXOTICS';
+
+export function getAssetCategory(symbol: string): 'MAJORS' | 'MINORS' | 'METALS' | 'INDICES' | 'CRYPTO' {
+  const sym = symbol.replace('/', '').toUpperCase();
+  if (sym.startsWith('XAU') || sym.startsWith('GOLD') || sym.startsWith('XAG') || sym.startsWith('SILVER') || sym.includes('OIL')) {
+    return 'METALS';
+  }
+  if (sym.startsWith('BTC') || sym.startsWith('ETH') || sym.startsWith('SOL') || sym.startsWith('XRP') || sym.startsWith('DOGE') || sym.startsWith('CRYPTO')) {
+    return 'CRYPTO';
+  }
+  if (sym.startsWith('US30') || sym.startsWith('NAS') || sym.startsWith('SPX') || sym.startsWith('GER') || sym.startsWith('UK100') || sym.startsWith('JP225')) {
+    return 'INDICES';
+  }
+  
+  // 7 Traditional FX Majors (pairs containing USD with EUR, GBP, JPY, CHF, AUD, CAD, NZD)
+  const majorPairs = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD'];
+  if (majorPairs.includes(sym)) {
+    return 'MAJORS';
+  }
+  
+  // FX Minors / Crosses (EURGBP, EURJPY, GBPJPY, AUDJPY, EURAUD, GBPCAD, CADJPY, NZDJPY, etc.)
+  return 'MINORS';
+}
+
 export interface ForexPair {
   symbol: string;
   name: string;
@@ -46,6 +70,10 @@ export interface ForexPair {
   pipDigits: number;
   isGoldOrCrypto?: boolean;
   spreadPips: number;
+  category?: 'MAJORS' | 'MINORS' | 'METALS' | 'INDICES' | 'CRYPTO';
+  minMargin001?: number; // Estimated margin in USD needed to open 0.01 lot at standard 1:100 leverage
+  pipValue001?: number; // Dollar value of 1 pip on 0.01 lot (typically $0.10)
+  isMicroAccountFriendly?: boolean; // Safe to trade even on $10 - $50 micro balances
 }
 
 export interface ForexSignal {
@@ -276,7 +304,9 @@ export type AlertCondition =
   | 'TP_HIT'
   | 'SL_HIT'
   | 'VIP_SIGNAL'
-  | 'SESSION_OPEN';
+  | 'SESSION_OPEN'
+  | 'PENDING_ORDER_TRIGGERED'
+  | 'PENDING_ORDER_INVALIDATED';
 
 export interface AlertConditionConfig {
   label: string;
@@ -290,6 +320,8 @@ export const ALERT_CONDITIONS: Record<AlertCondition, AlertConditionConfig> = {
   SL_HIT: { label: 'Stop Loss Triggered', iconSymbol: '🛑' },
   VIP_SIGNAL: { label: 'A+ VIP Confluence Posted (85%+)', iconSymbol: '★' },
   SESSION_OPEN: { label: 'Session Open / Overlap', iconSymbol: '⚡' },
+  PENDING_ORDER_TRIGGERED: { label: 'MT5 Pending Order Triggered & Filled', iconSymbol: '🎯' },
+  PENDING_ORDER_INVALIDATED: { label: 'MT5 Pending Order Invalidated / Expired', iconSymbol: '⚠️' },
 };
 
 export interface PriceAlert {
@@ -315,6 +347,30 @@ export interface TriggeredAlertEvent {
   timestamp: number;
   condition: AlertCondition;
   price: number;
+}
+
+export interface WhatsAppAlertConfig {
+  enabled: boolean;
+  phoneNumber: string; // e.g. +1234567890
+  apiKey: string; // CallMeBot free personal WhatsApp API Key
+  customWebhookUrl?: string;
+  notifyOnPendingTrigger: boolean;
+  notifyOnPendingInvalidate: boolean;
+  notifyOnTakeProfit: boolean;
+  notifyOnStopLoss: boolean;
+  lastTestStatus?: 'SUCCESS' | 'ERROR' | null;
+  lastTestMessage?: string;
+}
+
+export interface TelegramAlertConfig {
+  enabled: boolean;
+  botToken: string; // e.g. 123456789:ABCdefGh...
+  chatId: string; // e.g. 987654321
+  notifyOnNewSignal?: boolean;
+  notifyOnPendingTrigger: boolean;
+  notifyOnPendingInvalidate: boolean;
+  notifyOnTakeProfit: boolean;
+  notifyOnStopLoss: boolean;
 }
 
 export type StrategyType = 
@@ -390,6 +446,7 @@ export interface BacktestFilter {
   minConfluence: number;
   pairSymbol?: string | null;
   outcomeFilter?: TradeOutcome | null;
+  category?: AssetCategory | null;
 }
 
 export interface BacktestSummary {
@@ -432,17 +489,39 @@ export interface SmartMoneyZone {
 }
 
 export type ImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
+export type EconomicImpact = ImpactLevel;
+
+export interface PairNewsImpact {
+  pair: string;
+  ifBullishCurrency: 'BUY (SURGE UP)' | 'SELL (DROP DOWN)';
+  ifBearishCurrency: 'BUY (SURGE UP)' | 'SELL (DROP DOWN)';
+  expectedPips: string;
+  explanation: string;
+}
 
 export interface EconomicEvent {
   id: string;
   currency: string;
   title: string;
-  time: string;
+  time?: string;
+  timeFormatted?: string;
+  timestamp: number;
   impact: ImpactLevel;
-  actual: string;
-  forecast: string;
-  previous: string;
-  bias: string;
+  actual?: string;
+  forecast?: string;
+  previous?: string;
+  bias?: string;
+  unit?: string;
+  description?: string;
+  isHighImpact?: boolean;
+  releasedActualValue?: string;
+  surpriseOutcome?: 'BEAT_BULLISH' | 'MISSED_BEARISH' | 'INLINE_NEUTRAL';
+  releasedSummary?: string;
+  affectedPairs?: string[];
+  ifBeatScenario?: string;
+  ifMissScenario?: string;
+  tradingRule?: string;
+  pairImpacts?: PairNewsImpact[];
 }
 
 export interface CurrencyStrength {
@@ -452,7 +531,7 @@ export interface CurrencyStrength {
   trend: string;
 }
 
-export type AiPersonaId = 'INSTITUTIONAL' | 'RISK_MANAGER' | 'SCALPER';
+export type AiPersonaId = 'UNIVERSAL' | 'INSTITUTIONAL' | 'RISK_MANAGER' | 'SCALPER';
 
 export interface AiPersona {
   id: AiPersonaId;
@@ -462,6 +541,12 @@ export interface AiPersona {
 }
 
 export const AI_PERSONAS: Record<AiPersonaId, AiPersona> = {
+  UNIVERSAL: {
+    id: 'UNIVERSAL',
+    title: 'Universal AI Copilot',
+    badge: 'Ask Anything • Trade • News • Info',
+    description: 'Universal all-in-one intelligence mode — ask any query about live trades, economic news calendar impacts, any currency pair, technical/fundamental analysis, indicators, prop firm rules, or general market knowledge.'
+  },
   INSTITUTIONAL: {
     id: 'INSTITUTIONAL',
     title: 'Institutional SMC Mentor',
@@ -490,6 +575,7 @@ export interface ChatMessage {
   isGenerating?: boolean;
   isError?: boolean;
   signalReference?: string | null;
+  imageUrl?: string | null;
   suggestedPrompts?: string[];
 }
 
@@ -505,8 +591,8 @@ export interface Elev8Trade {
   takeProfit1: number;
   takeProfit2: number;
   takeProfit3: number;
-  status: 'OPEN' | 'CLOSED';
-  closeReason?: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'MANUAL';
+  status: 'PENDING' | 'OPEN' | 'CLOSED';
+  closeReason?: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'MANUAL' | 'CANCELLED';
   realizedPnl: number;
   floatingPnl: number;
   pips: number;
@@ -516,6 +602,7 @@ export interface Elev8Trade {
   tp3GainDollars: number;
   openedAt: number;
   closedAt?: number;
+  triggeredAt?: number;
 }
 
 export type Elev8ExecutionMode = 'SIMULATED' | 'WEBHOOK_BRIDGE' | 'METAAPI_CLOUD';
@@ -550,3 +637,43 @@ export const DEFAULT_ELEV8_CONFIG: Elev8AccountConfig = {
   autoCopyWebhookEnabled: false,
   isConnected: false
 };
+
+// --- Currency Strength Meter Types ---
+export interface CurrencyStrengthItem {
+  currency: 'USD' | 'EUR' | 'GBP' | 'JPY' | 'AUD' | 'CAD' | 'CHF' | 'NZD';
+  strength: number; // 0.0 to 10.0
+  status: 'VERY_STRONG' | 'STRONG' | 'NEUTRAL' | 'WEAK' | 'VERY_WEAK';
+  change24h: number;
+  momentum: 'RISING' | 'FALLING' | 'STABLE';
+}
+
+export interface BestPairingRecommendation {
+  pair: string;
+  action: 'BUY' | 'SELL';
+  strongCurrency: string;
+  weakCurrency: string;
+  strengthDiff: number;
+  confluenceReason: string;
+}
+
+// --- Trade Journal Types ---
+export interface TradeJournalEntry {
+  id: string;
+  tradeId: string;
+  symbol: string;
+  orderType: string;
+  entryPrice: number;
+  exitPrice?: number;
+  stopLoss: number;
+  takeProfit: number;
+  lots: number;
+  pnlDollars: number;
+  pips: number;
+  outcome: 'WIN' | 'LOSS' | 'BREAK_EVEN' | 'OPEN';
+  tradingSession: 'LONDON' | 'NEW_YORK' | 'ASIAN' | 'OVERLAP' | 'WEEKEND';
+  tags: string[];
+  notes: string;
+  openedAt: number;
+  closedAt?: number;
+}
+

@@ -850,14 +850,15 @@ export const REAL_OANDA_HISTORICAL_TRADES: OandaHistoricalTradeRecord[] = [
 
 import { StrategyBacktester } from './strategyBacktester';
 import { RealCandleFetcherService } from './realCandleFetcher';
+import { ALL_PAIRS } from './marketData';
 
-const DEFAULT_SYMBOLS = ['XAU/USD', 'EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'US30', 'GBP/JPY'];
-const DEFAULT_TIMEFRAMES: Timeframe[] = ['M15', 'H1', 'H4'];
+const DEFAULT_SYMBOLS = ALL_PAIRS.map(p => p.symbol);
+const DEFAULT_TIMEFRAMES: Timeframe[] = ['M15', 'H1', 'H4', 'D1'];
 const strategyCache: Partial<Record<StrategyType, BacktestTrade[]>> = {};
 
 /**
  * Returns trades evaluated against real historical candles for the selected strategy.
- * Evaluates real price action across 8 major assets across M15, H1, and H4 timeframes
+ * Evaluates real price action across all 30 assets across M15, H1, H4, and D1 timeframes
  * with zero lookahead, broker spreads, and fixed 1.5R.
  */
 export function getAllRealOandaTrades(strategy: StrategyType): BacktestTrade[] {
@@ -871,10 +872,10 @@ export function getAllRealOandaTrades(strategy: StrategyType): BacktestTrade[] {
   const staticOandaMatches = REAL_OANDA_HISTORICAL_TRADES.filter(t => t.strategy === strategy);
   generatedTrades.push(...staticOandaMatches);
 
-  // 2. Evaluate historical candle scans across timeframes and assets
+  // 2. Evaluate historical candle scans across all 4 timeframes and all 30 assets
   for (const tf of DEFAULT_TIMEFRAMES) {
-    const candleCount = 5000;
-    const maxTradesPerSymbol = tf === 'M15' ? 10 : 6;
+    const candleCount = tf === 'M15' ? 2500 : tf === 'H1' ? 2000 : 1500;
+    const maxTradesPerSymbol = tf === 'M15' ? 18 : tf === 'H1' ? 14 : 10;
 
     for (const sym of DEFAULT_SYMBOLS) {
       const candleResult = RealCandleFetcherService.generateRealInterbankCandles(sym, tf, candleCount);
@@ -885,21 +886,10 @@ export function getAllRealOandaTrades(strategy: StrategyType): BacktestTrade[] {
         tf
       );
 
-      // Only include setups with positive confluence and realistic outcomes
+      // Include all valid setups (70%+ confluence) with both WIN and LOSS outcomes
       const filteredRunTrades = runResult.trades.filter(t => t.confluenceScore >= 70);
       const sampled = filteredRunTrades.slice(0, maxTradesPerSymbol);
       generatedTrades.push(...sampled);
-    }
-  }
-
-  // If strategy is TREND_EMA_CONFLUENCE or LIQUIDITY_SWEEP, balance generated noise with real OANDA verified records
-  if (strategy === 'TREND_EMA_CONFLUENCE' || strategy === 'LIQUIDITY_SWEEP') {
-    const winsCount = generatedTrades.filter(t => t.outcome === 'WIN').length;
-    const winRate = generatedTrades.length > 0 ? winsCount / generatedTrades.length : 0;
-    if (winRate < 0.50 && staticOandaMatches.length > 0) {
-      // Return verified OANDA historical record database for these specialized strategies
-      strategyCache[strategy] = staticOandaMatches;
-      return staticOandaMatches;
     }
   }
 

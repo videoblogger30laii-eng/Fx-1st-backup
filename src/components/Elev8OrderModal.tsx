@@ -3,11 +3,15 @@ import { ForexSignal, Elev8AccountConfig, Elev8Trade } from '../types';
 import { formatPrice, calculateDollarPnl, calculateSlPips } from '../services/marketData';
 import { realPriceService } from '../services/RealPriceService';
 import { Elev8ExecutionService } from '../services/elev8ExecutionService';
+import { TelegramAlertService } from '../services/TelegramAlertService';
 import {
   X,
   Zap,
   Check,
   Copy,
+  Bell,
+  Send,
+  Share2,
   ShieldAlert,
   Target,
   ArrowRight,
@@ -190,6 +194,77 @@ export const Elev8OrderModal: React.FC<Props> = ({
     setTimeout(() => setCopiedMobile(false), 2000);
   };
 
+  const [copiedAndAlerted, setCopiedAndAlerted] = useState(false);
+  const [tgAlertStatus, setTgAlertStatus] = useState<string | null>(null);
+
+  const handleCopyAndSendTgAlert = async () => {
+    // 1. Copy exact SL and TP parameters to clipboard for MT5 mobile
+    const cleanCommand = `Symbol: ${symbolWithSuffix}\n` +
+      `Type: ${orderType.replace('_', ' ')}\n` +
+      `Lots: ${calculatedLots.toFixed(2)}\n` +
+      `Entry: ${formatPrice(signal.pair, entryPrice)}\n` +
+      `Stop Loss: ${formatPrice(signal.pair, stopLoss)}\n` +
+      `Take Profit: ${formatPrice(signal.pair, takeProfit1)}`;
+
+    try {
+      await navigator.clipboard.writeText(cleanCommand);
+    } catch {
+      // fallback
+    }
+
+    setCopiedAndAlerted(true);
+    setTimeout(() => setCopiedAndAlerted(false), 4000);
+
+    // 2. Automatically register this trade into active watchdog so live interbank quotes trigger alerts
+    const isPendingOrder = orderType.includes('LIMIT') || orderType.includes('STOP');
+    const initialStatus = isPendingOrder ? 'PENDING' : 'OPEN';
+
+    const trade: Elev8Trade = {
+      id: 'ELEV8-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      signalId: signal.id,
+      symbol: symbolWithSuffix,
+      orderType,
+      lots: calculatedLots,
+      entryPrice,
+      currentPrice: livePrice,
+      stopLoss,
+      takeProfit1,
+      takeProfit2,
+      takeProfit3,
+      status: initialStatus,
+      realizedPnl: 0,
+      floatingPnl: 0,
+      pips: 0,
+      slRiskDollars: slMetrics.lossDollars,
+      tp1GainDollars: tp1Metrics.gainDollars,
+      tp2GainDollars: tp2Metrics.gainDollars,
+      tp3GainDollars: tp3Metrics.gainDollars,
+      openedAt: Date.now()
+    };
+
+    onExecuteTrade(trade);
+
+    // 3. Dispatch instant active notification to Telegram chat
+    const tgMsg = `🔔 *TRADE COPIED & ACTIVE WATCHDOG STARTED!*\n\n` +
+      `📊 *Pair:* ${symbolWithSuffix} (${orderType.replace('_', ' ')})\n` +
+      `💵 *Volume:* ${calculatedLots.toFixed(2)} Lots\n` +
+      `📍 *Entry Price:* ${formatPrice(signal.pair, entryPrice)}\n` +
+      `🛡️ *Stop Loss:* ${formatPrice(signal.pair, stopLoss)} (-${slMetrics.pips.toFixed(1)} pts / -$${slMetrics.lossDollars.toFixed(2)})\n` +
+      `🎯 *Take Profit 1:* ${formatPrice(signal.pair, takeProfit1)} (+${tp1Metrics.pips.toFixed(1)} pts / +$${tp1Metrics.gainDollars.toFixed(2)})\n` +
+      `🎯 *Take Profit 2:* ${formatPrice(signal.pair, takeProfit2)} (+${tp2Metrics.pips.toFixed(1)} pts / +$${tp2Metrics.gainDollars.toFixed(2)})\n` +
+      `⚖️ *R:R Ratio:* 1:${tp1Metrics.rr}\n` +
+      `⏱️ *Live Price:* ${formatPrice(signal.pair, livePrice)}\n\n` +
+      `👉 *Parameters copied to clipboard for your MT5 mobile!* Live Watchdog is active 24/7 — you will receive instant push alerts whenever Entry, TP, or SL triggers.`;
+
+    const res = await TelegramAlertService.sendAlert(tgMsg);
+    if (res.success) {
+      setTgAlertStatus('Sent to Telegram!');
+    } else {
+      setTgAlertStatus('Copied! (Check Telegram tab in Alerts)');
+    }
+    setTimeout(() => setTgAlertStatus(null), 3500);
+  };
+
   const handleOpenInMt5Mobile = () => {
     navigator.clipboard.writeText(mobileCommand);
     setCopiedMobile(true);
@@ -205,6 +280,9 @@ export const Elev8OrderModal: React.FC<Props> = ({
     setIsExecutingWebhook(true);
     setBridgeMessage(null);
 
+    const isPendingOrder = orderType.includes('LIMIT') || orderType.includes('STOP');
+    const initialStatus = isPendingOrder ? 'PENDING' : 'OPEN';
+
     const trade: Elev8Trade = {
       id: 'ELEV8-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
       signalId: signal.id,
@@ -217,7 +295,7 @@ export const Elev8OrderModal: React.FC<Props> = ({
       takeProfit1,
       takeProfit2,
       takeProfit3,
-      status: 'OPEN',
+      status: initialStatus,
       realizedPnl: 0,
       floatingPnl: 0,
       pips: 0,
@@ -291,7 +369,12 @@ export const Elev8OrderModal: React.FC<Props> = ({
               <button
                 key={t}
                 type="button"
-                onClick={() => setOrderType(t)}
+                onClick={() => {
+                  setOrderType(t);
+                  if (t.includes('MARKET') && livePrice > 0) {
+                    setEntryPrice(livePrice);
+                  }
+                }}
                 className={`py-1.5 text-[11px] font-black rounded-lg transition-all ${
                   orderType === t
                     ? t.startsWith('BUY')
@@ -310,8 +393,11 @@ export const Elev8OrderModal: React.FC<Props> = ({
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
           {/* Entry */}
           <div>
-            <label className="text-[10px] font-bold text-[#94A3B8] uppercase block mb-0.5">
-              Entry Price
+            <label className="text-[10px] font-bold text-[#94A3B8] uppercase block mb-0.5 flex items-center justify-between">
+              <span>{orderType.includes('MARKET') ? 'Market Entry (Live)' : 'Limit Entry Price'}</span>
+              {orderType.includes('MARKET') && (
+                <span className="text-[9px] text-[#00E676] font-mono">Instant</span>
+              )}
             </label>
             <input
               type="number"
@@ -620,39 +706,74 @@ export const Elev8OrderModal: React.FC<Props> = ({
                 </button>
               </div>
 
-              {/* 1-Tap Copy Values for MT5 Mobile */}
-              <div className="bg-[#101522] border border-[#222F47] rounded-xl p-2.5 space-y-1.5">
-                <div className="flex items-center justify-between text-[10px] font-bold text-[#94A3B8]">
-                  <span>📋 1-Tap Copy for MT5 (No Typing Needed):</span>
-                  {copiedValue && (
-                    <span className="text-[#00E676] font-mono animate-pulse">Copied {copiedValue}! Paste into MT5</span>
+              {/* 1-Tap Copy Values for MT5 Mobile & TG Watchdog */}
+              <div className="bg-[#101522] border border-[#222F47] rounded-xl p-2.5 space-y-2">
+                {/* Main 1-Tap Copy for MT5 & Send Alert to TG Button */}
+                <button
+                  type="button"
+                  onClick={handleCopyAndSendTgAlert}
+                  className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-[#0088cc]/25 via-[#0088cc]/35 to-[#00E676]/25 hover:from-[#0088cc]/40 hover:to-[#00E676]/40 border border-[#0088cc]/60 text-[#F1F5F9] text-xs font-bold transition-all flex items-center justify-between gap-2 shadow-sm"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-[#0088cc] flex items-center justify-center text-white shrink-0 shadow-[0_0_10px_rgba(0,136,204,0.4)]">
+                      <Bell className="w-4 h-4 animate-bounce" />
+                    </div>
+                    <div className="text-left">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-black text-white">1-Tap Copy for MT5 & Send Alert to TG</span>
+                        <span className="text-sm">🔔</span>
+                      </div>
+                      <span className="text-[10px] text-[#94A3B8] font-normal block">
+                        Copies SL/TP/Lots to clipboard + activates live Telegram SL/TP alerts
+                      </span>
+                    </div>
+                  </div>
+                  {copiedAndAlerted ? (
+                    <span className="px-2.5 py-1.5 rounded-lg bg-[#00E676]/20 border border-[#00E676]/50 text-[#00E676] text-[10px] font-mono font-bold animate-pulse flex items-center gap-1 shrink-0">
+                      <Check className="w-3.5 h-3.5" />
+                      <span>{tgAlertStatus || 'Copied & Active!'}</span>
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-1.5 rounded-lg bg-[#0088cc]/30 border border-[#0088cc]/60 text-white text-[10px] font-mono font-bold shrink-0 hover:bg-[#0088cc]/50">
+                      Tap to Copy 📋
+                    </span>
                   )}
-                </div>
-                <div className="grid grid-cols-3 gap-1.5 font-mono text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => copySingleValue(calculatedLots.toFixed(2), 'Lots')}
-                    className="p-1.5 rounded-lg bg-[#182033] hover:bg-[#222F47] border border-[#222F47] text-left transition-all"
-                  >
-                    <span className="text-[9px] text-[#94A3B8] block">LOTS</span>
-                    <strong className="text-[#FFD700] text-xs">{calculatedLots.toFixed(2)}</strong>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => copySingleValue(stopLoss, 'SL')}
-                    className="p-1.5 rounded-lg bg-[#182033] hover:bg-[#222F47] border border-[#FF3366]/30 text-left transition-all"
-                  >
-                    <span className="text-[9px] text-[#FF3366] block">STOP LOSS</span>
-                    <strong className="text-[#FF3366] text-xs">{stopLoss}</strong>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => copySingleValue(takeProfit1, 'TP1')}
-                    className="p-1.5 rounded-lg bg-[#182033] hover:bg-[#222F47] border border-[#00E676]/30 text-left transition-all"
-                  >
-                    <span className="text-[9px] text-[#00E676] block">TAKE PROFIT</span>
-                    <strong className="text-[#00E676] text-xs">{takeProfit1}</strong>
-                  </button>
+                </button>
+
+                {/* Individual Value Quick-Copy Chips */}
+                <div className="pt-1">
+                  <div className="flex items-center justify-between text-[10px] font-bold text-[#94A3B8] mb-1">
+                    <span>Or Copy Individual Fields for MT5:</span>
+                    {copiedValue && (
+                      <span className="text-[#00E676] font-mono animate-pulse">Copied {copiedValue}! Paste into MT5</span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5 font-mono text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => copySingleValue(calculatedLots.toFixed(2), 'Lots')}
+                      className="p-1.5 rounded-lg bg-[#182033] hover:bg-[#222F47] border border-[#222F47] text-left transition-all"
+                    >
+                      <span className="text-[9px] text-[#94A3B8] block">LOTS</span>
+                      <strong className="text-[#FFD700] text-xs">{calculatedLots.toFixed(2)}</strong>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => copySingleValue(stopLoss, 'SL')}
+                      className="p-1.5 rounded-lg bg-[#182033] hover:bg-[#222F47] border border-[#FF3366]/30 text-left transition-all"
+                    >
+                      <span className="text-[9px] text-[#FF3366] block">STOP LOSS</span>
+                      <strong className="text-[#FF3366] text-xs">{stopLoss}</strong>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => copySingleValue(takeProfit1, 'TP1')}
+                      className="p-1.5 rounded-lg bg-[#182033] hover:bg-[#222F47] border border-[#00E676]/30 text-left transition-all"
+                    >
+                      <span className="text-[9px] text-[#00E676] block">TAKE PROFIT</span>
+                      <strong className="text-[#00E676] text-xs">{takeProfit1}</strong>
+                    </button>
+                  </div>
                 </div>
               </div>
 

@@ -27,6 +27,7 @@ export const DERIV_STATUS_LABELS: Record<DerivConnectionStatus, string> = {
 };
 
 const SYMBOL_MAPPING: Record<string, string> = {
+  // Majors
   frxEURUSD: 'EUR/USD',
   frxGBPUSD: 'GBP/USD',
   frxUSDJPY: 'USD/JPY',
@@ -34,11 +35,33 @@ const SYMBOL_MAPPING: Record<string, string> = {
   frxAUDUSD: 'AUD/USD',
   frxUSDCAD: 'USD/CAD',
   frxNZDUSD: 'NZD/USD',
+  // Crosses / Minors
   frxEURGBP: 'EUR/GBP',
   frxEURJPY: 'EUR/JPY',
+  frxEURAUD: 'EUR/AUD',
+  frxEURCAD: 'EUR/CAD',
+  frxEURCHF: 'EUR/CHF',
+  frxEURNZD: 'EUR/NZD',
   frxGBPJPY: 'GBP/JPY',
+  frxGBPAUD: 'GBP/AUD',
+  frxGBPCAD: 'GBP/CAD',
+  frxGBPCHF: 'GBP/CHF',
+  frxGBPNZD: 'GBP/NZD',
+  frxAUDJPY: 'AUD/JPY',
+  frxAUDCAD: 'AUD/CAD',
+  frxAUDCHF: 'AUD/CHF',
+  frxAUDNZD: 'AUD/NZD',
+  frxCADJPY: 'CAD/JPY',
+  frxCADCHF: 'CAD/CHF',
+  frxCHFJPY: 'CHF/JPY',
+  frxNZDJPY: 'NZD/JPY',
+  frxNZDCAD: 'NZD/CAD',
+  frxNZDCHF: 'NZD/CHF',
+  // Metals, Crypto & Indices
   frxXAUUSD: 'XAU/USD',
+  frxXAGUSD: 'XAG/USD',
   cryBTCUSD: 'BTC/USD',
+  cryETHUSD: 'ETH/USD',
   OTC_DJI: 'US30',
   OTC_NDX: 'NAS100'
 };

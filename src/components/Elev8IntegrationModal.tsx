@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Elev8AccountConfig, Elev8Trade, Elev8ExecutionMode, ForexSignal } from '../types';
 import { formatPrice, calculateDollarPnl } from '../services/marketData';
 import { realPriceService } from '../services/RealPriceService';
+import { WhatsAppAlertService } from '../services/WhatsAppAlertService';
 import {
   X,
   ShieldCheck,
@@ -30,7 +31,8 @@ import {
   ExternalLink,
   Wifi,
   CloudLightning,
-  Play
+  Play,
+  Edit3
 } from 'lucide-react';
 
 interface Props {
@@ -39,6 +41,8 @@ interface Props {
   signals: ForexSignal[];
   onSaveConfig: (updated: Elev8AccountConfig) => void;
   onCloseTrade: (tradeId: string) => void;
+  onDeleteTrade?: (tradeId: string) => void;
+  onMoveToBreakEven?: (tradeId: string) => void;
   onClearHistory: () => void;
   onDismiss: () => void;
 }
@@ -49,11 +53,13 @@ export const Elev8IntegrationModal: React.FC<Props> = ({
   signals,
   onSaveConfig,
   onCloseTrade,
+  onDeleteTrade,
+  onMoveToBreakEven,
   onClearHistory,
   onDismiss
 }) => {
   const [activeTab, setActiveTab] = useState<'HISTORY' | 'REAL_EXECUTION' | 'SETUP' | 'MOBILE' | 'EA_CODE'>('REAL_EXECUTION');
-  const [historyFilter, setHistoryFilter] = useState<'ALL' | 'OPEN' | 'CLOSED'>('ALL');
+  const [historyFilter, setHistoryFilter] = useState<'ALL' | 'OPEN' | 'PENDING' | 'CLOSED'>('ALL');
 
   // Account Config Form
   const [accountNumber, setAccountNumber] = useState(config.accountNumber || '');
@@ -65,6 +71,10 @@ export const Elev8IntegrationModal: React.FC<Props> = ({
   const [symbolSuffix, setSymbolSuffix] = useState(config.symbolSuffix || '');
   const [autoCopyEnabled, setAutoCopyEnabled] = useState(config.autoCopyWebhookEnabled || false);
   const [webhookUrl, setWebhookUrl] = useState(config.webhookUrl || '');
+
+  // Quick Inline Balance/Equity Edit State
+  const [isEditingBalance, setIsEditingBalance] = useState(false);
+  const [tempBalanceInput, setTempBalanceInput] = useState(String(config.accountBalance || 100));
 
   // Real Execution Modes
   const [executionMode, setExecutionMode] = useState<Elev8ExecutionMode>(config.executionMode || 'SIMULATED');
@@ -85,6 +95,7 @@ export const Elev8IntegrationModal: React.FC<Props> = ({
 
   // Calculate live floating P&L and realized P&L across trades
   const {
+    pendingTrades,
     openTrades,
     closedTrades,
     totalRealizedPnl,
@@ -98,13 +109,46 @@ export const Elev8IntegrationModal: React.FC<Props> = ({
     let wins = 0;
     let losses = 0;
 
+    const pendingList: Elev8Trade[] = [];
     const openList: Elev8Trade[] = [];
     const closedList: Elev8Trade[] = [];
 
     trades.forEach((t) => {
-      if (t.status === 'OPEN') {
+      const isLimitOrStop = t.orderType.includes('LIMIT') || t.orderType.includes('STOP');
+      const livePrice = realPriceService.getPrice(t.symbol.replace(config.symbolSuffix || '', '')) || t.currentPrice;
+
+      // Determine if a pending order should trigger based on live price
+      let isTriggered = false;
+      if (isLimitOrStop && t.status === 'PENDING') {
+        if (t.orderType === 'BUY_LIMIT' && livePrice <= t.entryPrice) isTriggered = true;
+        else if (t.orderType === 'SELL_LIMIT' && livePrice >= t.entryPrice) isTriggered = true;
+        else if (t.orderType === 'BUY_STOP' && livePrice >= t.entryPrice) isTriggered = true;
+        else if (t.orderType === 'SELL_STOP' && livePrice <= t.entryPrice) isTriggered = true;
+      }
+
+      // Check legacy/saved state: if marked 'OPEN' but orderType is LIMIT/STOP and price hasn't reached entry, treat as PENDING
+      const isStillPending = (t.status === 'PENDING' && !isTriggered) || 
+        (t.status === 'OPEN' && isLimitOrStop && !t.triggeredAt && (
+          (t.orderType === 'SELL_LIMIT' && livePrice < t.entryPrice) ||
+          (t.orderType === 'BUY_LIMIT' && livePrice > t.entryPrice) ||
+          (t.orderType === 'SELL_STOP' && livePrice > t.entryPrice) ||
+          (t.orderType === 'BUY_STOP' && livePrice < t.entryPrice)
+        ));
+
+      if (isStillPending) {
+        // Pending order: P&L is strictly 0.00 until filled!
+        const isJpy = t.symbol.includes('JPY');
+        const pipDiff = Math.abs(livePrice - t.entryPrice) / (isJpy ? 0.01 : 0.0001);
+        const pendingTrade: Elev8Trade = {
+          ...t,
+          status: 'PENDING',
+          currentPrice: livePrice,
+          floatingPnl: 0,
+          pips: Math.round(pipDiff * 10) / 10
+        };
+        pendingList.push(pendingTrade);
+      } else if (t.status === 'OPEN' || isTriggered) {
         // Compute live floating pnl from realPriceService
-        const livePrice = realPriceService.getPrice(t.symbol.replace(config.symbolSuffix || '', '')) || t.currentPrice;
         const isBuy = t.orderType.startsWith('BUY');
         const diff = isBuy ? (livePrice - t.entryPrice) : (t.entryPrice - livePrice);
 
@@ -123,8 +167,9 @@ export const Elev8IntegrationModal: React.FC<Props> = ({
           pnl = pips * pipVal * t.lots;
         }
 
-        const updatedTrade = {
+        const updatedTrade: Elev8Trade = {
           ...t,
+          status: 'OPEN',
           currentPrice: livePrice,
           floatingPnl: Math.round(pnl * 100) / 100,
           pips
@@ -143,6 +188,7 @@ export const Elev8IntegrationModal: React.FC<Props> = ({
     const wr = totalTradesCount > 0 ? Math.round((wins / totalTradesCount) * 1000) / 10 : 0;
 
     return {
+      pendingTrades: pendingList,
       openTrades: openList,
       closedTrades: closedList,
       totalRealizedPnl: Math.round(realized * 100) / 100,
@@ -157,10 +203,11 @@ export const Elev8IntegrationModal: React.FC<Props> = ({
   const currentBalance = accountBalance + totalRealizedPnl;
 
   const filteredTrades = useMemo(() => {
+    if (historyFilter === 'PENDING') return pendingTrades;
     if (historyFilter === 'OPEN') return openTrades;
     if (historyFilter === 'CLOSED') return closedTrades;
-    return [...openTrades, ...closedTrades];
-  }, [historyFilter, openTrades, closedTrades]);
+    return [...pendingTrades, ...openTrades, ...closedTrades];
+  }, [historyFilter, pendingTrades, openTrades, closedTrades]);
 
   const handleSave = () => {
     const updated: Elev8AccountConfig = {
@@ -331,20 +378,44 @@ void OnTimer()
 
         {/* Account P&L Metrics Banner */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3 bg-[#101522] p-2.5 rounded-xl border border-[#222F47] text-center font-mono">
-          <div className="bg-[#182033] p-2 rounded-lg">
-            <span className="text-[9px] text-[#94A3B8] block">Balance</span>
-            <span className="text-xs font-black text-[#F1F5F9] mt-0.5 block">
+          {/* Balance (Click to Edit) */}
+          <div
+            onClick={() => {
+              setTempBalanceInput(String(accountBalance));
+              setIsEditingBalance(true);
+            }}
+            className="bg-[#182033] p-2 rounded-lg cursor-pointer hover:border-[#00E676]/60 border border-transparent transition-all group relative"
+            title="Click to change account balance"
+          >
+            <div className="flex items-center justify-center gap-1">
+              <span className="text-[9px] text-[#94A3B8] block">Balance</span>
+              <Edit3 className="w-2.5 h-2.5 text-[#64748B] group-hover:text-[#00E676] transition-colors" />
+            </div>
+            <span className="text-xs font-black text-[#F1F5F9] mt-0.5 block group-hover:text-[#00E676] transition-colors">
               ${currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
+            <span className="text-[8px] text-[#00E676]/80 font-bold block mt-0.5">Click to Edit</span>
           </div>
 
-          <div className="bg-[#182033] p-2 rounded-lg">
-            <span className="text-[9px] text-[#94A3B8] block">Equity</span>
+          {/* Equity (Click to Edit) */}
+          <div
+            onClick={() => {
+              setTempBalanceInput(String(accountBalance));
+              setIsEditingBalance(true);
+            }}
+            className="bg-[#182033] p-2 rounded-lg cursor-pointer hover:border-[#00E676]/60 border border-transparent transition-all group relative"
+            title="Click to change account equity"
+          >
+            <div className="flex items-center justify-center gap-1">
+              <span className="text-[9px] text-[#94A3B8] block">Equity</span>
+              <Edit3 className="w-2.5 h-2.5 text-[#64748B] group-hover:text-[#00E676] transition-colors" />
+            </div>
             <span className={`text-xs font-black mt-0.5 block ${
               totalFloatingPnl >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'
             }`}>
               ${currentEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
+            <span className="text-[8px] text-[#00E676]/80 font-bold block mt-0.5">Click to Edit</span>
           </div>
 
           <div className="bg-[#182033] p-2 rounded-lg">
@@ -363,6 +434,103 @@ void OnTimer()
             </span>
           </div>
         </div>
+
+        {/* Quick Edit Balance & Equity Drawer */}
+        {isEditingBalance && (
+          <div className="mb-3 p-3 bg-[#101522] border border-[#00E676]/50 rounded-xl animate-fadeIn space-y-2.5 shadow-lg">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#F1F5F9] flex items-center gap-1.5">
+                <Edit3 className="w-3.5 h-3.5 text-[#00E676]" />
+                <span>Change Account Balance / Equity:</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsEditingBalance(false)}
+                className="text-[#94A3B8] hover:text-[#F1F5F9] p-1"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <span className="absolute left-3 top-2 text-xs text-[#94A3B8] font-bold">$</span>
+                <input
+                  type="number"
+                  step="any"
+                  min="1"
+                  value={tempBalanceInput}
+                  onChange={(e) => setTempBalanceInput(e.target.value)}
+                  placeholder="e.g. 110.73"
+                  className="w-full pl-7 pr-3 py-1.5 bg-[#182033] border border-[#222F47] focus:border-[#00E676] rounded-xl text-sm font-mono font-black text-[#00E676] outline-none"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const val = parseFloat(tempBalanceInput);
+                      if (val > 0) {
+                        setAccountBalance(val);
+                        const updated = { ...config, accountBalance: val, lastSyncTime: Date.now() };
+                        onSaveConfig(updated);
+                        setIsEditingBalance(false);
+                      }
+                    }
+                  }}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const val = parseFloat(tempBalanceInput);
+                  if (val > 0) {
+                    setAccountBalance(val);
+                    const updated = { ...config, accountBalance: val, lastSyncTime: Date.now() };
+                    onSaveConfig(updated);
+                    setIsEditingBalance(false);
+                  }
+                }}
+                className="px-4 py-1.5 bg-[#00E676] hover:bg-[#00c853] text-[#080B11] font-black text-xs rounded-xl transition-all shadow"
+              >
+                Save
+              </button>
+            </div>
+
+            {/* Quick Preset Chips */}
+            <div className="flex items-center gap-1.5 flex-wrap text-[10.5px]">
+              <span className="text-[10px] text-[#94A3B8] font-bold mr-1">Presets:</span>
+              {[
+                { label: '$110.73 (Your Live)', val: 110.73 },
+                { label: '$100', val: 100 },
+                { label: '$250', val: 250 },
+                { label: '$500', val: 500 },
+                { label: '$1,000', val: 1000 },
+                { label: '$5,000', val: 5000 },
+                { label: '$10,000', val: 10000 },
+                { label: '$50,000', val: 50000 },
+                { label: '$100,000', val: 100000 }
+              ].map((p) => (
+                <button
+                  key={p.val}
+                  type="button"
+                  onClick={() => {
+                    setTempBalanceInput(String(p.val));
+                    setAccountBalance(p.val);
+                    const updated = { ...config, accountBalance: p.val, lastSyncTime: Date.now() };
+                    onSaveConfig(updated);
+                    setIsEditingBalance(false);
+                  }}
+                  className={`px-2 py-0.5 rounded-lg border font-mono font-bold transition-all ${
+                    accountBalance === p.val
+                      ? 'bg-[#00E676]/20 border-[#00E676] text-[#00E676]'
+                      : 'bg-[#182033] border-[#222F47] text-[#94A3B8] hover:text-[#F1F5F9]'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Navigation Tabs */}
         <div className="grid grid-cols-5 gap-1 bg-[#101522] p-1 rounded-xl border border-[#222F47] mb-3 text-[11px] font-bold">
@@ -677,6 +845,15 @@ void OnTimer()
                 </button>
                 <button
                   type="button"
+                  onClick={() => setHistoryFilter('PENDING')}
+                  className={`px-2.5 py-1 rounded-md transition-all ${
+                    historyFilter === 'PENDING' ? 'bg-[#182033] text-[#FFD700] border border-[#222F47]' : 'text-[#94A3B8]'
+                  }`}
+                >
+                  Pending ({pendingTrades.length})
+                </button>
+                <button
+                  type="button"
                   onClick={() => setHistoryFilter('OPEN')}
                   className={`px-2.5 py-1 rounded-md transition-all ${
                     historyFilter === 'OPEN' ? 'bg-[#182033] text-[#00E676] border border-[#222F47]' : 'text-[#94A3B8]'
@@ -688,7 +865,7 @@ void OnTimer()
                   type="button"
                   onClick={() => setHistoryFilter('CLOSED')}
                   className={`px-2.5 py-1 rounded-md transition-all ${
-                    historyFilter === 'CLOSED' ? 'bg-[#182033] text-[#FFD700] border border-[#222F47]' : 'text-[#94A3B8]'
+                    historyFilter === 'CLOSED' ? 'bg-[#182033] text-[#94A3B8] border border-[#222F47]' : 'text-[#94A3B8]'
                   }`}
                 >
                   Closed ({closedTrades.length})
@@ -723,8 +900,9 @@ void OnTimer()
               <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                 {filteredTrades.map((trade) => {
                   const isBuy = trade.orderType.startsWith('BUY');
+                  const isPending = trade.status === 'PENDING';
                   const isOpen = trade.status === 'OPEN';
-                  const pnl = isOpen ? trade.floatingPnl : trade.realizedPnl;
+                  const pnl = isPending ? 0 : (isOpen ? trade.floatingPnl : trade.realizedPnl);
                   const isProfit = pnl >= 0;
 
                   return (
@@ -743,10 +921,14 @@ void OnTimer()
                           <span className="text-[10px] font-mono text-[#FFD700] font-bold">
                             {trade.lots.toFixed(2)} Lots
                           </span>
-                          <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${
-                            isOpen ? 'bg-[#00E676]/20 text-[#00E676] animate-pulse' : 'bg-[#64748B]/20 text-[#94A3B8]'
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                            isPending
+                              ? 'bg-[#FFD700]/20 text-[#FFD700] border border-[#FFD700]/30'
+                              : isOpen
+                              ? 'bg-[#00E676]/20 text-[#00E676] animate-pulse'
+                              : 'bg-[#64748B]/20 text-[#94A3B8]'
                           }`}>
-                            {isOpen ? 'LIVE OPEN' : `CLOSED (${trade.closeReason || 'HIT TP'})`}
+                            {isPending ? '⏳ PENDING (WAITING FOR FILL)' : isOpen ? 'LIVE OPEN' : `CLOSED (${trade.closeReason || 'HIT TP'})`}
                           </span>
                         </div>
 
@@ -759,21 +941,90 @@ void OnTimer()
                       </div>
 
                       <div className="text-right shrink-0">
-                        <div className={`font-mono font-black text-sm ${isProfit ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
-                          {isProfit ? '+' : ''}${pnl.toFixed(2)}
-                        </div>
-                        <div className="text-[9px] font-mono text-[#94A3B8]">
-                          {isProfit ? '+' : ''}{trade.pips.toFixed(1)} pips
-                        </div>
-
-                        {isOpen && (
-                          <button
-                            type="button"
-                            onClick={() => onCloseTrade(trade.id)}
-                            className="mt-1 px-2 py-0.5 rounded text-[10px] font-bold bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40 hover:bg-[#FF3366]/30 transition-colors"
-                          >
-                            Close Trade
-                          </button>
+                        {isPending ? (
+                          <>
+                            <div className="font-mono font-bold text-sm text-[#FFD700]">
+                              $0.00
+                            </div>
+                            <div className="text-[9px] font-mono text-[#94A3B8]">
+                              {trade.pips.toFixed(1)}p to entry
+                            </div>
+                            <div className="flex items-center gap-1 mt-1 justify-end">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const msg = `📌 *MT5 Pending Order: ${trade.symbol}*\nType: *${trade.orderType.replace('_', ' ')}*\nEntry: *${trade.entryPrice}*\nSL: ${trade.stopLoss} | TP: ${trade.takeProfit1}\nStatus: Waiting for fill (${trade.pips.toFixed(1)}p to entry)`;
+                                  const url = WhatsAppAlertService.getDirectChatUrl(msg);
+                                  window.open(url, '_blank');
+                                }}
+                                className="px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-[#25D366]/20 text-[#25D366] border border-[#25D366]/40 hover:bg-[#25D366]/30 transition-colors"
+                                title="Share pending order to WhatsApp"
+                              >
+                                💬 WA
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onCloseTrade(trade.id)}
+                                className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#FFD700]/20 text-[#FFD700] border border-[#FFD700]/40 hover:bg-[#FFD700]/30 transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className={`font-mono font-black text-sm ${isProfit ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                              {isProfit ? '+' : ''}${pnl.toFixed(2)}
+                            </div>
+                            <div className="text-[9px] font-mono text-[#94A3B8]">
+                              {isProfit ? '+' : ''}{trade.pips.toFixed(1)} pips
+                            </div>
+                            <div className="flex items-center gap-1 mt-1 justify-end">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const msg = `📊 *MT5 Trade Position: ${trade.symbol}*\nType: *${trade.orderType.replace('_', ' ')}*\nLots: ${trade.lots.toFixed(2)}\nEntry: *${trade.entryPrice}*\nP&L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${trade.pips >= 0 ? '+' : ''}${trade.pips.toFixed(1)} pips)\nStatus: ${trade.status}`;
+                                  const url = WhatsAppAlertService.getDirectChatUrl(msg);
+                                  window.open(url, '_blank');
+                                }}
+                                className="px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-[#25D366]/20 text-[#25D366] border border-[#25D366]/40 hover:bg-[#25D366]/30 transition-colors"
+                                title="Share trade to WhatsApp"
+                              >
+                                💬 WA
+                              </button>
+                              {isOpen ? (
+                                <div className="flex items-center gap-1">
+                                  {trade.stopLoss !== trade.entryPrice && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onMoveToBreakEven && onMoveToBreakEven(trade.id)}
+                                      className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40 hover:bg-[#00E676]/30 transition-colors"
+                                      title="Move Stop Loss to Entry Price (Break-Even) for 100% risk-free trade"
+                                    >
+                                      🛡️ BE
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => onCloseTrade(trade.id)}
+                                    className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40 hover:bg-[#FF3366]/30 transition-colors"
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => (onDeleteTrade ? onDeleteTrade(trade.id) : onCloseTrade(trade.id))}
+                                  className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#FF3366]/15 text-[#FF3366] border border-[#FF3366]/30 hover:bg-[#FF3366]/25 transition-colors flex items-center gap-1"
+                                  title="Remove this closed trade manually from history"
+                                >
+                                  <Trash2 className="w-2.5 h-2.5" />
+                                  <span>Remove</span>
+                                </button>
+                              )}
+                            </div>
+                          </>
                         )}
                       </div>
                     </div>
@@ -851,30 +1102,44 @@ void OnTimer()
               {/* Account Size */}
               <div>
                 <label className="text-[11px] font-bold text-[#94A3B8] uppercase block mb-1">
-                  Elev8 Challenge / Account Balance ($)
+                  Elev8 Account Balance / Equity ($)
                 </label>
-                <div className="grid grid-cols-4 gap-1.5 mb-1.5">
-                  {[10000, 25000, 50000, 100000].map((bal) => (
+                <div className="flex items-center gap-1.5 flex-wrap mb-1.5 text-[10px]">
+                  {[
+                    { label: '$110.73 (Live)', val: 110.73 },
+                    { label: '$100', val: 100 },
+                    { label: '$250', val: 250 },
+                    { label: '$500', val: 500 },
+                    { label: '$1k', val: 1000 },
+                    { label: '$5k', val: 5000 },
+                    { label: '$10k', val: 10000 },
+                    { label: '$50k', val: 50000 }
+                  ].map((p) => (
                     <button
-                      key={bal}
+                      key={p.val}
                       type="button"
-                      onClick={() => setAccountBalance(bal)}
-                      className={`py-1 text-[10px] font-bold rounded-lg border transition-all ${
-                        accountBalance === bal
-                          ? 'bg-[#2979FF]/20 text-[#2979FF] border-[#2979FF]'
-                          : 'bg-[#182033] text-[#94A3B8] border-[#222F47]'
+                      onClick={() => setAccountBalance(p.val)}
+                      className={`px-2 py-0.5 font-bold rounded-lg border transition-all ${
+                        accountBalance === p.val
+                          ? 'bg-[#00E676]/20 text-[#00E676] border-[#00E676]'
+                          : 'bg-[#182033] text-[#94A3B8] border-[#222F47] hover:text-[#F1F5F9]'
                       }`}
                     >
-                      ${bal / 1000}k
+                      {p.label}
                     </button>
                   ))}
                 </div>
-                <input
-                  type="number"
-                  value={accountBalance}
-                  onChange={(e) => setAccountBalance(Math.max(100, Number(e.target.value)))}
-                  className="w-full bg-[#182033] border border-[#222F47] rounded-xl py-2 px-3 text-xs font-mono font-bold text-[#00E676] focus:outline-none focus:border-[#2979FF]"
-                />
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-xs text-[#94A3B8] font-bold">$</span>
+                  <input
+                    type="number"
+                    step="any"
+                    min="1"
+                    value={accountBalance}
+                    onChange={(e) => setAccountBalance(Math.max(1, parseFloat(e.target.value) || 0))}
+                    className="w-full bg-[#182033] border border-[#222F47] rounded-xl py-2 pl-7 pr-3 text-xs font-mono font-bold text-[#00E676] focus:outline-none focus:border-[#00E676]"
+                  />
+                </div>
               </div>
 
               {/* Risk % per trade */}

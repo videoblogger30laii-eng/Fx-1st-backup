@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { PriceAlert, TriggeredAlertEvent } from '../types';
+import { WhatsAppAlertService } from '../services/WhatsAppAlertService';
 import {
   Bell,
   BellRing,
@@ -9,7 +10,9 @@ import {
   Volume2,
   Vibrate,
   Radio,
-  CheckCircle2
+  CheckCircle2,
+  Target,
+  AlertTriangle
 } from 'lucide-react';
 
 interface Props {
@@ -19,6 +22,7 @@ interface Props {
   onDeleteAlert: (id: string) => void;
   onClearHistory: () => void;
   onOpenAddModal: () => void;
+  onOpenWhatsAppModal?: () => void;
 }
 
 export const AlertsScreen: React.FC<Props> = ({
@@ -27,7 +31,8 @@ export const AlertsScreen: React.FC<Props> = ({
   onToggleEnabled,
   onDeleteAlert,
   onClearHistory,
-  onOpenAddModal
+  onOpenAddModal,
+  onOpenWhatsAppModal
 }) => {
   const [selectedTab, setSelectedTab] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
   const activeCount = alerts.filter(a => a.isEnabled).length;
@@ -48,14 +53,47 @@ export const AlertsScreen: React.FC<Props> = ({
           </div>
         </div>
 
-        <button
-          onClick={onOpenAddModal}
-          className="flex items-center gap-1.5 bg-[#FFD700] hover:bg-[#FFD700]/90 text-[#080B11] font-bold text-xs px-3.5 py-2 rounded-xl transition-colors shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          <span>New Alert</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {onOpenWhatsAppModal && (
+            <button
+              onClick={onOpenWhatsAppModal}
+              className="flex items-center gap-1.5 bg-[#25D366]/20 hover:bg-[#25D366]/30 border border-[#25D366]/40 text-[#25D366] font-bold text-xs px-3 py-2 rounded-xl transition-all shadow-sm"
+              title="Configure automated WhatsApp trade alerts"
+            >
+              <span>💬</span>
+              <span className="hidden sm:inline">WhatsApp Alerts</span>
+            </button>
+          )}
+
+          <button
+            onClick={onOpenAddModal}
+            className="flex items-center gap-1.5 bg-[#FFD700] hover:bg-[#FFD700]/90 text-[#080B11] font-bold text-xs px-3.5 py-2 rounded-xl transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Alert</span>
+          </button>
+        </div>
       </div>
+
+      {/* Native Browser Notification Permission Prompt */}
+      {typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted' && (
+        <div className="bg-[#101522] border border-[#2979FF]/40 rounded-xl p-3 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2.5">
+            <Volume2 className="w-4 h-4 text-[#00E676] shrink-0" />
+            <span className="text-[#F1F5F9]">
+              Enable audio & push notifications for your <strong>MT5 pending order fills & invalidations</strong>!
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              Notification.requestPermission();
+            }}
+            className="px-3 py-1.5 bg-[#2979FF] hover:bg-[#1E6BFF] text-white rounded-lg font-bold text-xs shrink-0 transition-all shadow"
+          >
+            Enable Notifications
+          </button>
+        </div>
+      )}
 
       {/* Segmented Tab Switcher */}
       <div className="flex bg-[#101522] p-1 rounded-xl border border-[#222F47]">
@@ -179,26 +217,77 @@ export const AlertsScreen: React.FC<Props> = ({
             )}
           </div>
 
-          {triggeredEvents.map(event => (
-            <div
-              key={event.id}
-              className="flex items-center justify-between bg-[#101522] border border-[#222F47] rounded-xl p-3.5"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-[#FFD700]/15 flex items-center justify-center text-[#FFD700]">
-                  <BellRing className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-[#F1F5F9]">{event.title}</div>
-                  <div className="text-[11px] text-[#94A3B8]">{event.message}</div>
-                </div>
-              </div>
+          {triggeredEvents.map(event => {
+            const isTrig = event.condition === 'PENDING_ORDER_TRIGGERED';
+            const isInval = event.condition === 'PENDING_ORDER_INVALIDATED';
 
-              <div className="text-right text-[10px] font-mono text-[#64748B]">
-                {new Date(event.timestamp).toLocaleTimeString()}
+            return (
+              <div
+                key={event.id}
+                className={`flex items-center justify-between border rounded-xl p-3.5 transition-all ${
+                  isTrig
+                    ? 'bg-[#0A1612] border-[#00E676]/40 shadow-sm'
+                    : isInval
+                    ? 'bg-[#1C0D11] border-[#FF3366]/40 shadow-sm'
+                    : 'bg-[#101522] border-[#222F47]'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      isTrig
+                        ? 'bg-[#00E676]/20 text-[#00E676]'
+                        : isInval
+                        ? 'bg-[#FF3366]/20 text-[#FF3366]'
+                        : 'bg-[#FFD700]/15 text-[#FFD700]'
+                    }`}
+                  >
+                    {isTrig ? (
+                      <Target className="w-4 h-4" />
+                    ) : isInval ? (
+                      <AlertTriangle className="w-4 h-4" />
+                    ) : (
+                      <BellRing className="w-4 h-4" />
+                    )}
+                  </div>
+                  <div className="text-left">
+                    <div
+                      className={`text-xs font-bold ${
+                        isTrig
+                          ? 'text-[#00E676]'
+                          : isInval
+                          ? 'text-[#FF3366]'
+                          : 'text-[#F1F5F9]'
+                      }`}
+                    >
+                      {event.title}
+                    </div>
+                    <div className="text-[11px] text-[#94A3B8] mt-0.5">{event.message}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0 ml-2">
+                  <button
+                    onClick={() => {
+                      const url = WhatsAppAlertService.getDirectChatUrl(
+                        `*${event.title}*\n\n${event.message}\n\nTime: ${new Date(event.timestamp).toLocaleTimeString()}`
+                      );
+                      window.open(url, '_blank');
+                    }}
+                    className="p-1.5 rounded-lg bg-[#25D366]/15 hover:bg-[#25D366]/25 text-[#25D366] text-[10px] font-bold flex items-center gap-1 border border-[#25D366]/30 transition-colors"
+                    title="Send alert details to WhatsApp"
+                  >
+                    <span>💬</span>
+                    <span className="hidden sm:inline">WhatsApp</span>
+                  </button>
+
+                  <div className="text-right text-[10px] font-mono text-[#64748B]">
+                    {new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {triggeredEvents.length === 0 && (
             <div className="p-8 text-center bg-[#101522] rounded-xl border border-[#222F47]">
