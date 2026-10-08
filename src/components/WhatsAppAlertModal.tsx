@@ -146,9 +146,13 @@ export const WhatsAppAlertModal: React.FC<Props> = ({ isOpen, onClose, activeSig
       }
     }
 
-    // Direct chat link test
+    // Direct chat link test (safe anchor click for iframe compatibility)
     const url = WhatsAppAlertService.getDirectChatUrl(testMsg, cleanPhone);
-    window.open(url, '_blank');
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.click();
     setTestResult({
       status: 'SUCCESS',
       message: 'Opening your WhatsApp chat directly with the test alert!'
@@ -169,7 +173,7 @@ export const WhatsAppAlertModal: React.FC<Props> = ({ isOpen, onClose, activeSig
 
     const testMsg = `🎯 *Elev8 MT5 Alert Test*\n\n✅ *Telegram Alerts Connected!*\nTime: \`${new Date().toLocaleTimeString()}\`\nStatus: *24/7 Order Watchdog Active*\n\nYou will receive instant alerts here whenever pending orders fill or become invalidated!`;
 
-    const res = await TelegramAlertService.sendAlert(testMsg, { ...tgConfig, enabled: true });
+    const res = await TelegramAlertService.sendAlert(testMsg, { ...tgConfig, enabled: true }, true);
     setIsTesting(false);
 
     if (res.success) {

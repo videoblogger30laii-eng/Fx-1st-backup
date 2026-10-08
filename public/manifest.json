@@ -1,18 +1,26 @@
 {
-  "name": "FX Institutional Signals & MT5 Terminal",
+  "id": "/",
+  "name": "FX Signals Pro — Institutional Mobile App",
   "short_name": "FX Signals",
-  "description": "Real-time Institutional Forex & Gold Signals with Elev8 MT5 Execution, Live Currency Strength, News Guard, and Telegram Watchdog.",
+  "description": "Real-time Institutional Forex, Gold & Silver Signals with MT5 Execution, Live Strength Meter, News Guard, and Telegram Alerts.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#080B11",
   "theme_color": "#080B11",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/vite.svg",
+      "src": "/icon.svg",
       "sizes": "192x192 512x512",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
   ]
 }

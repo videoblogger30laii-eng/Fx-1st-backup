@@ -1,6 +1,7 @@
 import { WhatsAppAlertConfig } from '../types';
 
 const STORAGE_KEY = 'elev8_whatsapp_alert_config';
+const sentWhatsAppFingerprints = new Map<string, number>();
 
 export const DEFAULT_WHATSAPP_CONFIG: WhatsAppAlertConfig = {
   enabled: false,
@@ -48,13 +49,29 @@ export class WhatsAppAlertService {
    */
   static async sendAutomatedAlert(
     message: string,
-    configOverride?: WhatsAppAlertConfig
+    configOverride?: WhatsAppAlertConfig,
+    allowDuplicate: boolean = false
   ): Promise<{ success: boolean; message: string }> {
     const config = configOverride || this.getConfig();
 
     if (!config.enabled) {
       return { success: false, message: 'WhatsApp alerts are currently disabled.' };
     }
+
+    const fingerprint = message
+      .replace(/Price:\s*\*?[0-9.,]+\*?/gi, 'Price:NORM')
+      .replace(/Filled at:\s*\*?[0-9.,]+\*?/gi, 'FilledAt:NORM')
+      .replace(/Exit Price:\s*\*?[0-9.,]+\*?/gi, 'ExitPrice:NORM')
+      .replace(/Time:\s*[^\n]+/gi, 'Time:NORM')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const now = Date.now();
+    const lastSent = sentWhatsAppFingerprints.get(fingerprint);
+    if (!allowDuplicate && lastSent && now - lastSent < 6 * 3600 * 1000) {
+      return { success: false, message: 'Duplicate WhatsApp alert suppressed.' };
+    }
+    sentWhatsAppFingerprints.set(fingerprint, now);
 
     const cleanPhone = (config.phoneNumber || '').replace(/[^0-9]/g, '');
 

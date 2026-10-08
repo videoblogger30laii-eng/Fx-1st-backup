@@ -137,8 +137,10 @@ export const Elev8IntegrationModal: React.FC<Props> = ({
 
       if (isStillPending) {
         // Pending order: P&L is strictly 0.00 until filled!
-        const isJpy = t.symbol.includes('JPY');
-        const pipDiff = Math.abs(livePrice - t.entryPrice) / (isJpy ? 0.01 : 0.0001);
+        const upperSym = t.symbol.toUpperCase();
+        const isJpyOrSilver = upperSym.includes('JPY') || upperSym.includes('XAG') || upperSym.includes('SILVER');
+        const isGold = upperSym.includes('XAU') || upperSym.includes('GOLD');
+        const pipDiff = Math.abs(livePrice - t.entryPrice) / (isGold ? 0.1 : isJpyOrSilver ? 0.01 : 0.0001);
         const pendingTrade: Elev8Trade = {
           ...t,
           status: 'PENDING',
@@ -151,17 +153,18 @@ export const Elev8IntegrationModal: React.FC<Props> = ({
         // Compute live floating pnl from realPriceService
         const isBuy = t.orderType.startsWith('BUY');
         const diff = isBuy ? (livePrice - t.entryPrice) : (t.entryPrice - livePrice);
+        const upperSym = t.symbol.toUpperCase();
 
         let pnl = 0;
         let pips = 0;
-        if (t.symbol.includes('XAU') || t.symbol.includes('GOLD')) {
+        if (upperSym.includes('XAU') || upperSym.includes('GOLD')) {
           pnl = diff * 100 * t.lots;
           pips = Math.round(diff * 10 * 10) / 10;
-        } else if (t.symbol.includes('US30')) {
-          pnl = diff * 1.0 * t.lots;
-          pips = Math.round(diff * 10) / 10;
+        } else if (upperSym.includes('XAG') || upperSym.includes('SILVER')) {
+          pips = Math.round(diff * 100 * 10) / 10;
+          pnl = pips * 10.0 * t.lots;
         } else {
-          const isJpy = t.symbol.includes('JPY');
+          const isJpy = upperSym.includes('JPY');
           pips = Math.round((diff / (isJpy ? 0.01 : 0.0001)) * 10) / 10;
           const pipVal = isJpy && livePrice > 0 ? (1000.0 / livePrice) : 10.0;
           pnl = pips * pipVal * t.lots;

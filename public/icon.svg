@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0D1424" />
+      <stop offset="100%" stop-color="#070A10" />
+    </linearGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFE55C" />
+      <stop offset="100%" stop-color="#F59E0B" />
+    </linearGradient>
+    <linearGradient id="bull" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#059669" />
+      <stop offset="100%" stop-color="#00E676" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)" stroke="#222F47" stroke-width="12" />
+  <!-- Candlesticks -->
+  <line x1="140" y1="190" x2="140" y2="370" stroke="#FF3366" stroke-width="12" stroke-linecap="round" />
+  <rect x="116" y="230" width="48" height="90" rx="10" fill="#FF3366" />
+
+  <line x1="256" y1="140" x2="256" y2="340" stroke="url(#bull)" stroke-width="12" stroke-linecap="round" />
+  <rect x="232" y="180" width="48" height="115" rx="10" fill="url(#bull)" />
+
+  <line x1="372" y1="96" x2="372" y2="300" stroke="url(#gold)" stroke-width="12" stroke-linecap="round" />
+  <rect x="348" y="130" width="48" height="130" rx="10" fill="url(#gold)" />
+
+  <!-- Institutional Trend Arrow -->
+  <path d="M110 385 L235 285 L310 320 L410 190" fill="none" stroke="url(#gold)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
+  <polygon points="418,178 378,192 408,220" fill="url(#gold)" />
+</svg>

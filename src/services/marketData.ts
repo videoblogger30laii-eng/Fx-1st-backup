@@ -16,34 +16,34 @@ import { currencyStrengthService } from './currencyStrengthService';
 import { economicCalendarService } from './economicCalendarService';
 
 // --- 1. Traditional FX Majors (0.01 Lot Micro-Friendly: Margin ~$2 - $10 | 1 Pip = $0.10) ---
-export const PAIR_EURUSD: ForexPair = { symbol: 'EUR/USD', name: 'Euro / US Dollar', basePrice: 1.1248, currentPrice: 1.1248, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.20, pipValue001: 0.10, isMicroAccountFriendly: true };
-export const PAIR_GBPUSD: ForexPair = { symbol: 'GBP/USD', name: 'British Pound / USD', basePrice: 1.3238, currentPrice: 1.3238, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.65, pipValue001: 0.10, isMicroAccountFriendly: true };
-export const PAIR_USDJPY: ForexPair = { symbol: 'USD/JPY', name: 'US Dollar / Yen', basePrice: 157.82, currentPrice: 157.82, pipDigits: 2, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.00, pipValue001: 0.09, isMicroAccountFriendly: true };
-export const PAIR_USDCHF: ForexPair = { symbol: 'USD/CHF', name: 'US Dollar / Swiss Franc', basePrice: 0.8285, currentPrice: 0.8285, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.00, pipValue001: 0.12, isMicroAccountFriendly: true };
-export const PAIR_AUDUSD: ForexPair = { symbol: 'AUD/USD', name: 'Aussie / USD', basePrice: 0.6953, currentPrice: 0.6953, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 1.40, pipValue001: 0.10, isMicroAccountFriendly: true };
-export const PAIR_NZDUSD: ForexPair = { symbol: 'NZD/USD', name: 'Kiwi / USD', basePrice: 0.5611, currentPrice: 0.5611, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 1.15, pipValue001: 0.10, isMicroAccountFriendly: true };
+export const PAIR_EURUSD: ForexPair = { symbol: 'EUR/USD', name: 'Euro / US Dollar', basePrice: 1.1211, currentPrice: 1.1211, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.20, pipValue001: 0.10, isMicroAccountFriendly: true };
+export const PAIR_GBPUSD: ForexPair = { symbol: 'GBP/USD', name: 'British Pound / USD', basePrice: 1.3242, currentPrice: 1.3242, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.65, pipValue001: 0.10, isMicroAccountFriendly: true };
+export const PAIR_USDJPY: ForexPair = { symbol: 'USD/JPY', name: 'US Dollar / Yen', basePrice: 157.84, currentPrice: 157.84, pipDigits: 2, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.00, pipValue001: 0.09, isMicroAccountFriendly: true };
+export const PAIR_USDCHF: ForexPair = { symbol: 'USD/CHF', name: 'US Dollar / Swiss Franc', basePrice: 0.8871, currentPrice: 0.8871, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.00, pipValue001: 0.12, isMicroAccountFriendly: true };
+export const PAIR_AUDUSD: ForexPair = { symbol: 'AUD/USD', name: 'Aussie / USD', basePrice: 0.6959, currentPrice: 0.6959, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 1.40, pipValue001: 0.10, isMicroAccountFriendly: true };
+export const PAIR_NZDUSD: ForexPair = { symbol: 'NZD/USD', name: 'Kiwi / USD', basePrice: 0.5626, currentPrice: 0.5626, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 1.15, pipValue001: 0.10, isMicroAccountFriendly: true };
 export const PAIR_USDCAD: ForexPair = { symbol: 'USD/CAD', name: 'US Dollar / CAD', basePrice: 1.4248, currentPrice: 1.4248, pipDigits: 4, spreadPips: 0.2, category: 'MAJORS', minMargin001: 2.00, pipValue001: 0.08, isMicroAccountFriendly: true };
 
 // --- 2. 21 Major Crosses (0.01 Lot Micro-Friendly: Margin ~$2 - $10 | 1 Pip = $0.08 - $0.12) ---
 export const PAIR_EURGBP: ForexPair = { symbol: 'EUR/GBP', name: 'Euro / British Pound', basePrice: 0.8497, currentPrice: 0.8497, pipDigits: 4, spreadPips: 0.2, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.13, isMicroAccountFriendly: true };
-export const PAIR_EURJPY: ForexPair = { symbol: 'EUR/JPY', name: 'Euro / Japanese Yen', basePrice: 177.60, currentPrice: 177.60, pipDigits: 2, spreadPips: 0.2, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.09, isMicroAccountFriendly: true };
-export const PAIR_EURAUD: ForexPair = { symbol: 'EUR/AUD', name: 'Euro / Australian Dollar', basePrice: 1.6164, currentPrice: 1.6164, pipDigits: 4, spreadPips: 0.4, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.07, isMicroAccountFriendly: true };
+export const PAIR_EURJPY: ForexPair = { symbol: 'EUR/JPY', name: 'Euro / Japanese Yen', basePrice: 178.02, currentPrice: 178.02, pipDigits: 2, spreadPips: 0.2, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.09, isMicroAccountFriendly: true };
+export const PAIR_EURAUD: ForexPair = { symbol: 'EUR/AUD', name: 'Euro / Australian Dollar', basePrice: 1.6152, currentPrice: 1.6152, pipDigits: 4, spreadPips: 0.4, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.07, isMicroAccountFriendly: true };
 export const PAIR_EURCAD: ForexPair = { symbol: 'EUR/CAD', name: 'Euro / Canadian Dollar', basePrice: 1.6025, currentPrice: 1.6025, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.08, isMicroAccountFriendly: true };
 export const PAIR_EURCHF: ForexPair = { symbol: 'EUR/CHF', name: 'Euro / Swiss Franc', basePrice: 0.9323, currentPrice: 0.9323, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.12, isMicroAccountFriendly: true };
 export const PAIR_EURNZD: ForexPair = { symbol: 'EUR/NZD', name: 'Euro / New Zealand Dollar', basePrice: 2.0029, currentPrice: 2.0029, pipDigits: 4, spreadPips: 0.5, category: 'MINORS', minMargin001: 2.20, pipValue001: 0.06, isMicroAccountFriendly: true };
 
-export const PAIR_GBPJPY: ForexPair = { symbol: 'GBP/JPY', name: 'Pound / Yen (The Dragon)', basePrice: 208.88, currentPrice: 208.88, pipDigits: 2, spreadPips: 0.2, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.09, isMicroAccountFriendly: true };
-export const PAIR_GBPAUD: ForexPair = { symbol: 'GBP/AUD', name: 'Pound / Australian Dollar', basePrice: 1.9016, currentPrice: 1.9016, pipDigits: 4, spreadPips: 0.4, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.07, isMicroAccountFriendly: true };
-export const PAIR_GBPCAD: ForexPair = { symbol: 'GBP/CAD', name: 'Pound / Canadian Dollar', basePrice: 1.8859, currentPrice: 1.8859, pipDigits: 4, spreadPips: 0.4, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.08, isMicroAccountFriendly: true };
+export const PAIR_GBPJPY: ForexPair = { symbol: 'GBP/JPY', name: 'Pound / Yen (The Dragon)', basePrice: 208.45, currentPrice: 208.45, pipDigits: 2, spreadPips: 0.2, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.09, isMicroAccountFriendly: true };
+export const PAIR_GBPAUD: ForexPair = { symbol: 'GBP/AUD', name: 'Pound / Australian Dollar', basePrice: 1.9008, currentPrice: 1.9008, pipDigits: 4, spreadPips: 0.4, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.07, isMicroAccountFriendly: true };
+export const PAIR_GBPCAD: ForexPair = { symbol: 'GBP/CAD', name: 'Pound / Canadian Dollar', basePrice: 1.8162, currentPrice: 1.8162, pipDigits: 4, spreadPips: 0.4, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.08, isMicroAccountFriendly: true };
 export const PAIR_GBPCHF: ForexPair = { symbol: 'GBP/CHF', name: 'Pound / Swiss Franc', basePrice: 1.0965, currentPrice: 1.0965, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.12, isMicroAccountFriendly: true };
 export const PAIR_GBPNZD: ForexPair = { symbol: 'GBP/NZD', name: 'Pound / New Zealand Dollar', basePrice: 2.3569, currentPrice: 2.3569, pipDigits: 4, spreadPips: 0.6, category: 'MINORS', minMargin001: 2.65, pipValue001: 0.06, isMicroAccountFriendly: true };
 
-export const PAIR_AUDJPY: ForexPair = { symbol: 'AUD/JPY', name: 'Aussie / Japanese Yen', basePrice: 109.74, currentPrice: 109.74, pipDigits: 2, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.40, pipValue001: 0.09, isMicroAccountFriendly: true };
+export const PAIR_AUDJPY: ForexPair = { symbol: 'AUD/JPY', name: 'Aussie / Japanese Yen', basePrice: 109.80, currentPrice: 109.80, pipDigits: 2, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.40, pipValue001: 0.09, isMicroAccountFriendly: true };
 export const PAIR_AUDCAD: ForexPair = { symbol: 'AUD/CAD', name: 'Aussie / Canadian Dollar', basePrice: 0.9908, currentPrice: 0.9908, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.40, pipValue001: 0.08, isMicroAccountFriendly: true };
 export const PAIR_AUDCHF: ForexPair = { symbol: 'AUD/CHF', name: 'Aussie / Swiss Franc', basePrice: 0.5760, currentPrice: 0.5760, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.40, pipValue001: 0.12, isMicroAccountFriendly: true };
 export const PAIR_AUDNZD: ForexPair = { symbol: 'AUD/NZD', name: 'Aussie / New Zealand Dollar', basePrice: 1.2380, currentPrice: 1.2380, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.40, pipValue001: 0.06, isMicroAccountFriendly: true };
 
-export const PAIR_CADJPY: ForexPair = { symbol: 'CAD/JPY', name: 'Canadian Dollar / Yen', basePrice: 110.71, currentPrice: 110.71, pipDigits: 2, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.50, pipValue001: 0.09, isMicroAccountFriendly: true };
+export const PAIR_CADJPY: ForexPair = { symbol: 'CAD/JPY', name: 'Canadian Dollar / Yen', basePrice: 110.65, currentPrice: 110.65, pipDigits: 2, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.50, pipValue001: 0.09, isMicroAccountFriendly: true };
 export const PAIR_CADCHF: ForexPair = { symbol: 'CAD/CHF', name: 'Canadian Dollar / Swiss Franc', basePrice: 0.5812, currentPrice: 0.5812, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.50, pipValue001: 0.12, isMicroAccountFriendly: true };
 export const PAIR_CHFJPY: ForexPair = { symbol: 'CHF/JPY', name: 'Swiss Franc / Yen', basePrice: 190.36, currentPrice: 190.36, pipDigits: 2, spreadPips: 0.3, category: 'MINORS', minMargin001: 2.30, pipValue001: 0.09, isMicroAccountFriendly: true };
 
@@ -51,9 +51,9 @@ export const PAIR_NZDJPY: ForexPair = { symbol: 'NZD/JPY', name: 'Kiwi / Japanes
 export const PAIR_NZDCAD: ForexPair = { symbol: 'NZD/CAD', name: 'Kiwi / Canadian Dollar', basePrice: 0.7995, currentPrice: 0.7995, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.15, pipValue001: 0.08, isMicroAccountFriendly: true };
 export const PAIR_NZDCHF: ForexPair = { symbol: 'NZD/CHF', name: 'Kiwi / Swiss Franc', basePrice: 0.4649, currentPrice: 0.4649, pipDigits: 4, spreadPips: 0.3, category: 'MINORS', minMargin001: 1.15, pipValue001: 0.12, isMicroAccountFriendly: true };
 
-// --- 3. Precious Metals (0.01 Micro-Lot Friendly: 1 oz Gold / 50 oz Silver) ---
-export const PAIR_XAUUSD: ForexPair = { symbol: 'XAU/USD', name: 'Gold / US Dollar', basePrice: 4138.50, currentPrice: 4138.50, pipDigits: 2, isGoldOrCrypto: true, spreadPips: 1.2, category: 'METALS', minMargin001: 8.50, pipValue001: 0.10, isMicroAccountFriendly: true };
-export const PAIR_XAGUSD: ForexPair = { symbol: 'XAG/USD', name: 'Silver / US Dollar', basePrice: 60.37, currentPrice: 60.37, pipDigits: 2, isGoldOrCrypto: true, spreadPips: 0.8, category: 'METALS', minMargin001: 3.20, pipValue001: 0.50, isMicroAccountFriendly: true };
+// --- 3. Precious Metals (0.01 Micro-Lot Friendly: 1 oz Gold / 10 oz Micro Silver) ---
+export const PAIR_XAUUSD: ForexPair = { symbol: 'XAU/USD', name: 'Gold / US Dollar', basePrice: 4164.00, currentPrice: 4164.00, pipDigits: 2, isGoldOrCrypto: true, spreadPips: 1.2, category: 'METALS', minMargin001: 8.50, pipValue001: 0.10, isMicroAccountFriendly: true };
+export const PAIR_XAGUSD: ForexPair = { symbol: 'XAG/USD', name: 'Silver / US Dollar', basePrice: 59.65, currentPrice: 59.65, pipDigits: 2, isGoldOrCrypto: true, spreadPips: 0.8, category: 'METALS', minMargin001: 3.20, pipValue001: 0.10, isMicroAccountFriendly: true };
 
 export const ALL_PAIRS: ForexPair[] = [
   // Core FX Majors (7 pairs)
@@ -93,10 +93,12 @@ export const ALL_PAIRS: ForexPair[] = [
 
 export function createSyntheticSignalForPair(pair: ForexPair): ForexSignal {
   const current = pair.currentPrice > 0 ? pair.currentPrice : pair.basePrice;
-  const pipOffset = pair.pipDigits === 2 ? (pair.isGoldOrCrypto ? 15.0 : 0.40) : (pair.pipDigits === 1 ? 80.0 : 0.0040);
-  const tp1Offset = pipOffset * 2.5;
-  const tp2Offset = pipOffset * 4.0;
-  const tp3Offset = pipOffset * 6.0;
+  const isGold = pair.symbol.includes('XAU') || pair.symbol.includes('GOLD');
+  const isSilver = pair.symbol.includes('XAG') || pair.symbol.includes('SILVER');
+  const pipOffset = isGold ? 17.0 : isSilver ? 0.38 : pair.pipDigits === 2 ? 0.36 : pair.pipDigits === 1 ? 80.0 : 0.0034;
+  const tp1Offset = pipOffset * 2.6;
+  const tp2Offset = pipOffset * 3.8;
+  const tp3Offset = pipOffset * 5.2;
 
   return {
     id: `ANALYZE-${pair.symbol.replace(/[\/\s]/g, '')}`,
@@ -147,39 +149,40 @@ export function formatPrice(pair: ForexPair, price: number): string {
 
 export function calculatePips(pair: ForexPair, entry: number, current: number, isBuy: boolean): number {
   const diff = isBuy ? current - entry : entry - current;
+  const sym = pair.symbol.toUpperCase();
   let multiplier = 10000.0;
-  if (pair.isGoldOrCrypto && pair.pipDigits === 1) {
+  if (sym.includes('XAU') || sym.includes('GOLD')) {
+    multiplier = 10.0; // $0.10 = 1 pip on Gold ($1.00 = 10 pips)
+  } else if (sym.includes('XAG') || sym.includes('SILVER')) {
+    multiplier = 100.0; // $0.01 = 1 pip on Silver ($0.80 = 80 pips)
+  } else if (pair.isGoldOrCrypto && pair.pipDigits === 1) {
     multiplier = 1.0;
-  } else if (pair.isGoldOrCrypto && pair.pipDigits === 2) {
-    multiplier = 10.0;
-  } else if (pair.pipDigits === 2) {
-    multiplier = 100.0;
+  } else if (pair.pipDigits === 2 || sym.includes('JPY')) {
+    multiplier = 100.0; // 0.01 = 1 pip on JPY pairs
   }
   const pips = diff * multiplier;
   return Math.round(pips * 10) / 10;
 }
 
 export function calculateSlPips(signal: ForexSignal): number {
-  const diff = Math.abs(signal.entryPrice - signal.stopLoss);
-  let multiplier = 10000.0;
-  if (signal.pair.pipDigits === 2 && !signal.pair.isGoldOrCrypto) multiplier = 100.0;
-  else if (signal.pair.isGoldOrCrypto) multiplier = 10.0;
-  const pips = diff * multiplier;
-  return Math.round(pips * 10) / 10;
+  const isBuy = signal.type.startsWith('BUY');
+  return Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.stopLoss, isBuy));
 }
 
 export function calculateLotSize(signal: ForexSignal, accountBalance: number, riskPercent: number): number {
   const riskUsd = accountBalance * (riskPercent / 100.0);
-  const slPips = calculateSlPips(signal);
-  if (slPips <= 0) return 0.01;
+  const oneLotLoss = Math.abs(
+    calculateDollarPnl(
+      signal.pair,
+      signal.entryPrice,
+      signal.stopLoss,
+      1.0,
+      signal.type.startsWith('BUY')
+    ).dollarPnl
+  );
+  if (oneLotLoss <= 0) return 0.01;
 
-  let lotSize = 0.01;
-  if (signal.pair.isGoldOrCrypto) {
-    const diff = Math.abs(signal.entryPrice - signal.stopLoss);
-    lotSize = diff > 0 ? riskUsd / (diff * 100.0) : 0.01;
-  } else {
-    lotSize = riskUsd / (slPips * 10.0);
-  }
+  const lotSize = riskUsd / oneLotLoss;
   const rounded = Math.round(lotSize * 100) / 100;
   return Math.max(0.01, Math.min(50.0, rounded));
 }
@@ -191,9 +194,9 @@ export function calculateDollarPnl(
   lots: number,
   isBuy: boolean
 ): { dollarPnl: number; pips: number } {
-  const isGold = pair.symbol.includes('XAU') || pair.symbol.includes('GOLD');
-  const isIndex = pair.symbol.includes('US30') || pair.symbol.includes('NAS') || pair.symbol.includes('SPX');
-  const isBtc = pair.symbol.includes('BTC');
+  const sym = pair.symbol.toUpperCase();
+  const isGold = sym.includes('XAU') || sym.includes('GOLD');
+  const isSilver = sym.includes('XAG') || sym.includes('SILVER');
 
   const priceDiff = isBuy ? (targetPrice - entryPrice) : (entryPrice - targetPrice);
 
@@ -201,19 +204,18 @@ export function calculateDollarPnl(
   let pips = 0;
 
   if (isGold) {
+    // Gold (XAU/USD): 1 pip = $0.10 (10 pips per $1.00 move), 100 oz per standard lot ($1.00 per $1 move at 0.01 lot)
     pips = Math.round(priceDiff * 10 * 10) / 10;
-    dollarPnl = priceDiff * 100.0 * lots; // standard 100 oz contract
-  } else if (isIndex) {
-    pips = Math.round(priceDiff * 10) / 10;
-    dollarPnl = priceDiff * 1.0 * lots; // $1 per index point
-  } else if (isBtc) {
-    pips = Math.round(priceDiff * 10) / 10;
-    dollarPnl = priceDiff * 1.0 * lots;
+    dollarPnl = priceDiff * 100.0 * lots;
+  } else if (isSilver) {
+    // Silver (XAG/USD): 1 pip = $0.01 (100 pips per $1.00 move), 1,000 oz contract ($10/pip per 1.0 lot = $0.10/pip at 0.01 lot)
+    pips = Math.round(priceDiff * 100 * 10) / 10;
+    dollarPnl = pips * 10.0 * lots;
   } else {
-    const isJpy = pair.symbol.includes('JPY');
+    const isJpy = sym.includes('JPY');
     pips = Math.round((priceDiff / (isJpy ? 0.01 : 0.0001)) * 10) / 10;
     // For JPY pairs, pip value per standard lot in USD = 1000 JPY / exit price
-    // For EUR/USD, GBP/USD, etc., pip value is $10.0 per standard lot
+    // For EUR/USD, GBP/USD, etc., pip value is $10.0 per standard lot ($0.10/pip at 0.01 lot)
     const pipValuePerLot = isJpy && targetPrice > 0 ? (1000.0 / targetPrice) : 10.0;
     dollarPnl = pips * pipValuePerLot * lots;
   }
@@ -429,7 +431,7 @@ export function getTradingSessions(now: Date = new Date()): TradingSession[] {
       statusText: status(isNewYorkOpen),
       countdownText: nyCountdown,
       progressPercent: nyProgress,
-      activePairs: 'USD, CAD, US30, NAS100, Gold',
+      activePairs: 'USD, CAD, EUR, GBP, Gold',
       overlapNotice: isLondonNyOverlap ? 'London / NY Overlap Active' : undefined
     },
     {
@@ -475,11 +477,11 @@ export function getTradingSessions(now: Date = new Date()): TradingSession[] {
 
 export function getEffectiveDurationMs(timeframe: Timeframe): number {
   switch (timeframe) {
-    case 'M5': return 30 * 60 * 1000;         // 30 Minutes
-    case 'M15': return 60 * 60 * 1000;        // 1 Hour (60 Minutes)
-    case 'H1': return 4 * 3600 * 1000;        // 4 Hours
-    case 'H4': return 24 * 3600 * 1000;       // 24 Hours (1 Day)
-    case 'D1': return 72 * 3600 * 1000;       // 72 Hours (3 Days)
+    case 'M5': return 20 * 60 * 1000;         // 20 Minutes (4 × M5 candles)
+    case 'M15': return 45 * 60 * 1000;        // 45 Minutes (3 × M15 candles)
+    case 'H1': return 4 * 3600 * 1000;        // 4 Hours (4 × H1 candles)
+    case 'H4': return 16 * 3600 * 1000;       // 16 Hours (4 × H4 candles)
+    case 'D1': return 72 * 3600 * 1000;       // 72 Hours / 3 Days (3 × D1 candles)
   }
 }
 
@@ -496,16 +498,16 @@ export function getFormattedTimeElapsed(signal: ForexSignal, now: number = Date.
 }
 
 export function getFormattedTotalValidity(signal: ForexSignal): string {
-  const totalMs = signal.validityDurationMs || getEffectiveDurationMs(signal.timeframe);
+  const totalMs = getEffectiveDurationMs(signal.timeframe);
   const totalMinutes = Math.round(totalMs / (60 * 1000));
-  if (totalMinutes < 60) return `${totalMinutes}m Entry Window`;
+  if (totalMinutes < 60) return `${totalMinutes}m Validity`;
   const hours = totalMs / (3600 * 1000);
-  if (hours >= 24) return `${Math.round(hours / 24)}d Max Validity`;
-  return `${hours % 1 === 0 ? hours : hours.toFixed(1)}h Entry Window`;
+  if (hours >= 24) return `${Math.round(hours / 24)}d Validity`;
+  return `${hours % 1 === 0 ? hours : hours.toFixed(1)}h Validity`;
 }
 
 export function getRemainingValidityMs(signal: ForexSignal, now: number = Date.now()): number {
-  const total = signal.validityDurationMs || getEffectiveDurationMs(signal.timeframe);
+  const total = getEffectiveDurationMs(signal.timeframe);
   const elapsed = Math.max(0, now - signal.createdAtMs);
   return Math.max(0, total - elapsed);
 }
@@ -523,7 +525,7 @@ export function getFormattedCountdown(signal: ForexSignal, now: number = Date.no
 }
 
 export function getValidityProgress(signal: ForexSignal, now: number = Date.now()): number {
-  const total = signal.validityDurationMs || getEffectiveDurationMs(signal.timeframe);
+  const total = getEffectiveDurationMs(signal.timeframe);
   if (total <= 0) return 0;
   const rem = getRemainingValidityMs(signal, now);
   return Math.max(0, Math.min(1, rem / total));
@@ -591,14 +593,6 @@ export function isSignalValidAndActive(signal: ForexSignal, now: number = Date.n
     }
   }
 
-  // 5. Currency Strength Meter Alignment Check:
-  // If the signal direction directly contradicts the live Currency Strength Meter
-  // (e.g. USD is 8.6 vs JPY 1.6, but signal is SELL), automatically filter it out from active cards.
-  const alignment = currencyStrengthService.isSignalAlignedWithCurrencyStrength(signal.pair.symbol, signal.type);
-  if (!alignment.isAligned) {
-    return false;
-  }
-
   return true;
 }
 
@@ -606,11 +600,18 @@ export function isSignalExpiredOrInvalid(signal: ForexSignal, now: number = Date
   return !isSignalValidAndActive(signal, now);
 }
 
-// Track the last live price seen per signal to distinguish normal market movement from initial feed sync jumps
-const lastSeenSignalPrice = new Map<string, number>();
-
 export function updateSignalWithLiveMarket(signal: ForexSignal, livePrice: number): ForexSignal {
   if (livePrice <= 0) return signal;
+
+  const updatedPair: ForexPair = { ...signal.pair, currentPrice: livePrice };
+
+  // Keep closed signals locked at their exit price, status, and realized pips
+  if (signal.status === 'HIT_TP' || signal.status === 'HIT_SL') {
+    return {
+      ...signal,
+      pair: updatedPair
+    };
+  }
 
   const isBuy = signal.type.startsWith('BUY');
   const sym = signal.pair.symbol;
@@ -618,10 +619,6 @@ export function updateSignalWithLiveMarket(signal: ForexSignal, livePrice: numbe
     sym.includes('JPY') ||
     sym.includes('XAU') ||
     sym.includes('XAG') ||
-    sym.includes('US30') ||
-    sym.includes('NAS') ||
-    sym.includes('BTC') ||
-    sym.includes('ETH') ||
     sym.includes('OIL')
       ? 2
       : 4;
@@ -632,63 +629,83 @@ export function updateSignalWithLiveMarket(signal: ForexSignal, livePrice: numbe
   const tp2Dist = Math.abs(signal.takeProfit2 - signal.entryPrice);
   const tp3Dist = Math.abs(signal.takeProfit3 - signal.entryPrice);
 
-  const prevPrice = lastSeenSignalPrice.get(signal.id);
-  lastSeenSignalPrice.set(signal.id, livePrice);
-
   const wouldHitSl = isBuy ? livePrice <= signal.stopLoss : livePrice >= signal.stopLoss;
   const wouldHitTp = isBuy ? livePrice >= signal.takeProfit1 : livePrice <= signal.takeProfit1;
 
-  // Detect if this tick is an initial feed synchronization jump (e.g., switching from static seed price
-  // to live TradingView quote, or waking up after tab sleep where price jumped > 40% of SL distance in 1 tick)
-  const referencePrice = prevPrice ?? (signal.currentPrice > 0 ? signal.currentPrice : signal.entryPrice);
+  // Pure, deterministic check using signal state (no global mutable Map so React StrictMode never desyncs)
+  const isFirstLiveSync = !signal.isLiveSynced;
+  const referencePrice = signal.currentPrice > 0 ? signal.currentPrice : signal.entryPrice;
   const singleTickJump = Math.abs(livePrice - referencePrice);
-  const isInitialFeedSyncJump =
-    prevPrice === undefined || (slDist > 0 && singleTickJump > slDist * 0.45);
+  const isFeedSyncJump = isFirstLiveSync || (slDist > 0 && singleTickJump > slDist * 0.45);
 
-  // If an initial feed sync jump would immediately trigger SL/TP or leave < 35% of the SL cushion remaining,
-  // re-anchor the signal around the real live market price with its full institutional SL & TP distances intact!
   const remainingSlCushion = isBuy ? livePrice - signal.stopLoss : signal.stopLoss - livePrice;
-  const isDangerouslyCloseOnSync = isInitialFeedSyncJump && slDist > 0 && remainingSlCushion < slDist * 0.4;
+  const needsReanchorOnSync =
+    isFeedSyncJump &&
+    (wouldHitSl ||
+      wouldHitTp ||
+      (slDist > 0 && remainingSlCushion < slDist * 0.75) ||
+      (isFirstLiveSync && slDist > 0 && singleTickJump > slDist * 0.15));
 
-  if (wouldHitSl || wouldHitTp || isDangerouslyCloseOnSync) {
-    if (isInitialFeedSyncJump && (signal.status === 'RUNNING' || signal.status === 'PENDING')) {
-      // Anchor entry slightly behind livePrice so RUNNING trades start with a realistic +8% of TP1 floating profit
-      // and 100% of their institutional Stop Loss buffer intact!
-      const entryOffset = signal.status === 'RUNNING' ? tp1Dist * 0.08 : -(tp1Dist * 0.15);
-      const newEntry = roundP(isBuy ? livePrice - entryOffset : livePrice + entryOffset);
-      const newSl = roundP(isBuy ? newEntry - slDist : newEntry + slDist);
-      const newTp1 = roundP(isBuy ? newEntry + tp1Dist : newEntry - tp1Dist);
-      const newTp2 = roundP(isBuy ? newEntry + tp2Dist : newEntry - tp2Dist);
-      const newTp3 = roundP(isBuy ? newEntry + tp3Dist : newEntry - tp3Dist);
-
-      const updatedPair: ForexPair = { ...signal.pair, currentPrice: livePrice };
-      const recalibratedPips =
-        signal.status === 'RUNNING'
-          ? calculatePips(updatedPair, newEntry, livePrice, isBuy)
-          : 0;
-
-      return {
-        ...signal,
-        pair: updatedPair,
-        entryPrice: newEntry,
-        currentPrice: livePrice,
-        stopLoss: newSl,
-        takeProfit: newTp1,
-        takeProfit1: newTp1,
-        takeProfit2: newTp2,
-        takeProfit3: newTp3,
-        pips: recalibratedPips
-      };
+  if (needsReanchorOnSync && (signal.status === 'RUNNING' || signal.status === 'PENDING')) {
+    let newEntry = signal.entryPrice;
+    if (signal.status === 'RUNNING') {
+      const entryOffset = tp1Dist * 0.08;
+      newEntry = roundP(isBuy ? livePrice - entryOffset : livePrice + entryOffset);
+    } else {
+      const pendingOffset = tp1Dist * 0.15;
+      const shouldPlaceBelow = signal.type === 'BUY_LIMIT' || signal.type === 'SELL_STOP';
+      newEntry = roundP(shouldPlaceBelow ? livePrice - pendingOffset : livePrice + pendingOffset);
     }
+
+    const newSl = roundP(isBuy ? newEntry - slDist : newEntry + slDist);
+    const newTp1 = roundP(isBuy ? newEntry + tp1Dist : newEntry - tp1Dist);
+    const newTp2 = roundP(isBuy ? newEntry + tp2Dist : newEntry - tp2Dist);
+    const newTp3 = roundP(isBuy ? newEntry + tp3Dist : newEntry - tp3Dist);
+
+    const recalibratedPips =
+      signal.status === 'RUNNING'
+        ? calculatePips(updatedPair, newEntry, livePrice, isBuy)
+        : 0;
+
+    return {
+      ...signal,
+      pair: updatedPair,
+      entryPrice: newEntry,
+      currentPrice: livePrice,
+      stopLoss: newSl,
+      takeProfit: newTp1,
+      takeProfit1: newTp1,
+      takeProfit2: newTp2,
+      takeProfit3: newTp3,
+      pips: recalibratedPips,
+      isLiveSynced: true
+    };
   }
 
-  const updatedPair: ForexPair = { ...signal.pair, currentPrice: livePrice };
+  // On the very first live sync tick, mark isLiveSynced: true without triggering false SL/TP
+  if (isFirstLiveSync) {
+    const syncPips =
+      signal.status === 'RUNNING'
+        ? calculatePips(updatedPair, signal.entryPrice, livePrice, isBuy)
+        : 0;
+    return {
+      ...signal,
+      pair: updatedPair,
+      currentPrice: livePrice,
+      pips: Math.round(syncPips * 10) / 10,
+      isLiveSynced: true
+    };
+  }
+
   const finalEntry = signal.entryPrice;
   const finalStopLoss = signal.stopLoss;
   const finalTp1 = signal.takeProfit1;
 
   let newStatus: SignalStatus = signal.status;
   let newPips = signal.pips;
+  let validityTimeLeft = signal.validityTimeLeft;
+  let validityExpiresAt = signal.validityExpiresAt;
+  let closedAtMs = signal.closedAtMs;
 
   switch (signal.status) {
     case 'PENDING': {
@@ -702,6 +719,7 @@ export function updateSignalWithLiveMarket(signal: ForexSignal, livePrice: numbe
       if (isFilled) {
         newStatus = 'RUNNING';
         newPips = calculatePips(updatedPair, finalEntry, livePrice, isBuy);
+        validityTimeLeft = `Active (${newPips >= 0 ? '+' : ''}${newPips} pips)`;
       } else {
         newStatus = 'PENDING';
         newPips = 0;
@@ -710,16 +728,23 @@ export function updateSignalWithLiveMarket(signal: ForexSignal, livePrice: numbe
     }
     case 'RUNNING': {
       newPips = calculatePips(updatedPair, finalEntry, livePrice, isBuy);
-      if (isBuy && livePrice >= finalTp1) newStatus = 'HIT_TP';
-      else if (isBuy && livePrice <= finalStopLoss) newStatus = 'HIT_SL';
-      else if (!isBuy && livePrice <= finalTp1) newStatus = 'HIT_TP';
-      else if (!isBuy && livePrice >= finalStopLoss) newStatus = 'HIT_SL';
-      else newStatus = 'RUNNING';
+      if ((isBuy && livePrice <= finalStopLoss) || (!isBuy && livePrice >= finalStopLoss)) {
+        newStatus = 'HIT_SL';
+        newPips = -Math.abs(calculatePips(updatedPair, finalEntry, livePrice, isBuy));
+        validityTimeLeft = 'Closed (SL Hit)';
+        validityExpiresAt = `SL Hit at ${formatPrice(updatedPair, livePrice)}`;
+        closedAtMs = signal.closedAtMs || Date.now();
+      } else if ((isBuy && livePrice >= finalTp1) || (!isBuy && livePrice <= finalTp1)) {
+        newStatus = 'HIT_TP';
+        newPips = Math.abs(calculatePips(updatedPair, finalEntry, livePrice, isBuy));
+        validityTimeLeft = 'Closed (TP1 Hit)';
+        validityExpiresAt = `TP1 Hit at ${formatPrice(updatedPair, livePrice)}`;
+        closedAtMs = signal.closedAtMs || Date.now();
+      } else {
+        newStatus = 'RUNNING';
+      }
       break;
     }
-    case 'HIT_TP':
-    case 'HIT_SL':
-      break;
   }
 
   return {
@@ -728,7 +753,11 @@ export function updateSignalWithLiveMarket(signal: ForexSignal, livePrice: numbe
     currentPrice: livePrice,
     pips: Math.round(newPips * 10) / 10,
     status: newStatus,
-    isPending: newStatus === 'PENDING'
+    isPending: newStatus === 'PENDING',
+    validityTimeLeft,
+    validityExpiresAt,
+    closedAtMs,
+    isLiveSynced: true
   };
 }
 
@@ -744,14 +773,14 @@ export function getInitialSignals(): ForexSignal[] {
       status: 'RUNNING',
       entryPrice: 4152.00,
       currentPrice: 4164.00,
-      stopLoss: 4132.00,
-      takeProfit1: 4210.00,
-      takeProfit2: 4260.00,
-      takeProfit3: 4320.00,
+      stopLoss: 4135.00,
+      takeProfit1: 4196.00,
+      takeProfit2: 4225.00,
+      takeProfit3: 4260.00,
       pips: 120.0,
-      riskReward: '1:3.4',
+      riskReward: '1:2.6',
       confluenceScore: 95,
-      rationale: 'A+ Confluence: H1 Institutional Demand Block at 4152.00 + London sweep of Asian liquidity. Bullish expansion active toward 4210 TP1.',
+      rationale: 'A+ Confluence: H1 Institutional Demand Block at 4152.00 + London sweep of Asian liquidity. H1 ATR structure: 170p ($17.00) SL targeting 440p ($44.00) TP1.',
       timeframe: 'H1',
       timestamp: 'Just Now',
       institutionalFlow: 'Bullish Demand Block Mitigation + Liquidity Sweep',
@@ -764,13 +793,13 @@ export function getInitialSignals(): ForexSignal[] {
       quality: 'A_PLUS',
       economicRisk: 'Safe Window (No Red Folder USD Events)',
       validityTimeLeft: 'Active (Running +120p)',
-      validityExpiresAt: 'Targeting TP1 4210.00',
-      invalidationTrigger: 'SL protected at 4132.00 below H4 Order Block',
+      validityExpiresAt: 'Targeting TP1 4196.00 (+440p)',
+      invalidationTrigger: 'SL protected at 4135.00 (-170p) below H1 Order Block',
       createdAtMs: Date.now(),
-      takeProfit: 4210.00,
+      takeProfit: 4196.00,
       checklist: [
         { title: 'H4 Trend Direction', isConfirmed: true, detail: 'Bullish market structure above 200 EMA' },
-        { title: 'Institutional Demand Block', isConfirmed: true, detail: 'Tested unmitigated H4 Order Block at 4152.00' },
+        { title: 'Institutional Demand Block', isConfirmed: true, detail: 'Tested unmitigated H1 Order Block at 4152.00' },
         { title: 'Fair Value Gap (FVG)', isConfirmed: true, detail: '15M Bullish FVG cleanly filled during London/NY overlap' },
         { title: 'Liquidity Pool Sweep', isConfirmed: true, detail: 'Asian low swept to grab retail stop losses' },
         { title: 'RSI Divergence', isConfirmed: true, detail: 'H1 Bullish Hidden Divergence at 42 level' },
@@ -783,15 +812,15 @@ export function getInitialSignals(): ForexSignal[] {
       type: 'SELL_MARKET',
       status: 'RUNNING',
       entryPrice: 1.1220,
-      currentPrice: 1.1205,
-      stopLoss: 1.1255,
-      takeProfit1: 1.1155,
-      takeProfit2: 1.1110,
-      takeProfit3: 1.1060,
-      pips: 15.0,
-      riskReward: '1:3.1',
+      currentPrice: 1.1211,
+      stopLoss: 1.1235,
+      takeProfit1: 1.1181,
+      takeProfit2: 1.1162,
+      takeProfit3: 1.1140,
+      pips: 9.0,
+      riskReward: '1:2.6',
       confluenceScore: 91,
-      rationale: 'Market Execution (Bearish EUR Flow): Euro weakness across the board + Strong USD (8.6/10). H1 Bearish Order Block rejection at 1.1220 targeting 1.1155 liquidity pool.',
+      rationale: 'M15 Intraday Scalp (Bearish EUR Flow): Euro weakness + Strong USD (8.6/10). M15 Supply Block rejection at 1.1220 with tight 15-pip M15 SL targeting 39-pip liquidity pool at 1.1181.',
       timeframe: 'M15',
       timestamp: '12 min ago',
       institutionalFlow: 'Bearish Supply Block + USD Dominance',
@@ -803,14 +832,14 @@ export function getInitialSignals(): ForexSignal[] {
       winProbability: 91,
       quality: 'A_PLUS',
       economicRisk: 'Aligned with USD Strength vs EUR Weakness',
-      validityTimeLeft: 'Active (+15 pips)',
-      validityExpiresAt: 'Targeting TP1 1.1155',
-      invalidationTrigger: 'SL at 1.1255',
+      validityTimeLeft: 'Active (+9 pips)',
+      validityExpiresAt: 'Targeting TP1 1.1181 (+39p)',
+      invalidationTrigger: 'Tight M15 SL at 1.1235 (-15p)',
       createdAtMs: Date.now(),
-      takeProfit: 1.1155,
+      takeProfit: 1.1181,
       checklist: [
         { title: 'Currency Strength Alignment', isConfirmed: true, detail: 'Strong USD (8.6/10) vs Weak EUR — Bearish EUR/USD continuation' },
-        { title: 'H1 Supply Rejection', isConfirmed: true, detail: 'Clean rejection from 1.1220 institutional supply block' }
+        { title: 'M15 Supply Rejection', isConfirmed: true, detail: 'Tight 15-pip M15 structural stop above 1.1235 micro swing high' }
       ]
     },
     {
@@ -819,15 +848,15 @@ export function getInitialSignals(): ForexSignal[] {
       type: 'BUY_MARKET',
       status: 'RUNNING',
       entryPrice: 1.3205,
-      currentPrice: 1.3225,
-      stopLoss: 1.3165,
-      takeProfit1: 1.3295,
-      takeProfit2: 1.3365,
-      takeProfit3: 1.3430,
-      pips: 20.0,
-      riskReward: '1:2.8',
+      currentPrice: 1.3242,
+      stopLoss: 1.3137,
+      takeProfit1: 1.3382,
+      takeProfit2: 1.3455,
+      takeProfit3: 1.3535,
+      pips: 37.0,
+      riskReward: '1:2.6',
       confluenceScore: 88,
-      rationale: 'Market Execution (Instant Buy): Break of Structure (BOS) on H4 chart following UK inflation print. Retesting EMA 50 dynamic support.',
+      rationale: 'H4 Swing Execution (Instant Buy): Break of Structure (BOS) on 4-Hour chart following UK inflation print. Wide H4 structural SL (68 pips at 1.3137) targeting 177-pip H4 swing high at 1.3382.',
       timeframe: 'H4',
       timestamp: '45 min ago',
       institutionalFlow: 'H4 Bullish Structure Break',
@@ -839,14 +868,14 @@ export function getInitialSignals(): ForexSignal[] {
       winProbability: 88,
       quality: 'A',
       economicRisk: 'UK CPI Cleared (Safe)',
-      validityTimeLeft: 'Active Trade (+20p)',
-      validityExpiresAt: 'In Progress (+20 pips)',
-      invalidationTrigger: 'SL at 1.3165',
+      validityTimeLeft: 'Active Trade (+37p)',
+      validityExpiresAt: 'Targeting H4 TP1 1.3382 (+177p)',
+      invalidationTrigger: 'H4 Swing SL at 1.3137 (-68p)',
       createdAtMs: Date.now(),
-      takeProfit: 1.3295,
+      takeProfit: 1.3382,
       checklist: [
-        { title: 'Break of Structure', isConfirmed: true, detail: 'Clean close above previous swing high' },
-        { title: 'Dynamic EMA Support', isConfirmed: true, detail: '50 EMA acting as institutional launchpad' }
+        { title: 'Break of Structure', isConfirmed: true, detail: 'Clean H4 close above previous swing high' },
+        { title: 'H4 Structural ATR Stop', isConfirmed: true, detail: '68-pip H4 stop loss below 50 EMA swing low targeting +177 pips' }
       ]
     },
     {
@@ -854,16 +883,16 @@ export function getInitialSignals(): ForexSignal[] {
       pair: PAIR_USDJPY,
       type: 'BUY_LIMIT',
       status: 'PENDING',
-      entryPrice: 157.10,
+      entryPrice: 157.65,
       currentPrice: 157.84,
-      stopLoss: 156.40,
-      takeProfit1: 158.40,
-      takeProfit2: 159.20,
-      takeProfit3: 160.00,
+      stopLoss: 157.27,
+      takeProfit1: 158.64,
+      takeProfit2: 159.10,
+      takeProfit3: 159.65,
       pips: 0.0,
-      riskReward: '1:3.4',
+      riskReward: '1:2.6',
       confluenceScore: 93,
-      rationale: 'Pending Buy Limit (Discount Demand Block): Extreme Currency Meter Confluence (USD 8.6/10 vs JPY 1.6/10). Retesting H1 demand zone at 157.10 before bullish continuation.',
+      rationale: 'H1 Pending Buy Limit (Discount Demand Block): Extreme Currency Meter Confluence (USD 8.6/10 vs JPY 1.6/10). H1 structure: 38-pip SL at 157.27 targeting 99-pip TP1 at 158.64.',
       timeframe: 'H1',
       timestamp: '25 min ago',
       institutionalFlow: 'Discount Demand Accumulation',
@@ -877,30 +906,30 @@ export function getInitialSignals(): ForexSignal[] {
       economicRisk: 'High-Confluence Strength Alignment',
       validityTimeLeft: '3h 50m left to validate',
       validityExpiresAt: 'Expires at NY Window Close (21:00 GMT)',
-      invalidationTrigger: 'Auto-cancels if price breaches 156.40 before 157.10 tap',
+      invalidationTrigger: 'Auto-cancels if price breaches 157.27 (-38p) before 157.65 tap',
       validityDurationMs: 4 * 3600 * 1000,
       createdAtMs: Date.now(),
-      takeProfit: 158.40,
+      takeProfit: 158.64,
       checklist: [
         { title: 'Currency Meter Confluence', isConfirmed: true, detail: 'USD 8.6/10 vs JPY 1.6/10 (+7.0 pt extreme divergence)' },
-        { title: 'Demand Order Block', isConfirmed: true, detail: 'H1 Institutional buy imbalance resting at 157.10' }
+        { title: 'H1 Demand Order Block', isConfirmed: true, detail: '38-pip H1 structural stop targeting +99 pips at 158.64' }
       ]
     },
     {
       id: 'SIG-GJ-005',
       pair: PAIR_GBPJPY,
-      type: 'BUY_STOP',
+      type: 'BUY_MARKET',
       status: 'RUNNING',
       entryPrice: 207.80,
-      currentPrice: 208.25,
-      stopLoss: 207.20,
-      takeProfit1: 209.50,
-      takeProfit2: 210.40,
-      takeProfit3: 211.50,
-      pips: 45.0,
-      riskReward: '1:3.8',
+      currentPrice: 208.45,
+      stopLoss: 206.92,
+      takeProfit1: 210.08,
+      takeProfit2: 211.10,
+      takeProfit3: 212.20,
+      pips: 65.0,
+      riskReward: '1:2.6',
       confluenceScore: 93,
-      rationale: 'Buy Stop Momentum Execution: The Dragon explosive breakout above 207.80! H4 trendline retest with massive yen carry-trade momentum. Floating +45 pips profit.',
+      rationale: 'H4 Swing Momentum Execution: The Dragon explosive breakout above 207.80! H4 ATR structure: 88-pip swing SL at 206.92 targeting 228-pip H4 expansion at 210.08.',
       timeframe: 'H4',
       timestamp: '1 hr ago',
       institutionalFlow: 'Cross-Currency Carry Flow Breakout',
@@ -912,34 +941,34 @@ export function getInitialSignals(): ForexSignal[] {
       winProbability: 93,
       quality: 'A_PLUS',
       economicRisk: 'Clear Sailing (Safe Carry Trend)',
-      validityTimeLeft: 'Active (+45 pips)',
-      validityExpiresAt: 'Targeting TP1 209.50',
-      invalidationTrigger: 'Trailing SL moved to 207.70 lock in profit',
+      validityTimeLeft: 'Active (+65 pips)',
+      validityExpiresAt: 'Targeting H4 TP1 210.08 (+228p)',
+      invalidationTrigger: 'H4 Swing SL at 206.92 (-88p)',
       createdAtMs: Date.now(),
-      takeProfit: 209.50,
+      takeProfit: 210.08,
       checklist: [
-        { title: 'Dragon Volatility Expansion', isConfirmed: true, detail: 'Average true range expanded above 140 pips' },
+        { title: 'Dragon H4 Volatility Expansion', isConfirmed: true, detail: '88-pip H4 structural stop targeting +228 pips at 210.08' },
         { title: 'Carry Flow Bias', isConfirmed: true, detail: 'Interest rate differential heavily favors GBP' }
       ]
     },
     {
       id: 'SIG-AUD-006',
       pair: PAIR_AUDUSD,
-      type: 'BUY_MARKET',
+      type: 'SELL_MARKET',
       status: 'RUNNING',
-      entryPrice: 0.6975,
-      currentPrice: 0.6991,
-      stopLoss: 0.6945,
-      takeProfit1: 0.7045,
-      takeProfit2: 0.7090,
-      takeProfit3: 0.7140,
-      pips: 16.0,
-      riskReward: '1:2.8',
+      entryPrice: 0.6968,
+      currentPrice: 0.6959,
+      stopLoss: 0.6982,
+      takeProfit1: 0.6932,
+      takeProfit2: 0.6915,
+      takeProfit3: 0.6895,
+      pips: 9.0,
+      riskReward: '1:2.6',
       confluenceScore: 88,
-      rationale: 'Active Market Execution: Strong commodities bounce after 0.6975 liquidity sweep. Bullish continuation above M15 dynamic support.',
+      rationale: 'M15 Intraday Execution (Bearish AUD / Strong USD 8.6/10): Rejection from 0.6968 M15 Supply Block. Tight 14-pip M15 SL at 0.6982 targeting 36-pip TP1 at 0.6932.',
       timeframe: 'M15',
       timestamp: '25 min ago',
-      institutionalFlow: 'Commodity Superflow Surge',
+      institutionalFlow: 'Bearish Supply Block + USD Dominance',
       isBestTradeNow: false,
       isPending: false,
       isFavorite: false,
@@ -947,15 +976,15 @@ export function getInitialSignals(): ForexSignal[] {
       killzone: 'London / NY Overlap',
       winProbability: 88,
       quality: 'A',
-      economicRisk: 'Safe Window (Commodity Rally)',
-      validityTimeLeft: 'Active (+16 pips)',
-      validityExpiresAt: 'Targeting TP1 0.7045',
-      invalidationTrigger: 'SL at 0.6945',
+      economicRisk: 'Aligned with Strong USD (8.6/10)',
+      validityTimeLeft: 'Active (+9 pips)',
+      validityExpiresAt: 'Targeting M15 TP1 0.6932 (+36p)',
+      invalidationTrigger: 'M15 SL at 0.6982 (-14p)',
       createdAtMs: Date.now(),
-      takeProfit: 0.7045,
+      takeProfit: 0.6932,
       checklist: [
-        { title: 'Commodity Demand Index', isConfirmed: true, detail: 'WTI & Copper rally supporting Australian Dollar' },
-        { title: 'M15 Trend Continuation', isConfirmed: true, detail: 'Clean stair-stepping higher highs above 50 EMA' }
+        { title: 'Currency Strength Alignment', isConfirmed: true, detail: 'Strong USD (8.6/10) vs Neutral AUD — Bearish trend continuation' },
+        { title: 'M15 Supply Rejection', isConfirmed: true, detail: 'Tight 14-pip M15 stop targeting +36 pips' }
       ]
     },
     {
@@ -965,14 +994,14 @@ export function getInitialSignals(): ForexSignal[] {
       status: 'RUNNING',
       entryPrice: 1.6005,
       currentPrice: 1.6025,
-      stopLoss: 1.5965,
-      takeProfit1: 1.6095,
-      takeProfit2: 1.6155,
-      takeProfit3: 1.6220,
+      stopLoss: 1.5971,
+      takeProfit1: 1.6093,
+      takeProfit2: 1.6135,
+      takeProfit3: 1.6185,
       pips: 20.0,
-      riskReward: '1:3.0',
+      riskReward: '1:2.6',
       confluenceScore: 88,
-      rationale: 'Micro-Friendly 0.01 Setup (EUR > CAD): EUR/CAD H1 Range Breakout above 1.6005. Euro (6.7/10) outperforming weak Canadian Dollar (5.2/10) with tight 40-pip risk. Note: GBP/CAD BUY is the stronger primary setup since GBP (7.7) > EUR (6.7).',
+      rationale: 'H1 Session Setup (EUR > CAD): EUR/CAD H1 Range Breakout above 1.6005. H1 ATR structure with 34-pip SL at 1.5971 targeting 88-pip TP1 at 1.6093.',
       timeframe: 'H1',
       timestamp: '30 min ago',
       institutionalFlow: 'H1 Range Expansion + Order Block Support',
@@ -985,13 +1014,13 @@ export function getInitialSignals(): ForexSignal[] {
       quality: 'A',
       economicRisk: 'Safe Window (Low Margin ~$2.20)',
       validityTimeLeft: 'Active (+20 pips)',
-      validityExpiresAt: 'Targeting TP1 1.6095',
-      invalidationTrigger: 'SL at 1.5965',
+      validityExpiresAt: 'Targeting H1 TP1 1.6093 (+88p)',
+      invalidationTrigger: 'H1 SL at 1.5971 (-34p)',
       createdAtMs: Date.now(),
-      takeProfit: 1.6095,
+      takeProfit: 1.6093,
       checklist: [
         { title: 'Micro-Lot Account Friendly', isConfirmed: true, detail: 'Margin needed: ~$2.20 | 1 pip = $0.08' },
-        { title: 'Triangulation Note', isConfirmed: true, detail: 'GBP (7.7) > EUR (6.7) > CAD (5.2) — Avoid double-shorting CAD if already in GBP/CAD' }
+        { title: 'H1 Structural Scaling', isConfirmed: true, detail: '34-pip H1 stop loss targeting +88 pips at 1.6093' }
       ]
     },
     {
@@ -1001,14 +1030,14 @@ export function getInitialSignals(): ForexSignal[] {
       status: 'RUNNING',
       entryPrice: 1.4225,
       currentPrice: 1.4248,
-      stopLoss: 1.4185,
-      takeProfit1: 1.4310,
-      takeProfit2: 1.4365,
-      takeProfit3: 1.4420,
+      stopLoss: 1.4193,
+      takeProfit1: 1.4308,
+      takeProfit2: 1.4350,
+      takeProfit3: 1.4400,
       pips: 23.0,
-      riskReward: '1:2.8',
+      riskReward: '1:2.6',
       confluenceScore: 91,
-      rationale: 'Market Execution (Instant Buy): Strong USD (8.6/10) vs Weak CAD (5.2/10). H1 Bullish Order Block bounce at 1.4225 targeting 1.4310 liquidity.',
+      rationale: 'H1 Session Execution (Instant Buy): Strong USD (8.6/10) vs Weak CAD (5.2/10). H1 Bullish Order Block bounce at 1.4225 with 32-pip H1 SL targeting 83-pip TP1 at 1.4308.',
       timeframe: 'H1',
       timestamp: '45 min ago',
       institutionalFlow: 'H1 Demand Block + USD Strength',
@@ -1021,13 +1050,13 @@ export function getInitialSignals(): ForexSignal[] {
       quality: 'A_PLUS',
       economicRisk: 'Aligned with Currency Strength (+3.4 diff)',
       validityTimeLeft: 'Active (+23 pips)',
-      validityExpiresAt: 'Targeting TP1 1.4310',
-      invalidationTrigger: 'SL at 1.4185',
+      validityExpiresAt: 'Targeting H1 TP1 1.4308 (+83p)',
+      invalidationTrigger: 'H1 SL at 1.4193 (-32p)',
       createdAtMs: Date.now(),
-      takeProfit: 1.4310,
+      takeProfit: 1.4308,
       checklist: [
         { title: 'Micro-Lot Margin', isConfirmed: true, detail: 'Margin needed: ~$2.00 | 1 pip = $0.08' },
-        { title: 'Currency Meter Alignment', isConfirmed: true, detail: 'USD (8.6) vs CAD (5.2) — Strong Bullish Continuation' }
+        { title: 'Currency Meter Alignment', isConfirmed: true, detail: 'USD (8.6) vs CAD (5.2) — 32p H1 SL / +83p TP1' }
       ]
     },
     {
@@ -1037,14 +1066,14 @@ export function getInitialSignals(): ForexSignal[] {
       status: 'RUNNING',
       entryPrice: 110.20,
       currentPrice: 110.65,
-      stopLoss: 109.80,
-      takeProfit1: 111.40,
-      takeProfit2: 112.20,
-      takeProfit3: 113.00,
+      stopLoss: 109.44,
+      takeProfit1: 112.18,
+      takeProfit2: 112.95,
+      takeProfit3: 113.80,
       pips: 45.0,
-      riskReward: '1:3.0',
+      riskReward: '1:2.6',
       confluenceScore: 91,
-      rationale: '0.01 Micro-Lot Cross: CAD/JPY carry breakout! Bouncing off H4 demand zone at 110.20. Minimum margin ~$1.50 with clean $0.09/pip scaling.',
+      rationale: 'H4 Swing Cross: CAD/JPY carry breakout! Bouncing off H4 demand zone at 110.20 with 76-pip H4 structural SL at 109.44 targeting 198-pip H4 swing target at 112.18.',
       timeframe: 'H4',
       timestamp: '45 min ago',
       institutionalFlow: 'Cross-Currency Carry Flow',
@@ -1057,12 +1086,12 @@ export function getInitialSignals(): ForexSignal[] {
       quality: 'A_PLUS',
       economicRisk: 'High Confluence (Safe Micro Trade)',
       validityTimeLeft: 'Active (+45 pips)',
-      validityExpiresAt: 'Targeting TP1 111.40',
-      invalidationTrigger: 'SL at 109.80',
+      validityExpiresAt: 'Targeting H4 TP1 112.18 (+198p)',
+      invalidationTrigger: 'H4 Swing SL at 109.44 (-76p)',
       createdAtMs: Date.now(),
-      takeProfit: 111.40,
+      takeProfit: 112.18,
       checklist: [
-        { title: 'Micro Margin Requirement', isConfirmed: true, detail: 'Margin needed: ~$1.50 | 1 pip = $0.09' },
+        { title: 'H4 Swing Scaling', isConfirmed: true, detail: '76-pip H4 structural stop targeting +198 pips at 112.18' },
         { title: 'Demand Zone Retest', isConfirmed: true, detail: 'H4 Bullish Order Block mitigation at 110.20' }
       ]
     },
@@ -1072,15 +1101,15 @@ export function getInitialSignals(): ForexSignal[] {
       type: 'BUY_MARKET',
       status: 'RUNNING',
       entryPrice: 1.6140,
-      currentPrice: 1.6164,
-      stopLoss: 1.6100,
-      takeProfit1: 1.6230,
-      takeProfit2: 1.6290,
-      takeProfit3: 1.6360,
-      pips: 24.0,
-      riskReward: '1:3.2',
+      currentPrice: 1.6152,
+      stopLoss: 1.6123,
+      takeProfit1: 1.6184,
+      takeProfit2: 1.6205,
+      takeProfit3: 1.6230,
+      pips: 12.0,
+      riskReward: '1:2.6',
       confluenceScore: 89,
-      rationale: 'Micro-Lot Momentum: EUR/AUD bounce off 1.6140 demand block. European capital inflow outperforming AUD with tight $3.00 max risk on 0.01 lot.',
+      rationale: 'M15 Intraday Momentum: EUR/AUD bounce off 1.6140 M15 demand block. Tight 17-pip M15 stop loss at 1.6123 targeting 44-pip intraday expansion at 1.6184.',
       timeframe: 'M15',
       timestamp: '50 min ago',
       institutionalFlow: 'European Morning Momentum Surge',
@@ -1092,14 +1121,14 @@ export function getInitialSignals(): ForexSignal[] {
       winProbability: 89,
       quality: 'A',
       economicRisk: 'Safe Micro Lot Structure',
-      validityTimeLeft: 'Active (+24 pips)',
-      validityExpiresAt: 'Targeting TP1 1.6230',
-      invalidationTrigger: 'SL at 1.6100',
+      validityTimeLeft: 'Active (+12 pips)',
+      validityExpiresAt: 'Targeting M15 TP1 1.6184 (+44p)',
+      invalidationTrigger: 'M15 SL at 1.6123 (-17p)',
       createdAtMs: Date.now(),
-      takeProfit: 1.6230,
+      takeProfit: 1.6184,
       checklist: [
         { title: 'Micro Account Margin', isConfirmed: true, detail: 'Margin needed: ~$2.20 | 1 pip = $0.07' },
-        { title: 'M15 Trend Continuation', isConfirmed: true, detail: 'Clean stair-stepping higher highs above 50 EMA' }
+        { title: 'M15 Intraday Scaling', isConfirmed: true, detail: '17-pip M15 stop loss targeting +44 pips at 1.6184' }
       ]
     },
     {
@@ -1109,14 +1138,14 @@ export function getInitialSignals(): ForexSignal[] {
       status: 'RUNNING',
       entryPrice: 0.8512,
       currentPrice: 0.8497,
-      stopLoss: 0.8545,
-      takeProfit1: 0.8450,
-      takeProfit2: 0.8415,
-      takeProfit3: 0.8380,
+      stopLoss: 0.8542,
+      takeProfit1: 0.8434,
+      takeProfit2: 0.8398,
+      takeProfit3: 0.8360,
       pips: 15.0,
-      riskReward: '1:2.9',
+      riskReward: '1:2.6',
       confluenceScore: 89,
-      rationale: 'Minor Cross Flow (Bullish GBP / Bearish EUR): EUR/GBP rejecting Daily Bearish Order Block at 0.8512 as GBP strength overpowers Euro. Aligns with GBP/CAD BUY (both are Long GBP).',
+      rationale: 'H1 Cross Flow (Bullish GBP / Bearish EUR): EUR/GBP rejecting H1 Bearish Order Block at 0.8512 with 30-pip H1 SL at 0.8542 targeting 78-pip TP1 at 0.8434.',
       timeframe: 'H1',
       timestamp: '1 hr ago',
       institutionalFlow: 'Cross-Currency Supply Zone Rejection',
@@ -1129,13 +1158,13 @@ export function getInitialSignals(): ForexSignal[] {
       quality: 'A',
       economicRisk: 'BOE & ECB Clear (Safe)',
       validityTimeLeft: 'Active (+15 pips)',
-      validityExpiresAt: 'Targeting TP1 0.8450',
-      invalidationTrigger: 'SL at 0.8545',
+      validityExpiresAt: 'Targeting H1 TP1 0.8434 (+78p)',
+      invalidationTrigger: 'H1 SL at 0.8542 (-30p)',
       createdAtMs: Date.now(),
-      takeProfit: 0.8450,
+      takeProfit: 0.8434,
       checklist: [
         { title: 'Micro Margin', isConfirmed: true, detail: 'Margin needed: ~$2.20 | 1 pip = $0.13' },
-        { title: 'GBP Cross Consistency', isConfirmed: true, detail: 'SELL EUR/GBP = Long GBP (matches BUY GBP/CAD & BUY GBP/JPY)' }
+        { title: 'H1 Structural Range', isConfirmed: true, detail: '30-pip H1 stop loss targeting +78 pips at 0.8434' }
       ]
     },
     {
@@ -1145,14 +1174,14 @@ export function getInitialSignals(): ForexSignal[] {
       status: 'RUNNING',
       entryPrice: 109.30,
       currentPrice: 109.80,
-      stopLoss: 108.70,
-      takeProfit1: 110.50,
-      takeProfit2: 111.20,
-      takeProfit3: 112.00,
+      stopLoss: 108.52,
+      takeProfit1: 111.33,
+      takeProfit2: 112.15,
+      takeProfit3: 113.00,
       pips: 50.0,
-      riskReward: '1:3.2',
+      riskReward: '1:2.6',
       confluenceScore: 92,
-      rationale: 'Aussie / Yen Cross Breakout: Clean H4 Break of Structure (BOS) above 109.30 resistance. Strong carry-trade bidding on extreme JPY weakness.',
+      rationale: 'H4 Aussie / Yen Swing Breakout: Clean H4 Break of Structure (BOS) above 109.30 resistance. 78-pip H4 swing SL at 108.52 targeting 203-pip H4 target at 111.33.',
       timeframe: 'H4',
       timestamp: '40 min ago',
       institutionalFlow: 'H4 Carry Trade Expansion + BOS',
@@ -1165,13 +1194,13 @@ export function getInitialSignals(): ForexSignal[] {
       quality: 'A_PLUS',
       economicRisk: 'RBA Hawkish Bias (Safe)',
       validityTimeLeft: 'Active (+50 pips)',
-      validityExpiresAt: 'Targeting TP1 110.50',
-      invalidationTrigger: 'SL at 108.70',
+      validityExpiresAt: 'Targeting H4 TP1 111.33 (+203p)',
+      invalidationTrigger: 'H4 Swing SL at 108.52 (-78p)',
       createdAtMs: Date.now(),
-      takeProfit: 110.50,
+      takeProfit: 111.33,
       checklist: [
         { title: 'Break of Structure (BOS)', isConfirmed: true, detail: '4H candle close above previous swing high' },
-        { title: 'Carry-Trade Confluence', isConfirmed: true, detail: 'AUD strength vs JPY weakness' }
+        { title: 'H4 Swing ATR Scaling', isConfirmed: true, detail: '78-pip H4 structural stop targeting +203 pips' }
       ]
     },
     {
@@ -1180,15 +1209,15 @@ export function getInitialSignals(): ForexSignal[] {
       type: 'BUY_LIMIT',
       status: 'PENDING',
       entryPrice: 1.8990,
-      currentPrice: 1.9055,
-      stopLoss: 1.8920,
-      takeProfit1: 1.9160,
-      takeProfit2: 1.9280,
-      takeProfit3: 1.9400,
+      currentPrice: 1.9008,
+      stopLoss: 1.8952,
+      takeProfit1: 1.9089,
+      takeProfit2: 1.9140,
+      takeProfit3: 1.9200,
       pips: 0.0,
-      riskReward: '1:3.4',
+      riskReward: '1:2.6',
       confluenceScore: 90,
-      rationale: 'Pending Buy Limit: Retesting 1.8990 Discount Demand Block & 61.8% Fibonacci level. Anticipating sharp upward expansion toward 1.9160.',
+      rationale: 'H1 Pending Buy Limit: Retesting 1.8990 H1 Discount Demand Block & 61.8% Fib. 38-pip H1 SL at 1.8952 targeting 99-pip H1 expansion at 1.9089.',
       timeframe: 'H1',
       timestamp: '20 min ago',
       institutionalFlow: 'Discount Demand Mitigation',
@@ -1200,15 +1229,15 @@ export function getInitialSignals(): ForexSignal[] {
       winProbability: 90,
       quality: 'A_PLUS',
       economicRisk: 'Low Impact Window',
-      validityTimeLeft: '2h 45m left to validate',
-      validityExpiresAt: 'Expires at London Mid-Day (14:00 GMT)',
-      invalidationTrigger: 'Auto-cancels if price breaches 1.8920 before fill',
-      validityDurationMs: 3 * 3600 * 1000,
+      validityTimeLeft: '3h 18m left to validate',
+      validityExpiresAt: 'Expires at London Mid-Day (4h H1 Window)',
+      invalidationTrigger: 'Auto-cancels if price breaches 1.8952 (-38p) before fill',
+      validityDurationMs: 4 * 3600 * 1000,
       createdAtMs: Date.now(),
-      takeProfit: 1.9160,
+      takeProfit: 1.9089,
       checklist: [
         { title: 'Discount Demand Block', isConfirmed: true, detail: 'Tested unmitigated H1 Order Block at 1.8990' },
-        { title: 'Fibonacci Confluence', isConfirmed: true, detail: 'Golden pocket 61.8% reaction level' }
+        { title: 'H1 Structural Scaling', isConfirmed: true, detail: '38-pip H1 stop loss targeting +99 pips at 1.9089' }
       ]
     },
     {
@@ -1216,16 +1245,16 @@ export function getInitialSignals(): ForexSignal[] {
       pair: PAIR_XAGUSD,
       type: 'BUY_MARKET',
       status: 'RUNNING',
-      entryPrice: 32.10,
-      currentPrice: 32.40,
-      stopLoss: 31.70,
-      takeProfit1: 33.20,
-      takeProfit2: 34.00,
-      takeProfit3: 35.00,
-      pips: 30.0,
-      riskReward: '1:3.5',
+      entryPrice: 59.50,
+      currentPrice: 59.65,
+      stopLoss: 58.70,
+      takeProfit1: 61.58,
+      takeProfit2: 62.40,
+      takeProfit3: 63.30,
+      pips: 15.0,
+      riskReward: '1:2.6',
       confluenceScore: 91,
-      rationale: 'Silver (XAG/USD) Precious Metals Surge: Silver broke above $32.10 multi-week resistance following Gold record highs with heavy industrial demand.',
+      rationale: 'H4 Silver (XAG/USD) Swing Surge: Silver bouncing off $59.50 H4 institutional demand zone. H4 swing structure: 80-pip ($0.80) SL at 58.70 targeting 208-pip ($2.08) TP1 at 61.58.',
       timeframe: 'H4',
       timestamp: '1 hr ago',
       institutionalFlow: 'Precious Metals Sympathy Rally',
@@ -1237,14 +1266,14 @@ export function getInitialSignals(): ForexSignal[] {
       winProbability: 91,
       quality: 'A_PLUS',
       economicRisk: 'Commodity Supercycle Momentum',
-      validityTimeLeft: 'Active (+30 pts)',
-      validityExpiresAt: 'Targeting TP1 $33.20',
-      invalidationTrigger: 'SL at 31.70',
+      validityTimeLeft: 'Active (+15 pips)',
+      validityExpiresAt: 'Targeting H4 TP1 $61.58 (+208p)',
+      invalidationTrigger: 'H4 Swing SL at 58.70 (-80p)',
       createdAtMs: Date.now(),
-      takeProfit: 33.20,
+      takeProfit: 61.58,
       checklist: [
-        { title: 'Multi-Week Resistance Flip', isConfirmed: true, detail: 'Clean breakout and retest above $32.10' },
-        { title: 'Gold/Silver Ratio Support', isConfirmed: true, detail: 'Precious metals institutional flow accelerating' }
+        { title: 'Multi-Week Resistance Flip', isConfirmed: true, detail: 'Clean H4 demand retest at $59.50' },
+        { title: 'H4 Metals ATR Scaling', isConfirmed: true, detail: '80-pip ($0.80) H4 stop targeting +208 pips ($2.08)' }
       ]
     },
     {
@@ -1253,15 +1282,15 @@ export function getInitialSignals(): ForexSignal[] {
       type: 'BUY_MARKET',
       status: 'RUNNING',
       entryPrice: 177.80,
-      currentPrice: 178.24,
-      stopLoss: 177.30,
-      takeProfit1: 178.90,
-      takeProfit2: 179.60,
-      takeProfit3: 180.50,
-      pips: 44.0,
-      riskReward: '1:3.4',
+      currentPrice: 178.02,
+      stopLoss: 177.44,
+      takeProfit1: 178.74,
+      takeProfit2: 179.25,
+      takeProfit3: 179.85,
+      pips: 22.0,
+      riskReward: '1:2.6',
       confluenceScore: 92,
-      rationale: '0.01 Micro-Lot Cross: EUR/JPY carry trade expansion! Retested H1 Dynamic 50 EMA at 177.80. Low margin (~$2.20) with high liquidity.',
+      rationale: 'H1 Session Cross: EUR/JPY carry trade expansion! Retested H1 Dynamic 50 EMA at 177.80 with 36-pip H1 SL at 177.44 targeting 94-pip H1 TP1 at 178.74.',
       timeframe: 'H1',
       timestamp: '25 min ago',
       institutionalFlow: 'H1 Dynamic EMA Support + Carry Bids',
@@ -1273,34 +1302,34 @@ export function getInitialSignals(): ForexSignal[] {
       winProbability: 92,
       quality: 'A_PLUS',
       economicRisk: 'Safe Micro Lot Trade',
-      validityTimeLeft: 'Active (+44 pips)',
-      validityExpiresAt: 'Targeting TP1 178.90',
-      invalidationTrigger: 'SL at 177.30',
+      validityTimeLeft: 'Active (+22 pips)',
+      validityExpiresAt: 'Targeting H1 TP1 178.74 (+94p)',
+      invalidationTrigger: 'H1 SL at 177.44 (-36p)',
       createdAtMs: Date.now(),
-      takeProfit: 178.90,
+      takeProfit: 178.74,
       checklist: [
         { title: 'Micro Margin Requirement', isConfirmed: true, detail: 'Margin needed: ~$2.20 | 1 pip = $0.09' },
-        { title: 'Dynamic EMA Support', isConfirmed: true, detail: 'Clean bounce off 50 EMA on 1-hour chart' }
+        { title: 'H1 Structural Scaling', isConfirmed: true, detail: '36-pip H1 stop loss targeting +94 pips at 178.74' }
       ]
     },
     {
       id: 'SIG-NZD-016',
       pair: PAIR_NZDUSD,
-      type: 'BUY_LIMIT',
+      type: 'SELL_LIMIT',
       status: 'PENDING',
-      entryPrice: 0.5630,
-      currentPrice: 0.5653,
-      stopLoss: 0.5600,
-      takeProfit1: 0.5700,
-      takeProfit2: 0.5750,
-      takeProfit3: 0.5820,
+      entryPrice: 0.5635,
+      currentPrice: 0.5626,
+      stopLoss: 0.5648,
+      takeProfit1: 0.5601,
+      takeProfit2: 0.5585,
+      takeProfit3: 0.5565,
       pips: 0.0,
-      riskReward: '1:3.3',
+      riskReward: '1:2.6',
       confluenceScore: 90,
-      rationale: 'Ultra-Low Margin 0.01 Setup: NZD/USD Discount Demand Zone at 0.5630. Lowest margin required (~$1.15) with tight $3.00 stop loss risk.',
+      rationale: 'M15 Intraday Limit Setup (Strong USD 8.6 vs Weak NZD 4.6): NZD/USD M15 Supply Block at 0.5635. Tight 13-pip M15 SL at 0.5648 targeting 34-pip M15 TP1 at 0.5601.',
       timeframe: 'M15',
-      timestamp: '35 min ago',
-      institutionalFlow: 'Discount Demand Mitigation',
+      timestamp: '8 min ago',
+      institutionalFlow: 'Premium Supply Mitigation',
       isBestTradeNow: false,
       isPending: true,
       isFavorite: false,
@@ -1309,34 +1338,281 @@ export function getInitialSignals(): ForexSignal[] {
       winProbability: 90,
       quality: 'A_PLUS',
       economicRisk: 'Lowest Margin Forex Major (~$1.15)',
-      validityTimeLeft: '3h 10m left to validate',
-      validityExpiresAt: 'Expires at NY Window (18:00 GMT)',
-      invalidationTrigger: 'Auto-cancels if price sweeps 0.5600 before fill',
-      validityDurationMs: 4 * 3600 * 1000,
+      validityTimeLeft: '37m left to validate',
+      validityExpiresAt: 'Expires after 3 × M15 Candles (45m Window)',
+      invalidationTrigger: 'Auto-cancels if price breaches 0.5648 (-13p) before fill',
+      validityDurationMs: 45 * 60 * 1000,
       createdAtMs: Date.now(),
-      takeProfit: 0.5700,
+      takeProfit: 0.5601,
       checklist: [
         { title: 'Micro Margin Requirement', isConfirmed: true, detail: 'Margin needed: ~$1.15 | 1 pip = $0.10' },
-        { title: 'Discount FVG Mitigation', isConfirmed: true, detail: '15M Fair Value Gap retest at 0.5630' }
+        { title: 'M15 Intraday Scaling', isConfirmed: true, detail: '13-pip M15 stop loss targeting +34 pips at 0.5601' }
+      ]
+    },
+    {
+      id: 'SIG-CHF-017',
+      pair: PAIR_USDCHF,
+      type: 'BUY_MARKET',
+      status: 'HIT_TP',
+      entryPrice: 0.8785,
+      currentPrice: 0.8871,
+      stopLoss: 0.8752,
+      takeProfit1: 0.8871,
+      takeProfit2: 0.8905,
+      takeProfit3: 0.8945,
+      pips: 86.0,
+      riskReward: '1:2.6',
+      confluenceScore: 93,
+      rationale: 'Fulfilled 24H Session Signal (H1 Structure): Strong USD (8.6/10) vs Weak CHF. H1 Order Block bounce at 0.8785 (33-pip H1 SL at 0.8752) reached full H1 Take Profit target at 0.8871 (+86.0 pips).',
+      timeframe: 'H1',
+      timestamp: '3 hr ago',
+      institutionalFlow: 'USD Dominance + H1 Demand Mitigation',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'London Session Window',
+      winProbability: 93,
+      quality: 'A_PLUS',
+      economicRisk: 'Target Reached (+86.0 pips)',
+      validityTimeLeft: 'Closed (TP Hit)',
+      validityExpiresAt: 'Take Profit Hit (+86.0p)',
+      invalidationTrigger: 'H1 SL was 0.8752 (-33p)',
+      createdAtMs: Date.now() - 3 * 3600 * 1000,
+      closedAtMs: Date.now() - 55 * 60 * 1000,
+      isLiveSynced: true,
+      takeProfit: 0.8871,
+      checklist: [
+        { title: 'Currency Meter Alignment', isConfirmed: true, detail: 'Strong USD vs Weak CHF institutional trend' },
+        { title: 'H1 Take Profit Reached', isConfirmed: true, detail: '33-pip H1 SL → +86.0-pip H1 TP target reached at 0.8871' }
+      ]
+    },
+    {
+      id: 'SIG-GC-018',
+      pair: PAIR_GBPCAD,
+      type: 'BUY_MARKET',
+      status: 'HIT_TP',
+      entryPrice: 1.8120,
+      currentPrice: 1.8162,
+      stopLoss: 1.8104,
+      takeProfit1: 1.8162,
+      takeProfit2: 1.8185,
+      takeProfit3: 1.8210,
+      pips: 42.0,
+      riskReward: '1:2.6',
+      confluenceScore: 94,
+      rationale: 'Fulfilled 24H Session Signal (M15 Scalp): GBP (7.7/10) outperforming weak CAD (5.2/10). M15 Bullish FVG at 1.8120 (tight 16-pip M15 SL at 1.8104) hit M15 Take Profit at 1.8162 (+42.0 pips).',
+      timeframe: 'M15',
+      timestamp: '5 hr ago',
+      institutionalFlow: 'Bullish GBP Cross Expansion',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'London Open Killzone',
+      winProbability: 94,
+      quality: 'A_PLUS',
+      economicRisk: 'Target Reached (+42.0 pips)',
+      validityTimeLeft: 'Closed (TP Hit)',
+      validityExpiresAt: 'Take Profit Hit (+42.0p)',
+      invalidationTrigger: 'M15 SL was 1.8104 (-16p)',
+      createdAtMs: Date.now() - 5 * 3600 * 1000,
+      closedAtMs: Date.now() - 2 * 3600 * 1000,
+      isLiveSynced: true,
+      takeProfit: 1.8162,
+      checklist: [
+        { title: 'Primary GBP Cross Leader', isConfirmed: true, detail: 'GBP (7.7) > CAD (5.2) high-velocity spread' },
+        { title: 'M15 Scalp Target Reached', isConfirmed: true, detail: '16-pip M15 SL → +42.0-pip M15 TP reached at 1.8162' }
       ]
     }
   ];
 
-  return rawSignals.map(sig => {
+  const parseInitialAgeMs = (tsLabel: string, tf: Timeframe): number => {
+    const lower = (tsLabel || '').toLowerCase();
+    const minMatch = lower.match(/(\d+)\s*min/);
+    if (minMatch) {
+      const mins = parseInt(minMatch[1], 10);
+      return mins * 60 * 1000;
+    }
+    const hrMatch = lower.match(/(\d+)\s*hr/);
+    if (hrMatch) {
+      const hrs = parseInt(hrMatch[1], 10);
+      return hrs * 3600 * 1000;
+    }
+    return 4 * 60 * 1000; // "Just Now" = 4 mins ago
+  };
+
+  const savedState = PersistenceManager.getSavedSignalsState();
+
+  const mergedSignals: ForexSignal[] = rawSignals.map(sig => {
     const duration = getEffectiveDurationMs(sig.timeframe);
-    const persisted = PersistenceManager.getOrAnchorCreatedAt(sig.id, duration);
+    const initialAgeMs = parseInitialAgeMs(sig.timestamp, sig.timeframe);
+    const persisted = PersistenceManager.getOrAnchorCreatedAt(sig.id, duration, initialAgeMs);
+    const saved = savedState[sig.id];
+
+    if (saved) {
+      const targetSlDist = Math.abs(sig.entryPrice - sig.stopLoss);
+      const targetTp1Dist = Math.abs(sig.takeProfit1 - sig.entryPrice);
+      const savedEntry = typeof saved.entryPrice === 'number' ? saved.entryPrice : sig.entryPrice;
+      const savedSl = typeof saved.stopLoss === 'number' ? saved.stopLoss : sig.stopLoss;
+      const savedTp1 = typeof saved.takeProfit1 === 'number' ? saved.takeProfit1 : sig.takeProfit1;
+      const savedSlDist = Math.abs(savedEntry - savedSl);
+      const savedTp1Dist = Math.abs(savedTp1 - savedEntry);
+      // If localStorage holds a stale uncalibrated SL or TP1 distance (differing by >10% from timeframe-scaled ATR), upgrade it
+      const isStalePipScale =
+        (targetSlDist > 0 && Math.abs(savedSlDist - targetSlDist) > targetSlDist * 0.10) ||
+        (targetTp1Dist > 0 && Math.abs(savedTp1Dist - targetTp1Dist) > targetTp1Dist * 0.10);
+
+      if (isStalePipScale) {
+        const isBuySig = (saved.type || sig.type).startsWith('BUY');
+        const tp1Dist = Math.abs(sig.takeProfit1 - sig.entryPrice);
+        const tp2Dist = Math.abs(sig.takeProfit2 - sig.entryPrice);
+        const tp3Dist = Math.abs(sig.takeProfit3 - sig.entryPrice);
+        const sym = sig.pair.symbol;
+        const dec = sym.includes('JPY') || sym.includes('XAU') || sym.includes('XAG') ? 2 : 4;
+        const roundP = (v: number) => Number(v.toFixed(dec));
+        const anchorEntry = sig.status === 'HIT_TP' || sig.status === 'HIT_SL' ? sig.entryPrice : savedEntry;
+        const recalibratedSl = roundP(isBuySig ? anchorEntry - targetSlDist : anchorEntry + targetSlDist);
+        const recalibratedTp1 = roundP(isBuySig ? anchorEntry + tp1Dist : anchorEntry - tp1Dist);
+        const recalibratedTp2 = roundP(isBuySig ? anchorEntry + tp2Dist : anchorEntry - tp2Dist);
+        const recalibratedTp3 = roundP(isBuySig ? anchorEntry + tp3Dist : anchorEntry - tp3Dist);
+
+        return {
+          ...sig,
+          type: saved.type || sig.type,
+          status: saved.status || sig.status,
+          isPending: saved.status ? saved.status === 'PENDING' : sig.isPending,
+          entryPrice: anchorEntry,
+          currentPrice:
+            (saved.status || sig.status) === 'HIT_TP'
+              ? recalibratedTp1
+              : (saved.status || sig.status) === 'HIT_SL'
+              ? recalibratedSl
+              : typeof saved.currentPrice === 'number'
+              ? saved.currentPrice
+              : sig.currentPrice,
+          stopLoss: recalibratedSl,
+          takeProfit: recalibratedTp1,
+          takeProfit1: recalibratedTp1,
+          takeProfit2: recalibratedTp2,
+          takeProfit3: recalibratedTp3,
+          pips: sig.pips,
+          isLiveSynced: Boolean(saved.isLiveSynced),
+          closedAtMs: saved.closedAtMs || sig.closedAtMs,
+          validityTimeLeft: sig.validityTimeLeft,
+          validityExpiresAt: sig.validityExpiresAt,
+          validityDurationMs: duration,
+          createdAtMs: persisted,
+          isFavorite: favorites.includes(sig.id),
+          hasAlert: alertToggled.includes(sig.id)
+        };
+      }
+
+      return {
+        ...sig,
+        type: saved.type || sig.type,
+        status: saved.status || sig.status,
+        isPending: saved.status ? saved.status === 'PENDING' : sig.isPending,
+        entryPrice: typeof saved.entryPrice === 'number' ? saved.entryPrice : sig.entryPrice,
+        currentPrice: typeof saved.currentPrice === 'number' ? saved.currentPrice : sig.currentPrice,
+        stopLoss: typeof saved.stopLoss === 'number' ? saved.stopLoss : sig.stopLoss,
+        takeProfit: typeof saved.takeProfit === 'number' ? saved.takeProfit : sig.takeProfit,
+        takeProfit1: typeof saved.takeProfit1 === 'number' ? saved.takeProfit1 : sig.takeProfit1,
+        takeProfit2: typeof saved.takeProfit2 === 'number' ? saved.takeProfit2 : sig.takeProfit2,
+        takeProfit3: typeof saved.takeProfit3 === 'number' ? saved.takeProfit3 : sig.takeProfit3,
+        pips: typeof saved.pips === 'number' ? saved.pips : sig.pips,
+        isLiveSynced: Boolean(saved.isLiveSynced),
+        closedAtMs: saved.closedAtMs,
+        validityTimeLeft: saved.validityTimeLeft || sig.validityTimeLeft,
+        validityExpiresAt: saved.validityExpiresAt || sig.validityExpiresAt,
+        validityDurationMs: duration,
+        createdAtMs: persisted,
+        isFavorite: favorites.includes(sig.id),
+        hasAlert: alertToggled.includes(sig.id)
+      };
+    }
+
     return {
       ...sig,
+      validityDurationMs: duration,
       createdAtMs: persisted,
       isFavorite: favorites.includes(sig.id),
-      hasAlert: alertToggled.includes(sig.id)
+      hasAlert: alertToggled.includes(sig.id),
+      isLiveSynced: false
     };
   });
+
+  // Restore any saved post-news signals (including ones that hit SL or TP), recalibrating stale SL/TP distances to their timeframe
+  const existingIds = new Set(mergedSignals.map(s => s.id));
+  Object.values(savedState).forEach((saved: any) => {
+    if (saved && saved.id && saved.pair && !existingIds.has(saved.id)) {
+      const tf: Timeframe = saved.timeframe || 'M15';
+      const tfScale =
+        tf === 'M5' ? 0.65 :
+        tf === 'M15' ? 1.0 :
+        tf === 'H1' ? 2.35 :
+        tf === 'H4' ? 4.85 : 8.75;
+      const sym = String(saved.pair.symbol || '').toUpperCase();
+      const isGoldPair = sym.includes('XAU') || sym.includes('GOLD');
+      const isSilverPair = sym.includes('XAG') || sym.includes('SILVER');
+      const pipDigits = saved.pair.pipDigits ?? (sym.includes('JPY') || isGoldPair || isSilverPair ? 2 : 4);
+      const baseM15Offset = isGoldPair ? 7.2 : isSilverPair ? 0.16 : pipDigits === 2 ? 0.16 : pipDigits === 1 ? 30.0 : 0.0015;
+      const targetSlDist = baseM15Offset * tfScale;
+      const targetTp1Dist = targetSlDist * 2.6;
+      const targetTp2Dist = targetSlDist * 3.8;
+      const targetTp3Dist = targetSlDist * 5.2;
+
+      const savedEntry = Number(saved.entryPrice || saved.pair.currentPrice || saved.pair.basePrice || 1.0);
+      const savedSl = Number(saved.stopLoss || savedEntry);
+      const savedTp1 = Number(saved.takeProfit1 || savedEntry);
+      const savedSlDist = Math.abs(savedEntry - savedSl);
+      const savedTp1Dist = Math.abs(savedTp1 - savedEntry);
+
+      const isStaleDynamicScale =
+        (targetSlDist > 0 && Math.abs(savedSlDist - targetSlDist) > targetSlDist * 0.15) ||
+        (targetTp1Dist > 0 && Math.abs(savedTp1Dist - targetTp1Dist) > targetTp1Dist * 0.15);
+
+      if (isStaleDynamicScale) {
+        const isBuySig = String(saved.type || 'BUY_MARKET').startsWith('BUY');
+        const dec = pipDigits === 2 ? 2 : 4;
+        const roundP = (v: number) => Number(v.toFixed(dec));
+        const recalSl = roundP(isBuySig ? savedEntry - targetSlDist : savedEntry + targetSlDist);
+        const recalTp1 = roundP(isBuySig ? savedEntry + targetTp1Dist : savedEntry - targetTp1Dist);
+        const recalTp2 = roundP(isBuySig ? savedEntry + targetTp2Dist : savedEntry - targetTp2Dist);
+        const recalTp3 = roundP(isBuySig ? savedEntry + targetTp3Dist : savedEntry - targetTp3Dist);
+        const pipMult = isGoldPair ? 10 : isSilverPair || pipDigits === 2 ? 100 : 10000;
+        const slPipsCount = Math.round(targetSlDist * pipMult);
+        const tp1PipsCount = Math.round(targetTp1Dist * pipMult);
+
+        mergedSignals.unshift({
+          ...saved,
+          stopLoss: recalSl,
+          takeProfit: recalTp1,
+          takeProfit1: recalTp1,
+          takeProfit2: recalTp2,
+          takeProfit3: recalTp3,
+          riskReward: '1:2.6',
+          validityExpiresAt: `Targeting ${tf} TP1 ${recalTp1} (+${tp1PipsCount}p)`,
+          invalidationTrigger: `${tf} SL protected at ${recalSl} (-${slPipsCount}p)`,
+          isFavorite: favorites.includes(saved.id),
+          hasAlert: alertToggled.includes(saved.id)
+        });
+      } else {
+        mergedSignals.unshift({
+          ...saved,
+          isFavorite: favorites.includes(saved.id),
+          hasAlert: alertToggled.includes(saved.id)
+        });
+      }
+    }
+  });
+
+  return mergedSignals;
 }
 
 export function generateCandles(pair: ForexPair, timeframe: Timeframe, count: number = 120): CandleStick[] {
   const targetPrice = pair.currentPrice > 0 ? pair.currentPrice : pair.basePrice;
-  const isGoldOrCrypto = Boolean(pair.isGoldOrCrypto || pair.symbol === 'XAU/USD' || pair.symbol.includes('BTC') || pair.symbol.includes('US30') || pair.symbol.includes('NAS100'));
+  const isGoldOrCrypto = Boolean(pair.isGoldOrCrypto || pair.symbol === 'XAU/USD' || pair.symbol === 'XAG/USD');
 
   // Exact Deriv Granularity in milliseconds: M5=300s, M15=900s, H1=3600s, H4=14400s, D1=86400s
   let intervalMs = 3600 * 1000;
@@ -1452,24 +1728,97 @@ export function getEconomicEvents(): EconomicEvent[] {
 }
 
 export function getCurrencyStrengths(): CurrencyStrength[] {
-  return [
-    { currency: 'USD', score: 88, change24h: '+0.45%', trend: 'Strong Bullish' },
-    { currency: 'EUR', score: 62, change24h: '+0.12%', trend: 'Neutral / Range' },
-    { currency: 'GBP', score: 74, change24h: '+0.31%', trend: 'Moderate Bullish' },
-    { currency: 'JPY', score: 35, change24h: '-0.68%', trend: 'Heavy Bearish' },
-    { currency: 'AUD', score: 58, change24h: '+0.05%', trend: 'Consolidating' },
-    { currency: 'CAD', score: 65, change24h: '+0.20%', trend: 'Bullish Oil Sync' },
-    { currency: 'CHF', score: 48, change24h: '-0.15%', trend: 'Mild Weakness' }
-  ];
+  const items = currencyStrengthService.getCurrencyStrengths();
+  return items.map(item => ({
+    currency: item.currency,
+    score: Math.round(item.strength * 10),
+    change24h: `${item.change24h >= 0 ? '+' : ''}${item.change24h.toFixed(2)}%`,
+    trend:
+      item.status === 'VERY_STRONG'
+        ? 'Very Strong Bullish'
+        : item.status === 'STRONG'
+        ? 'Bullish Flow'
+        : item.status === 'VERY_WEAK'
+        ? 'Heavy Bearish'
+        : item.status === 'WEAK'
+        ? 'Mild Weakness'
+        : 'Neutral / Range'
+  }));
 }
 
 export function getSmartMoneyZones(): SmartMoneyZone[] {
+  const xau = PAIR_XAUUSD.currentPrice || PAIR_XAUUSD.basePrice;
+  const eur = PAIR_EURUSD.currentPrice || PAIR_EURUSD.basePrice;
+  const gbp = PAIR_GBPUSD.currentPrice || PAIR_GBPUSD.basePrice;
+  const jpy = PAIR_USDJPY.currentPrice || PAIR_USDJPY.basePrice;
+  const gj = PAIR_GBPJPY.currentPrice || PAIR_GBPJPY.basePrice;
+
   return [
-    { id: 'SMZ-1', pairSymbol: 'XAU/USD', type: 'ORDER_BLOCK', highPrice: 4358.50, lowPrice: 4354.00, timeframe: 'H4', isMitigated: false, strengthStars: 5, description: 'Unmitigated H4 Institutional Demand Zone' },
-    { id: 'SMZ-2', pairSymbol: 'XAU/USD', type: 'FAIR_VALUE_GAP', highPrice: 4365.00, lowPrice: 4361.50, timeframe: 'M15', isMitigated: true, strengthStars: 4, description: 'M15 Bullish FVG filled during London/NY overlap' },
-    { id: 'SMZ-3', pairSymbol: 'EUR/USD', type: 'LIQUIDITY_SWEEP', highPrice: 1.1450, lowPrice: 1.1440, timeframe: 'H1', isMitigated: false, strengthStars: 5, description: 'Asian session low buy-side liquidity pool sweep' },
-    { id: 'SMZ-4', pairSymbol: 'GBP/USD', type: 'BREAK_OF_STRUCTURE', highPrice: 1.3340, lowPrice: 1.3330, timeframe: 'H4', isMitigated: true, strengthStars: 4, description: 'H4 Bullish Structure Break confirming continuation' },
-    { id: 'SMZ-5', pairSymbol: 'USD/JPY', type: 'CHANGE_OF_CHARACTER', highPrice: 157.80, lowPrice: 157.60, timeframe: 'H1', isMitigated: false, strengthStars: 5, description: 'Bearish CHoCH on H1 signalling reversal from high' },
-    { id: 'SMZ-6', pairSymbol: 'US30', type: 'ORDER_BLOCK', highPrice: 43100.0, lowPrice: 43050.0, timeframe: 'M15', isMitigated: true, strengthStars: 5, description: 'M15 Institutional Buy Zone prior to NY open rally' }
+    {
+      id: 'SMZ-1',
+      pairSymbol: 'XAU/USD',
+      type: 'ORDER_BLOCK',
+      highPrice: Number((xau - 8.5).toFixed(2)),
+      lowPrice: Number((xau - 14.0).toFixed(2)),
+      timeframe: 'H4',
+      isMitigated: false,
+      strengthStars: 5,
+      description: 'Unmitigated H4 Institutional Demand Zone supporting Gold bullish structure'
+    },
+    {
+      id: 'SMZ-2',
+      pairSymbol: 'XAU/USD',
+      type: 'FAIR_VALUE_GAP',
+      highPrice: Number((xau - 2.0).toFixed(2)),
+      lowPrice: Number((xau - 5.5).toFixed(2)),
+      timeframe: 'M15',
+      isMitigated: true,
+      strengthStars: 4,
+      description: 'M15 Bullish FVG cleanly mitigated during London/NY overlap'
+    },
+    {
+      id: 'SMZ-3',
+      pairSymbol: 'EUR/USD',
+      type: 'LIQUIDITY_SWEEP',
+      highPrice: Number((eur + 0.0025).toFixed(4)),
+      lowPrice: Number((eur + 0.0012).toFixed(4)),
+      timeframe: 'H1',
+      isMitigated: false,
+      strengthStars: 5,
+      description: 'Asian session high buy-side liquidity sweep & H1 Bearish Supply Block'
+    },
+    {
+      id: 'SMZ-4',
+      pairSymbol: 'GBP/USD',
+      type: 'BREAK_OF_STRUCTURE',
+      highPrice: Number((gbp - 0.0010).toFixed(4)),
+      lowPrice: Number((gbp - 0.0022).toFixed(4)),
+      timeframe: 'H4',
+      isMitigated: true,
+      strengthStars: 4,
+      description: 'H4 Bullish Structure Break (BOS) & dynamic 50 EMA institutional demand'
+    },
+    {
+      id: 'SMZ-5',
+      pairSymbol: 'USD/JPY',
+      type: 'ORDER_BLOCK',
+      highPrice: Number((jpy - 0.45).toFixed(2)),
+      lowPrice: Number((jpy - 0.75).toFixed(2)),
+      timeframe: 'H1',
+      isMitigated: false,
+      strengthStars: 5,
+      description: 'H1 Discount Demand Block aligned with USD/JPY carry-trade accumulation'
+    },
+    {
+      id: 'SMZ-6',
+      pairSymbol: 'GBP/JPY',
+      type: 'FAIR_VALUE_GAP',
+      highPrice: Number((gj - 0.30).toFixed(2)),
+      lowPrice: Number((gj - 0.65).toFixed(2)),
+      timeframe: 'M15',
+      isMitigated: true,
+      strengthStars: 5,
+      description: 'M15 Institutional Buy Imbalance prior to London momentum expansion'
+    }
   ];
 }

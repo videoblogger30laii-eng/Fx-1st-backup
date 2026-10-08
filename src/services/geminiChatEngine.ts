@@ -125,13 +125,6 @@ export const GeminiChatEngine = {
         p.includes(pairName) ||
         (p.includes('gold') && pair.symbol === 'XAU/USD') ||
         (p.includes('silver') && pair.symbol === 'XAG/USD') ||
-        (p.includes('us30') && pair.symbol === 'US30') ||
-        (p.includes('dow') && pair.symbol === 'US30') ||
-        (p.includes('nas100') && pair.symbol === 'NAS100') ||
-        (p.includes('nasdaq') && pair.symbol === 'NAS100') ||
-        (p.includes('bitcoin') && pair.symbol === 'BTC/USD') ||
-        (p.includes('btc') && pair.symbol === 'BTC/USD') ||
-        (p.includes('ethereum') && pair.symbol === 'ETH/USD') ||
         (p.includes('oil') && pair.symbol === 'WTI/USD')
       );
     });
@@ -330,7 +323,7 @@ ${bestPairings.slice(0, 3).map(bp => `- **${bp.pair}** → **${bp.action}** (Spr
    - Sweeps the Asian range high/low ("Judas Swing") and establishes the true daily trend. Best pairs: **EUR/USD, GBP/USD, GBP/CAD, GBP/JPY, XAU/USD**.
 
 3. **London / New York Overlap (Peak Volume):** \`12:00 – 16:00 UTC\`
-   - **70%+ of daily institutional volume** occurs here. US high-impact news (CPI, NFP, GDP) drops at \`12:30 UTC\`, followed by NYSE equity open at \`13:30 UTC\`. Best for **XAU/USD (Gold), US30, NAS100, and USD/GBP Majors**.`;
+   - **70%+ of daily institutional volume** occurs here. US high-impact news (CPI, NFP, GDP) drops at \`12:30 UTC\`, followed by NYSE equity open at \`13:30 UTC\`. Best for **XAU/USD (Gold) and USD/GBP Majors**.`;
     }
 
     // 13. Prop Firm / Psychology / Leverage / Spread / General Trading Questions

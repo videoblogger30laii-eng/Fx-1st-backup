@@ -57,13 +57,9 @@ const SYMBOL_MAPPING: Record<string, string> = {
   frxNZDJPY: 'NZD/JPY',
   frxNZDCAD: 'NZD/CAD',
   frxNZDCHF: 'NZD/CHF',
-  // Metals, Crypto & Indices
+  // Metals
   frxXAUUSD: 'XAU/USD',
-  frxXAGUSD: 'XAG/USD',
-  cryBTCUSD: 'BTC/USD',
-  cryETHUSD: 'ETH/USD',
-  OTC_DJI: 'US30',
-  OTC_NDX: 'NAS100'
+  frxXAGUSD: 'XAG/USD'
 };
 
 class DerivMarketService {

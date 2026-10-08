@@ -37,52 +37,40 @@ class RealPriceService {
 
   public latestPrices: Record<string, number> = {
     // Majors
-    'EUR/USD': 1.12053,
-    'GBP/USD': 1.32270,
-    'USD/JPY': 157.969,
-    'USD/CHF': 0.82974,
-    'AUD/USD': 0.69617,
-    'NZD/USD': 0.55924,
-    'USD/CAD': 1.42474,
+    'EUR/USD': 1.1211,
+    'GBP/USD': 1.3242,
+    'USD/JPY': 157.84,
+    'USD/CHF': 0.8871,
+    'AUD/USD': 0.6959,
+    'NZD/USD': 0.5626,
+    'USD/CAD': 1.4248,
     // Crosses / Minors
-    'EUR/GBP': 0.84715,
-    'EUR/JPY': 176.993,
-    'EUR/AUD': 1.60942,
-    'EUR/CAD': 1.59635,
-    'EUR/CHF': 0.92975,
-    'EUR/NZD': 2.00365,
-    'GBP/JPY': 208.932,
-    'GBP/AUD': 1.89987,
-    'GBP/CAD': 1.88441,
-    'GBP/CHF': 1.09750,
-    'GBP/NZD': 2.36510,
-    'AUD/JPY': 109.974,
-    'AUD/CAD': 0.99186,
-    'AUD/CHF': 0.57764,
-    'AUD/NZD': 1.24485,
-    'CAD/JPY': 110.870,
-    'CAD/CHF': 0.58238,
-    'CHF/JPY': 190.380,
-    'NZD/JPY': 88.342,
-    'NZD/CAD': 0.79677,
-    'NZD/CHF': 0.46402,
+    'EUR/GBP': 0.8497,
+    'EUR/JPY': 178.02,
+    'EUR/AUD': 1.6152,
+    'EUR/CAD': 1.6025,
+    'EUR/CHF': 0.9323,
+    'EUR/NZD': 2.0029,
+    'GBP/JPY': 208.45,
+    'GBP/AUD': 1.9008,
+    'GBP/CAD': 1.8162,
+    'GBP/CHF': 1.0965,
+    'GBP/NZD': 2.3569,
+    'AUD/JPY': 109.80,
+    'AUD/CAD': 0.9908,
+    'AUD/CHF': 0.5760,
+    'AUD/NZD': 1.2380,
+    'CAD/JPY': 110.65,
+    'CAD/CHF': 0.5812,
+    'CHF/JPY': 190.36,
+    'NZD/JPY': 88.56,
+    'NZD/CAD': 0.7995,
+    'NZD/CHF': 0.4649,
     // Metals & Commodities
-    'XAU/USD': 4138.50,
-    'XAG/USD': 60.37,
+    'XAU/USD': 4164.00,
+    'XAG/USD': 59.65,
     'USOIL': 71.40,
-    'UKOIL': 75.20,
-    // Indices
-    'US30': 51176.9,
-    'NAS100': 30807.9,
-    'SPX500': 5980.0,
-    'GER40': 19420.0,
-    'UK100': 8280.0,
-    'JP225': 38650.0,
-    // Crypto
-    'BTC/USD': 84800.0,
-    'ETH/USD': 2692.9,
-    'SOL/USD': 120.25,
-    'XRP/USD': 1.4884
+    'UKOIL': 75.20
   };
 
   public ohlcStore: Record<string, PairOHLC> = {};
@@ -97,16 +85,18 @@ class RealPriceService {
   private initOHLCStore() {
     Object.entries(this.latestPrices).forEach(([symbol, price]) => {
       const isGold = symbol.includes('XAU');
+      const isSilver = symbol.includes('XAG');
       const isJpy = symbol.includes('JPY');
-      const offset = isGold ? 4.5 : isJpy ? 0.35 : 0.0025;
-      const open = Number((price - offset).toFixed(isGold || isJpy ? 2 : 4));
-      const high = Math.max(open, price) + (isGold ? 2.5 : isJpy ? 0.2 : 0.0015);
-      const low = Math.min(open, price) - (isGold ? 2.5 : isJpy ? 0.2 : 0.0015);
+      const is2Dec = isGold || isSilver || isJpy || symbol.includes('OIL');
+      const offset = isGold ? 4.5 : isSilver ? 0.25 : isJpy ? 0.35 : 0.0025;
+      const open = Number((price - offset).toFixed(is2Dec ? 2 : 4));
+      const high = Math.max(open, price) + (isGold ? 2.5 : isSilver ? 0.15 : isJpy ? 0.2 : 0.0015);
+      const low = Math.min(open, price) - (isGold ? 2.5 : isSilver ? 0.15 : isJpy ? 0.2 : 0.0015);
 
       this.ohlcStore[symbol] = {
         open,
-        high: Number(high.toFixed(isGold || isJpy ? 2 : 4)),
-        low: Number(low.toFixed(isGold || isJpy ? 2 : 4)),
+        high: Number(high.toFixed(is2Dec ? 2 : 4)),
+        low: Number(low.toFixed(is2Dec ? 2 : 4)),
         close: price,
         changePips: 0,
         changePercent: 0,
@@ -128,8 +118,9 @@ class RealPriceService {
     };
 
     const isGold = symbol.includes('XAU');
+    const isSilver = symbol.includes('XAG');
     const isJpy = symbol.includes('JPY');
-    const digits = isGold || isJpy ? 2 : 5;
+    const digits = isGold || isSilver || isJpy || symbol.includes('OIL') ? 2 : 5;
 
     const high = Math.max(prev.high, currentPrice);
     const low = Math.min(prev.low, currentPrice);
@@ -137,7 +128,7 @@ class RealPriceService {
     const changePercent = prev.open > 0 ? (change / prev.open) * 100 : 0;
 
     // Pip multiplier
-    const pipMultiplier = isGold ? 10 : isJpy ? 100 : 10000;
+    const pipMultiplier = isGold ? 10 : isSilver || isJpy ? 100 : 10000;
     const changePips = Math.round(change * pipMultiplier * 10) / 10;
 
     const updated: PairOHLC = {
@@ -172,19 +163,13 @@ class RealPriceService {
       this.pollTradingViewQuotes();
     }, 3000);
 
-    // 2. Physical Gold Spot & Indices: every 5s
+    // 2. Physical Gold & Silver Spot: every 5s
     this.goldIntervalId = setInterval(() => {
       this.pollTradingViewCfdAndIndices();
       this.pollGoldPrice();
     }, 5000);
 
-    // 3. Real BTC: every 5s
-    this.pollBtcPrice();
-    this.btcIntervalId = setInterval(() => {
-      this.pollBtcPrice();
-    }, 5000);
-
-    // 4. Secondary: Connect Deriv WebSocket Live Stream
+    // 3. Secondary: Connect Deriv WebSocket Live Stream
     try {
       derivService.startLiveStream();
       this.unsubscribeDeriv = derivService.onTick((tick: DerivTick) => {
@@ -352,28 +337,32 @@ class RealPriceService {
   }
 
   /**
-   * Primary Provider for Gold CFD, Silver, Commodities and Stock Indices (US30 / NAS100 / SPX500 / GER40 / UK100 / JP225)
+   * Primary Provider for Gold CFD, Silver & Commodities (Oil)
    */
   public async pollTradingViewCfdAndIndices(): Promise<void> {
     try {
       // 1. Gold & Silver Spot & Oil from CFD
       const json = await this.fetchTvScan('cfd', [
-        'TVC:GOLD',
         'FX:XAUUSD',
         'FOREXCOM:XAUUSD',
-        'TVC:SILVER',
+        'TVC:GOLD',
         'FX:XAGUSD',
         'FOREXCOM:XAGUSD',
+        'TVC:SILVER',
         'TVC:USOIL',
         'TVC:UKOIL'
       ]);
+      let goldUpdated = false;
+      let silverUpdated = false;
       json?.data?.forEach((d: any) => {
-        if ((d.s === 'TVC:GOLD' || d.s === 'FX:XAUUSD' || d.s === 'FOREXCOM:XAUUSD') && d.d?.[0]) {
+        if (!goldUpdated && (d.s === 'FX:XAUUSD' || d.s === 'FOREXCOM:XAUUSD' || d.s === 'TVC:GOLD') && d.d?.[0]) {
+          goldUpdated = true;
           const goldPrice = Number(Number(d.d[0]).toFixed(2));
           this.lastLiveTickTime['XAU/USD'] = Date.now();
           this.updatePrice('XAU/USD', goldPrice, 'TradingView Gold Feed');
         }
-        if ((d.s === 'TVC:SILVER' || d.s === 'FX:XAGUSD' || d.s === 'FOREXCOM:XAGUSD') && d.d?.[0]) {
+        if (!silverUpdated && (d.s === 'FX:XAGUSD' || d.s === 'FOREXCOM:XAGUSD' || d.s === 'TVC:SILVER') && d.d?.[0]) {
+          silverUpdated = true;
           const silverPrice = Number(Number(d.d[0]).toFixed(2));
           this.lastLiveTickTime['XAG/USD'] = Date.now();
           this.updatePrice('XAG/USD', silverPrice, 'TradingView Silver Feed');
@@ -383,73 +372,6 @@ class RealPriceService {
         }
         if (d.s === 'TVC:UKOIL' && d.d?.[0]) {
           this.updatePrice('UKOIL', Number(Number(d.d[0]).toFixed(2)), 'TradingView Oil');
-        }
-      });
-    } catch {}
-
-    try {
-      // 2. Indices from America & Global Scan
-      const json = await this.fetchTvScan('america', [
-        'DJ:DJI',
-        'TVC:DJI',
-        'FOREXCOM:DJ30',
-        'NASDAQ:NDX',
-        'FOREXCOM:NAS100',
-        'FOREXCOM:SPX500',
-        'FOREXCOM:GER40',
-        'FOREXCOM:UK100',
-        'TVC:NI225'
-      ]);
-      json?.data?.forEach((d: any) => {
-        if ((d.s === 'DJ:DJI' || d.s === 'TVC:DJI' || d.s === 'FOREXCOM:DJ30') && d.d?.[0]) {
-          const us30 = Number(Number(d.d[0]).toFixed(1));
-          this.lastLiveTickTime['US30'] = Date.now();
-          this.updatePrice('US30', us30, 'TradingView DJIA Feed');
-        }
-        if ((d.s === 'NASDAQ:NDX' || d.s === 'FOREXCOM:NAS100') && d.d?.[0]) {
-          const nas = Number(Number(d.d[0]).toFixed(1));
-          this.lastLiveTickTime['NAS100'] = Date.now();
-          this.updatePrice('NAS100', nas, 'TradingView NDX Feed');
-        }
-        if (d.s === 'FOREXCOM:SPX500' && d.d?.[0]) {
-          this.updatePrice('SPX500', Number(Number(d.d[0]).toFixed(1)), 'TradingView SPX');
-        }
-        if (d.s === 'FOREXCOM:GER40' && d.d?.[0]) {
-          this.updatePrice('GER40', Number(Number(d.d[0]).toFixed(1)), 'TradingView DAX');
-        }
-        if (d.s === 'FOREXCOM:UK100' && d.d?.[0]) {
-          this.updatePrice('UK100', Number(Number(d.d[0]).toFixed(1)), 'TradingView FTSE');
-        }
-        if (d.s === 'TVC:NI225' && d.d?.[0]) {
-          this.updatePrice('JP225', Number(Number(d.d[0]).toFixed(1)), 'TradingView Nikkei');
-        }
-      });
-    } catch {}
-
-    try {
-      // 3. Real Crypto from TradingView Crypto Scan
-      const json = await this.fetchTvScan('crypto', [
-        'BINANCE:BTCUSDT',
-        'BINANCE:ETHUSDT',
-        'BINANCE:SOLUSDT',
-        'BINANCE:XRPUSDT'
-      ]);
-      json?.data?.forEach((item: any) => {
-        if (item.s === 'BINANCE:BTCUSDT' && item.d?.[0]) {
-          this.lastLiveTickTime['BTC/USD'] = Date.now();
-          this.updatePrice('BTC/USD', Number(Number(item.d[0]).toFixed(2)), 'TradingView BTC Feed');
-        }
-        if (item.s === 'BINANCE:ETHUSDT' && item.d?.[0]) {
-          this.lastLiveTickTime['ETH/USD'] = Date.now();
-          this.updatePrice('ETH/USD', Number(Number(item.d[0]).toFixed(2)), 'TradingView ETH Feed');
-        }
-        if (item.s === 'BINANCE:SOLUSDT' && item.d?.[0]) {
-          this.lastLiveTickTime['SOL/USD'] = Date.now();
-          this.updatePrice('SOL/USD', Number(Number(item.d[0]).toFixed(2)), 'TradingView SOL Feed');
-        }
-        if (item.s === 'BINANCE:XRPUSDT' && item.d?.[0]) {
-          this.lastLiveTickTime['XRP/USD'] = Date.now();
-          this.updatePrice('XRP/USD', Number(Number(item.d[0]).toFixed(4)), 'TradingView XRP Feed');
         }
       });
     } catch {}
@@ -622,8 +544,8 @@ class RealPriceService {
     let hasUpdated = false;
 
     fxPairs.forEach(symbol => {
-      // If TradingView, Deriv or Twelve Data updated this pair in the last 45 seconds, DO NOT overwrite with central bank daily rate!
-      if (this.lastLiveTickTime[symbol] && (now - this.lastLiveTickTime[symbol] < 45000)) {
+      // Never overwrite a pair that has already received a real live tick from TradingView, Deriv, or Twelve Data
+      if (this.lastLiveTickTime[symbol]) {
         return;
       }
 
@@ -650,11 +572,8 @@ class RealPriceService {
    */
   public async fetchSymbolImmediate(symbol: string): Promise<number> {
     // 1. Fetch real-time TradingView quotes directly
-    if (symbol.includes('XAU') || symbol.includes('XAG') || symbol.includes('USOIL') || symbol.includes('UKOIL') || symbol.includes('US30') || symbol.includes('NAS') || symbol.includes('SPX') || symbol.includes('GER') || symbol.includes('UK100') || symbol.includes('JP225')) {
+    if (symbol.includes('XAU') || symbol.includes('XAG') || symbol.includes('USOIL') || symbol.includes('UKOIL')) {
       await this.pollTradingViewCfdAndIndices();
-    } else if (symbol.includes('BTC') || symbol.includes('ETH') || symbol.includes('SOL') || symbol.includes('XRP')) {
-      await this.pollTradingViewCfdAndIndices();
-      await this.pollBtcPrice();
     } else {
       await this.pollTradingViewQuotes();
     }

@@ -18,7 +18,9 @@ import {
   Pencil,
   RotateCcw,
   AlertTriangle,
-  ArrowDown
+  ArrowDown,
+  Mic,
+  MicOff
 } from 'lucide-react';
 
 interface Props {
@@ -53,12 +55,65 @@ export const AiChatScreen: React.FC<Props> = ({
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [showClearConfirmModal, setShowClearConfirmModal] = useState(false);
   const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
+  const [isListening, setIsListening] = useState<boolean>(false);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const inputFormRef = useRef<HTMLFormElement | null>(null);
   const inputElementRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const recognitionRef = useRef<any>(null);
+
+  // Web Speech API Voice Dictation
+  const toggleSpeechRecognition = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setInputText('Voice dictation requires Chrome, Edge, or Safari — please type your question here.');
+      inputElementRef.current?.focus();
+      return;
+    }
+
+    if (isListening) {
+      try {
+        recognitionRef.current?.stop();
+      } catch {}
+      setIsListening(false);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        const transcript = Array.from(event.results)
+          .map((result: any) => result[0].transcript)
+          .join('');
+        setInputText(transcript);
+      };
+
+      recognition.onerror = () => {
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch {
+      setIsListening(false);
+    }
+  };
 
   // Auto-scroll to bottom when messages update or generating
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
@@ -215,7 +270,7 @@ export const AiChatScreen: React.FC<Props> = ({
           return [
             'Compare Smart Money (FVG/Order Blocks) vs RSI & EMA indicators',
             'What is the strongest vs weakest currency right now?',
-            'Best trading sessions for Gold (XAU/USD) and US30',
+            'Best trading sessions for Gold (XAU/USD) and FX Majors',
             'How to identify a liquidity sweep (stop hunt) before entry?'
           ];
         case 'RISK':
@@ -252,7 +307,7 @@ export const AiChatScreen: React.FC<Props> = ({
         'London / NY Overlap M15 scalping plan',
         'Best Trade Now for fast session momentum',
         'How to scalp post-news displacement after 15m cooldown',
-        'Analyze US30 & NAS100 NY open breakout'
+        'Analyze EUR/USD & GBP/USD NY open breakout'
       ];
     }
 
@@ -659,6 +714,23 @@ export const AiChatScreen: React.FC<Props> = ({
             ))}
           </div>
 
+          {/* Live Voice Recording Indicator Banner */}
+          {isListening && (
+            <div className="flex items-center justify-between bg-[#00E676]/15 border border-[#00E676]/50 rounded-xl px-3 py-1.5 text-xs text-[#00E676] animate-pulse">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#00E676] animate-ping" />
+                <span className="font-bold">Listening... Speak your trading question</span>
+              </div>
+              <button
+                type="button"
+                onClick={toggleSpeechRecognition}
+                className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-[#00E676] text-[#080B11] cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          )}
+
           {/* Input & Action Buttons Row */}
           <div className="flex items-center gap-1.5">
             {/* Image Upload Button */}
@@ -674,6 +746,21 @@ export const AiChatScreen: React.FC<Props> = ({
             >
               <ImagePlus className="w-4 h-4" />
               <span className="hidden xs:inline sm:inline">Photo</span>
+            </button>
+
+            {/* Voice Dictation (Speech-to-Text) Button */}
+            <button
+              type="button"
+              onClick={toggleSpeechRecognition}
+              className={`px-2.5 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
+                isListening
+                  ? 'bg-[#FF3366]/20 border-[#FF3366] text-[#FF3366] animate-pulse shadow-[0_0_10px_rgba(255,51,102,0.4)]'
+                  : 'bg-[#182033] hover:bg-[#222F47] border-[#222F47] text-[#FFD700]'
+              }`}
+              title="Dictate trading question with voice (Speech-to-Text)"
+            >
+              {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+              <span className="hidden xs:inline sm:inline">{isListening ? 'Stop' : 'Voice'}</span>
             </button>
 
             {/* Input Field */}

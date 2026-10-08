@@ -8,7 +8,8 @@ import {
   getFormattedCountdown,
   getFormattedTimeElapsed,
   getFormattedTotalValidity,
-  getValidityProgress
+  getValidityProgress,
+  getTpProgressRatio
 } from '../services/marketData';
 import { realPriceService } from '../services/RealPriceService';
 import { getSignalDetailedAnalysis } from '../services/signalAnalysisEngine';
@@ -67,9 +68,10 @@ export const SignalDetailSheet: React.FC<Props> = ({
   const [copiedTelegram, setCopiedTelegram] = useState(false);
 
   const slPips = calculateSlPips(signal);
+  const isBuy = signal.type.startsWith('BUY');
+  const tp1Pips = Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.takeProfit1, isBuy));
   const countdown = getFormattedCountdown(signal, nowClockMs);
   const isPending = signal.status === 'PENDING' || signal.isPending;
-  const isBuy = signal.type.startsWith('BUY');
 
   // Compute full institutional analysis
   const analysis = getSignalDetailedAnalysis(signal);
@@ -192,7 +194,7 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
               </span>
             </div>
             <div className="text-[11px] text-[#94A3B8] mt-0.5">
-              {signal.pair.name} • {signal.timeframe} Timeframe • {signal.killzone}
+              {signal.pair.name} • {signal.timeframe} Timeframe ({getFormattedTotalValidity(signal)}) • {signal.killzone}
             </div>
           </div>
 
@@ -334,7 +336,7 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
               <div className="bg-[#101522] p-2.5 rounded-lg border border-[#222F47]">
                 <span className="text-[9px] text-[#00E676] uppercase font-bold">Take Profit 1</span>
                 <div className="text-sm font-mono font-bold text-[#00E676]">{formatPrice(signal.pair, signal.takeProfit1)}</div>
-                <div className="text-[9px] text-[#64748B]">Bank 50% lots</div>
+                <div className="text-[9px] text-[#00E676]/80 font-mono">Target: +{tp1Pips} pips</div>
               </div>
 
               <div className="bg-[#101522] p-2.5 rounded-lg border border-[#222F47]">
@@ -594,18 +596,22 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
                   <>
                     <div className="flex items-center justify-between text-[#00E676] font-bold">
                       <span>Active Trade Status:</span>
-                      <span>🟢 LIVE POSITION</span>
+                      <span>🟢 LIVE POSITION ({signal.timeframe} • {getFormattedTotalValidity(signal)})</span>
+                    </div>
+                    <div className="flex items-center justify-between text-[#94A3B8]">
+                      <span>Time Posted / Age:</span>
+                      <span className="text-[#2979FF] font-semibold">{getFormattedTimeElapsed(signal, nowClockMs)}</span>
                     </div>
                     <div className="flex items-center justify-between text-[#94A3B8]">
                       <span>TP1 Target Progress:</span>
                       <span className="text-[#00E676] font-bold">
-                        {Math.round((signal.pips > 0 ? signal.pips : 0) / Math.max(1, Math.abs(signal.takeProfit1 - signal.entryPrice) * (signal.pair.pipDigits === 2 ? 100 : 10000)) * 100)}%
+                        {Math.round(getTpProgressRatio(signal, livePrice) * 100)}% (+{Math.max(0, livePips)}p / +{tp1Pips}p)
                       </span>
                     </div>
                     <div className="w-full h-1.5 bg-[#101522] rounded-full overflow-hidden mt-1">
                       <div
                         className="h-full bg-[#00E676] rounded-full"
-                        style={{ width: `${Math.max(5, Math.min(100, Math.max(0, signal.pips) / Math.max(1, Math.abs(signal.takeProfit1 - signal.entryPrice) * (signal.pair.pipDigits === 2 ? 100 : 10000)) * 100))}%` }}
+                        style={{ width: `${Math.max(5, Math.min(100, getTpProgressRatio(signal, livePrice) * 100))}%` }}
                       />
                     </div>
                   </>

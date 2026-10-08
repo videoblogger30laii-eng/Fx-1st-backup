@@ -23,6 +23,7 @@ interface Props {
   onClearHistory: () => void;
   onOpenAddModal: () => void;
   onOpenWhatsAppModal?: () => void;
+  onOpenSoundSettings?: () => void;
 }
 
 export const AlertsScreen: React.FC<Props> = ({
@@ -32,7 +33,8 @@ export const AlertsScreen: React.FC<Props> = ({
   onDeleteAlert,
   onClearHistory,
   onOpenAddModal,
-  onOpenWhatsAppModal
+  onOpenWhatsAppModal,
+  onOpenSoundSettings
 }) => {
   const [selectedTab, setSelectedTab] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
   const activeCount = alerts.filter(a => a.isEnabled).length;
@@ -54,10 +56,21 @@ export const AlertsScreen: React.FC<Props> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {onOpenSoundSettings && (
+            <button
+              onClick={onOpenSoundSettings}
+              className="flex items-center gap-1.5 bg-[#182033] hover:bg-[#222F47] border border-[#222F47] text-[#FFD700] font-bold text-xs px-3 py-2 rounded-xl transition-all shadow-sm cursor-pointer"
+              title="Customize audio chimes & sound themes"
+            >
+              <Volume2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Sound Chimes</span>
+            </button>
+          )}
+
           {onOpenWhatsAppModal && (
             <button
               onClick={onOpenWhatsAppModal}
-              className="flex items-center gap-1.5 bg-[#25D366]/20 hover:bg-[#25D366]/30 border border-[#25D366]/40 text-[#25D366] font-bold text-xs px-3 py-2 rounded-xl transition-all shadow-sm"
+              className="flex items-center gap-1.5 bg-[#25D366]/20 hover:bg-[#25D366]/30 border border-[#25D366]/40 text-[#25D366] font-bold text-xs px-3 py-2 rounded-xl transition-all shadow-sm cursor-pointer"
               title="Configure automated WhatsApp trade alerts"
             >
               <span>💬</span>
@@ -67,7 +80,7 @@ export const AlertsScreen: React.FC<Props> = ({
 
           <button
             onClick={onOpenAddModal}
-            className="flex items-center gap-1.5 bg-[#FFD700] hover:bg-[#FFD700]/90 text-[#080B11] font-bold text-xs px-3.5 py-2 rounded-xl transition-colors shadow-sm"
+            className="flex items-center gap-1.5 bg-[#FFD700] hover:bg-[#FFD700]/90 text-[#080B11] font-bold text-xs px-3.5 py-2 rounded-xl transition-colors shadow-sm cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>New Alert</span>

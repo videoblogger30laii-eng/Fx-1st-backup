@@ -9,23 +9,16 @@ export const RiskCalculatorModal: React.FC<Props> = ({ onDismiss }) => {
   const [balance, setBalance] = useState<number>(10000);
   const [riskPercent, setRiskPercent] = useState<number>(1.0);
   const [slPips, setSlPips] = useState<number>(25.0);
-  const [instrument, setInstrument] = useState<'FOREX' | 'GOLD' | 'INDICES'>('GOLD');
+  const [instrument, setInstrument] = useState<'FOREX' | 'GOLD'>('GOLD');
 
   const riskAmountUsd = balance * (riskPercent / 100);
 
   // Lot calculation:
   // Forex: 1 lot = $10/pip
   // Gold: 1 lot = 100 oz. $1.00 move = $100 -> $0.10/pip on 0.01 lot -> $10/pip on 1.0 lot.
-  // US30: 1 point = $1
   let lotSize = 0.01;
   if (slPips > 0) {
-    if (instrument === 'FOREX') {
-      lotSize = riskAmountUsd / (slPips * 10);
-    } else if (instrument === 'GOLD') {
-      lotSize = riskAmountUsd / (slPips * 10);
-    } else {
-      lotSize = riskAmountUsd / (slPips * 1.0);
-    }
+    lotSize = riskAmountUsd / (slPips * 10);
   }
 
   const roundedLots = Math.max(0.01, Math.min(50.0, Math.round(lotSize * 100) / 100));
@@ -51,7 +44,7 @@ export const RiskCalculatorModal: React.FC<Props> = ({ onDismiss }) => {
 
         {/* Instrument Switcher */}
         <div className="flex gap-2 mb-4">
-          {(['GOLD', 'FOREX', 'INDICES'] as const).map(inst => (
+          {(['GOLD', 'FOREX'] as const).map(inst => (
             <button
               key={inst}
               onClick={() => setInstrument(inst)}
@@ -61,7 +54,7 @@ export const RiskCalculatorModal: React.FC<Props> = ({ onDismiss }) => {
                   : 'bg-[#182033] border-[#222F47] text-[#94A3B8]'
               }`}
             >
-              {inst === 'GOLD' ? 'Gold (XAU)' : inst === 'FOREX' ? 'Forex Pairs' : 'US30 / Indices'}
+              {inst === 'GOLD' ? 'Gold (XAU)' : 'Forex Pairs'}
             </button>
           ))}
         </div>

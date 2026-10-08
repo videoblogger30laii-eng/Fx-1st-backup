@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ForexSignal } from '../types';
+import { ForexSignal, getSignalStrategy, STRATEGY_CONFIGS } from '../types';
 import { formatPrice, calculatePips, getFormattedCountdown, getValidityProgress } from '../services/marketData';
 import { realPriceService } from '../services/RealPriceService';
 import {
@@ -117,6 +117,9 @@ export const BestTradeHeroCard: React.FC<Props> = ({
           <div>
             <div className="flex items-center flex-wrap gap-2">
               <span className="text-xl font-black text-[#F1F5F9]">{signal.pair.symbol}</span>
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#182033] border border-[#222F47] text-[#F1F5F9]">
+                {signal.timeframe}
+              </span>
               <span
                 className={`text-xs font-black px-2 py-0.5 rounded ${
                   isBuy
@@ -147,7 +150,12 @@ export const BestTradeHeroCard: React.FC<Props> = ({
                 ) : null}
               </div>
             </div>
-            <div className="text-xs text-[#94A3B8] font-medium mt-0.5">{signal.institutionalFlow}</div>
+            <div className="flex items-center flex-wrap gap-1.5 mt-1">
+              <span className="text-[10px] font-black px-2 py-0.5 rounded bg-[#FFD700]/15 border border-[#FFD700]/40 text-[#FFD700]">
+                Strategy: {STRATEGY_CONFIGS[getSignalStrategy(signal)].title}
+              </span>
+              <span className="text-xs text-[#94A3B8] font-medium">{signal.institutionalFlow}</span>
+            </div>
           </div>
         </div>
 
@@ -179,13 +187,17 @@ export const BestTradeHeroCard: React.FC<Props> = ({
           </div>
         </div>
         <div>
-          <div className="text-[9px] text-[#FF3366] font-bold uppercase tracking-wider">Stop Loss</div>
+          <div className="text-[9px] text-[#FF3366] font-bold uppercase tracking-wider">
+            SL (-{Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.stopLoss, isBuy))}p)
+          </div>
           <div className="text-xs font-mono font-bold text-[#FF3366] mt-0.5">
             {formatPrice(signal.pair, signal.stopLoss)}
           </div>
         </div>
         <div>
-          <div className="text-[9px] text-[#00E676] font-bold uppercase tracking-wider">Take Profit 1</div>
+          <div className="text-[9px] text-[#00E676] font-bold uppercase tracking-wider">
+            TP1 (+{Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.takeProfit1, isBuy))}p)
+          </div>
           <div className="text-xs font-mono font-bold text-[#00E676] mt-0.5">
             {formatPrice(signal.pair, signal.takeProfit1)}
           </div>

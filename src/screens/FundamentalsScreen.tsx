@@ -194,25 +194,27 @@ export const FundamentalsScreen: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Section 5: Live Currency Relative Strength */}
+      {/* Section 5: Live Currency, Gold, Silver & Multi-Asset Relative Strength */}
       <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3.5">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-bold text-[#F1F5F9] uppercase tracking-wider">
-            Live Currency Relative Strength Heatmap
+            Live Currency, Gold, Silver & Multi-Asset Strength Heatmap
           </span>
-          <span className="text-[10px] text-[#64748B]">Interbank Flow</span>
+          <span className="text-[10px] text-[#FFD700] font-semibold">
+            {currencyStrengths.length} Assets • Live Interbank Flow
+          </span>
         </div>
 
-        <div className="grid grid-cols-4 sm:grid-cols-7 gap-2 text-center">
+        <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-10 gap-2 text-center">
           {currencyStrengths.map(c => (
             <div key={c.currency} className="bg-[#182033] p-2 rounded-lg border border-[#222F47]">
               <div className="text-xs font-bold text-[#F1F5F9]">{c.currency}</div>
               <div
                 className={`text-base font-black font-mono my-0.5 ${
-                  c.score >= 70 ? 'text-[#00E676]' : c.score <= 40 ? 'text-[#FF3366]' : 'text-[#FFD700]'
+                  c.score >= 65 ? 'text-[#00E676]' : c.score <= 45 ? 'text-[#FF3366]' : 'text-[#FFD700]'
                 }`}
               >
-                {c.score}
+                {(c.score / 10).toFixed(1)}
               </div>
               <div className="text-[9px] text-[#94A3B8]">{c.change24h}</div>
             </div>

@@ -100,7 +100,7 @@ export const EconomicCalendarModal: React.FC<Props> = ({
       `\n👉 *Risk Rule:* ${evt.tradingRule || 'Expect rapid spread widening and potential slippage within 15 minutes of release.'}`;
 
     setSentAlertId(evt.id);
-    await TelegramAlertService.sendAlert(msg);
+    await TelegramAlertService.sendAlert(msg, undefined, true);
     setTimeout(() => setSentAlertId(null), 3000);
   };
 

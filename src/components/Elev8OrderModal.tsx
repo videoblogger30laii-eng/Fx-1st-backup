@@ -68,6 +68,21 @@ export const Elev8OrderModal: React.FC<Props> = ({
 
   const [copiedMobile, setCopiedMobile] = useState(false);
   const [executedSuccess, setExecutedSuccess] = useState(false);
+  const [isExecutingWebhook, setIsExecutingWebhook] = useState(false);
+  const [bridgeMessage, setBridgeMessage] = useState<string | null>(null);
+  const [copiedValue, setCopiedValue] = useState<string | null>(null);
+  const [copiedAndAlerted, setCopiedAndAlerted] = useState(false);
+  const [tgAlertStatus, setTgAlertStatus] = useState<string | null>(null);
+
+  // Sync editable order fields when selected signal changes
+  useEffect(() => {
+    setOrderType(signal.type);
+    setEntryPrice(signal.entryPrice);
+    setStopLoss(signal.stopLoss);
+    setTakeProfit1(signal.takeProfit1);
+    setTakeProfit2(signal.takeProfit2);
+    setTakeProfit3(signal.takeProfit3);
+  }, [signal.id, signal.type, signal.entryPrice, signal.stopLoss, signal.takeProfit1, signal.takeProfit2, signal.takeProfit3]);
 
   useEffect(() => {
     const cur = realPriceService.getPrice(signal.pair.symbol);
@@ -86,8 +101,6 @@ export const Elev8OrderModal: React.FC<Props> = ({
     ? 0.1
     : signal.pair.symbol.includes('JPY')
     ? 0.01
-    : signal.pair.symbol.includes('US30')
-    ? 1.0
     : 0.0001;
 
   // Calculate SL distance
@@ -99,24 +112,18 @@ export const Elev8OrderModal: React.FC<Props> = ({
     if (sizingMode === 'MANUAL_LOTS') {
       return Math.max(0.01, manualLots);
     }
-    // Calculate lots from risk %
+    // Calculate lots from risk % using unified 1.0-lot loss from calculateDollarPnl
     const riskDollars = balance * (riskPercent / 100);
     if (slDist <= 0) return 0.01;
 
-    let lots = 0.01;
-    if (signal.pair.symbol.includes('XAU') || signal.pair.symbol.includes('GOLD')) {
-      // 100 oz per lot
-      lots = riskDollars / (slDist * 100.0);
-    } else if (signal.pair.symbol.includes('US30')) {
-      lots = riskDollars / (slDist * 1.0);
-    } else {
-      const isJpy = signal.pair.symbol.includes('JPY');
-      const pipDist = slDist / (isJpy ? 0.01 : 0.0001);
-      const pipValuePerLot = isJpy && entryPrice > 0 ? (1000.0 / entryPrice) : 10.0;
-      lots = riskDollars / (pipDist * pipValuePerLot);
-    }
+    const oneLotRisk = Math.abs(
+      calculateDollarPnl(signal.pair, entryPrice, stopLoss, 1.0, isOrderBuy).dollarPnl
+    );
+    if (oneLotRisk <= 0) return 0.01;
+
+    const lots = riskDollars / oneLotRisk;
     return Math.max(0.01, Math.min(50.0, Math.round(lots * 100) / 100));
-  }, [sizingMode, manualLots, riskPercent, balance, slDist, signal.pair.symbol, entryPrice]);
+  }, [sizingMode, manualLots, riskPercent, balance, slDist, signal.pair, entryPrice, stopLoss, isOrderBuy]);
 
   // Compute projected Dollar Gain / Loss for SL, TP1, TP2, TP3
   const slMetrics = useMemo(() => {
@@ -178,10 +185,6 @@ export const Elev8OrderModal: React.FC<Props> = ({
     `TP1: ${formatPrice(signal.pair, takeProfit1)}\n` +
     `TP2: ${formatPrice(signal.pair, takeProfit2)}`;
 
-  const [isExecutingWebhook, setIsExecutingWebhook] = useState(false);
-  const [bridgeMessage, setBridgeMessage] = useState<string | null>(null);
-  const [copiedValue, setCopiedValue] = useState<string | null>(null);
-
   const copySingleValue = (val: string | number, label: string) => {
     navigator.clipboard.writeText(String(val));
     setCopiedValue(label);
@@ -193,9 +196,6 @@ export const Elev8OrderModal: React.FC<Props> = ({
     setCopiedMobile(true);
     setTimeout(() => setCopiedMobile(false), 2000);
   };
-
-  const [copiedAndAlerted, setCopiedAndAlerted] = useState(false);
-  const [tgAlertStatus, setTgAlertStatus] = useState<string | null>(null);
 
   const handleCopyAndSendTgAlert = async () => {
     // 1. Copy exact SL and TP parameters to clipboard for MT5 mobile
@@ -256,7 +256,7 @@ export const Elev8OrderModal: React.FC<Props> = ({
       `⏱️ *Live Price:* ${formatPrice(signal.pair, livePrice)}\n\n` +
       `👉 *Parameters copied to clipboard for your MT5 mobile!* Live Watchdog is active 24/7 — you will receive instant push alerts whenever Entry, TP, or SL triggers.`;
 
-    const res = await TelegramAlertService.sendAlert(tgMsg);
+    const res = await TelegramAlertService.sendAlert(tgMsg, undefined, true);
     if (res.success) {
       setTgAlertStatus('Sent to Telegram!');
     } else {
@@ -336,6 +336,9 @@ export const Elev8OrderModal: React.FC<Props> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-base sm:text-lg font-black text-[#F1F5F9]">{symbolWithSuffix}</span>
+                <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#2979FF]/20 text-[#2979FF] border border-[#2979FF]/40">
+                  {signal.timeframe}
+                </span>
                 <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
                   isOrderBuy ? 'bg-[#00E676]/20 text-[#00E676]' : 'bg-[#FF3366]/20 text-[#FF3366]'
                 }`}>
@@ -370,10 +373,20 @@ export const Elev8OrderModal: React.FC<Props> = ({
                 key={t}
                 type="button"
                 onClick={() => {
+                  const baseSlDist = Math.abs(signal.entryPrice - signal.stopLoss);
+                  const baseTp1Dist = Math.abs(signal.takeProfit1 - signal.entryPrice);
+                  const baseTp2Dist = Math.abs(signal.takeProfit2 - signal.entryPrice);
+                  const baseTp3Dist = Math.abs(signal.takeProfit3 - signal.entryPrice);
+                  const isNewBuy = t.startsWith('BUY');
+                  const dec = signal.pair.pipDigits === 2 ? 2 : 4;
+                  const roundP = (v: number) => Number(v.toFixed(dec));
+                  const nextEntry = t.includes('MARKET') && livePrice > 0 ? roundP(livePrice) : roundP(signal.entryPrice);
                   setOrderType(t);
-                  if (t.includes('MARKET') && livePrice > 0) {
-                    setEntryPrice(livePrice);
-                  }
+                  setEntryPrice(nextEntry);
+                  setStopLoss(roundP(isNewBuy ? nextEntry - baseSlDist : nextEntry + baseSlDist));
+                  setTakeProfit1(roundP(isNewBuy ? nextEntry + baseTp1Dist : nextEntry - baseTp1Dist));
+                  setTakeProfit2(roundP(isNewBuy ? nextEntry + baseTp2Dist : nextEntry - baseTp2Dist));
+                  setTakeProfit3(roundP(isNewBuy ? nextEntry + baseTp3Dist : nextEntry - baseTp3Dist));
                 }}
                 className={`py-1.5 text-[11px] font-black rounded-lg transition-all ${
                   orderType === t
@@ -394,9 +407,31 @@ export const Elev8OrderModal: React.FC<Props> = ({
           {/* Entry */}
           <div>
             <label className="text-[10px] font-bold text-[#94A3B8] uppercase block mb-0.5 flex items-center justify-between">
-              <span>{orderType.includes('MARKET') ? 'Market Entry (Live)' : 'Limit Entry Price'}</span>
-              {orderType.includes('MARKET') && (
-                <span className="text-[9px] text-[#00E676] font-mono">Instant</span>
+              <span>{orderType.includes('MARKET') ? 'Entry Price' : 'Limit Entry Price'}</span>
+              {livePrice > 0 && Math.abs(entryPrice - livePrice) > 1e-6 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const baseSlDist = Math.abs(signal.entryPrice - signal.stopLoss);
+                    const baseTp1Dist = Math.abs(signal.takeProfit1 - signal.entryPrice);
+                    const baseTp2Dist = Math.abs(signal.takeProfit2 - signal.entryPrice);
+                    const baseTp3Dist = Math.abs(signal.takeProfit3 - signal.entryPrice);
+                    const dec = signal.pair.pipDigits === 2 ? 2 : 4;
+                    const roundP = (v: number) => Number(v.toFixed(dec));
+                    const nextEntry = roundP(livePrice);
+                    setEntryPrice(nextEntry);
+                    setStopLoss(roundP(isOrderBuy ? nextEntry - baseSlDist : nextEntry + baseSlDist));
+                    setTakeProfit1(roundP(isOrderBuy ? nextEntry + baseTp1Dist : nextEntry - baseTp1Dist));
+                    setTakeProfit2(roundP(isOrderBuy ? nextEntry + baseTp2Dist : nextEntry - baseTp2Dist));
+                    setTakeProfit3(roundP(isOrderBuy ? nextEntry + baseTp3Dist : nextEntry - baseTp3Dist));
+                  }}
+                  className="text-[9px] text-[#2979FF] hover:underline font-mono font-bold"
+                  title="Shift Entry, SL & TP to Live Price keeping exact pip distances"
+                >
+                  Sync @ Live
+                </button>
+              ) : (
+                <span className="text-[9px] text-[#00E676] font-mono">Signal Locked</span>
               )}
             </label>
             <input
@@ -410,8 +445,9 @@ export const Elev8OrderModal: React.FC<Props> = ({
 
           {/* Stop Loss */}
           <div>
-            <label className="text-[10px] font-bold text-[#FF3366] uppercase block mb-0.5">
-              Stop Loss (SL)
+            <label className="text-[10px] font-bold text-[#FF3366] uppercase block mb-0.5 flex items-center justify-between">
+              <span>Stop Loss (SL)</span>
+              <span className="text-[9px] font-mono">-{slMetrics.pips.toFixed(1)}p</span>
             </label>
             <input
               type="number"
@@ -424,8 +460,9 @@ export const Elev8OrderModal: React.FC<Props> = ({
 
           {/* TP1 */}
           <div>
-            <label className="text-[10px] font-bold text-[#00E676] uppercase block mb-0.5">
-              Take Profit 1
+            <label className="text-[10px] font-bold text-[#00E676] uppercase block mb-0.5 flex items-center justify-between">
+              <span>Take Profit 1</span>
+              <span className="text-[9px] font-mono">+{tp1Metrics.pips.toFixed(1)}p</span>
             </label>
             <input
               type="number"
@@ -438,8 +475,9 @@ export const Elev8OrderModal: React.FC<Props> = ({
 
           {/* TP2 */}
           <div>
-            <label className="text-[10px] font-bold text-[#00E676]/80 uppercase block mb-0.5">
-              Take Profit 2
+            <label className="text-[10px] font-bold text-[#00E676]/80 uppercase block mb-0.5 flex items-center justify-between">
+              <span>Take Profit 2</span>
+              <span className="text-[9px] font-mono">+{tp2Metrics.pips.toFixed(1)}p</span>
             </label>
             <input
               type="number"
@@ -452,8 +490,9 @@ export const Elev8OrderModal: React.FC<Props> = ({
 
           {/* TP3 */}
           <div>
-            <label className="text-[10px] font-bold text-[#00E676]/60 uppercase block mb-0.5">
-              Take Profit 3 (Runner)
+            <label className="text-[10px] font-bold text-[#00E676]/60 uppercase block mb-0.5 flex items-center justify-between">
+              <span>Take Profit 3</span>
+              <span className="text-[9px] font-mono">+{tp3Metrics.pips.toFixed(1)}p</span>
             </label>
             <input
               type="number"
@@ -596,7 +635,7 @@ export const Elev8OrderModal: React.FC<Props> = ({
                 +{tp1Metrics.gainPercent.toFixed(2)}%
               </span>
               <span className="text-[8px] text-[#FFD700] block mt-0.5">
-                R:R {tp1Metrics.rr}
+                +{tp1Metrics.pips.toFixed(1)}p • R:R {tp1Metrics.rr}
               </span>
             </div>
 
@@ -610,7 +649,7 @@ export const Elev8OrderModal: React.FC<Props> = ({
                 +{tp2Metrics.gainPercent.toFixed(2)}%
               </span>
               <span className="text-[8px] text-[#FFD700] block mt-0.5">
-                R:R {tp2Metrics.rr}
+                +{tp2Metrics.pips.toFixed(1)}p • R:R {tp2Metrics.rr}
               </span>
             </div>
 
@@ -624,7 +663,7 @@ export const Elev8OrderModal: React.FC<Props> = ({
                 +{tp3Metrics.gainPercent.toFixed(2)}%
               </span>
               <span className="text-[8px] text-[#FFD700] block mt-0.5">
-                R:R {tp3Metrics.rr}
+                +{tp3Metrics.pips.toFixed(1)}p • R:R {tp3Metrics.rr}
               </span>
             </div>
           </div>
@@ -638,7 +677,7 @@ export const Elev8OrderModal: React.FC<Props> = ({
             <span className={`font-mono font-bold ${
               slMetrics.lossPercent <= 4.0 ? 'text-[#00E676]' : 'text-[#FF3366]'
             }`}>
-              ${slMetrics.lossDollars.toFixed(2)} / ${(balance * 0.04).toFixed(0)} ({slMetrics.lossPercent <= 4.0 ? 'SAFE' : 'EXCEEDS LIMIT'})
+              ${slMetrics.lossDollars.toFixed(2)} / ${(balance * 0.04).toFixed(2)} ({slMetrics.lossPercent <= 4.0 ? 'SAFE' : 'EXCEEDS LIMIT'})
             </span>
           </div>
         </div>

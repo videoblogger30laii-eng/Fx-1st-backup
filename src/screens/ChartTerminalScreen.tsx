@@ -205,7 +205,7 @@ export const ChartTerminalScreen: React.FC<Props> = ({
             <div>
               <div className="font-bold text-[#F1F5F9]">Gold & FX RealPriceService</div>
               <div className="text-[10px] text-[#64748B]">
-                Gold-API (5s poll) • Open ER-API / Frankfurter (10s poll) • Binance BTC
+                Gold-API (5s poll) • Open ER-API / Frankfurter (10s poll) • Interbank Feed
               </div>
             </div>
             <span className="text-[#FFD700] font-semibold text-xs">RealPriceService Live</span>

@@ -62,19 +62,7 @@ export const LIVE_TRADINGVIEW_SYMBOL_MAP: Record<string, string> = {
   'XAU/USD': 'FOREXCOM:XAUUSD',
   'XAG/USD': 'FOREXCOM:XAGUSD',
   'USOIL': 'TVC:USOIL',
-  'UKOIL': 'TVC:UKOIL',
-  // Indices
-  'US30': 'TVC:DJI',
-  'NAS100': 'FOREXCOM:NAS100',
-  'SPX500': 'FOREXCOM:SPX500',
-  'GER40': 'FOREXCOM:GER40',
-  'UK100': 'FOREXCOM:UK100',
-  'JP225': 'TVC:NI225',
-  // Crypto
-  'BTC/USD': 'BINANCE:BTCUSDT',
-  'ETH/USD': 'BINANCE:ETHUSDT',
-  'SOL/USD': 'BINANCE:SOLUSDT',
-  'XRP/USD': 'BINANCE:XRPUSDT'
+  'UKOIL': 'TVC:UKOIL'
 };
 
 export function getTradingViewSymbol(symbol: string): string {

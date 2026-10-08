@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   BacktestFilter,
   BacktestSummary,
@@ -8,17 +8,23 @@ import {
   TradeOutcome,
   AssetCategory,
   ForexSignal,
+  BacktestTimeHorizon,
+  BACKTEST_TIME_HORIZONS,
   getAssetCategory,
   STRATEGY_CONFIGS
 } from '../types';
 import { BacktestEngine } from '../services/backtestEngine';
-import { ALL_PAIRS } from '../services/marketData';
+import { StrategyBacktester } from '../services/strategyBacktester';
+import { ALL_PAIRS, formatPrice } from '../services/marketData';
 import {
   DerivHistoricalService,
+  DerivTradeVerificationResult,
   DEFAULT_DERIV_SYMBOLS,
   DERIV_PAIR_MAP
 } from '../services/derivHistoricalService';
 import { RealEquityCurveChart } from '../components/RealEquityCurveChart';
+import { MonteCarloStressModal } from '../components/MonteCarloStressModal';
+import { AssetPerformanceBreakdown } from '../components/AssetPerformanceBreakdown';
 import {
   FlaskConical,
   BarChart3,
@@ -35,10 +41,27 @@ import {
   ChevronUp,
   Percent,
   TrendingUp,
+  TrendingDown,
   Target,
   Globe,
-  Layers
+  Layers,
+  Dice5,
+  Clock,
+  Calendar,
+  Sparkles,
+  Search,
+  Filter,
+  ArrowUpRight,
+  ArrowDownRight,
+  DollarSign,
+  Zap,
+  RefreshCw,
+  Sliders,
+  Columns,
+  X
 } from 'lucide-react';
+
+export type BacktestPrimaryMode = 'CANDLE_BASED' | 'TIME_BASED' | 'SIDE_BY_SIDE';
 
 interface Props {
   summary: BacktestSummary;
@@ -50,7 +73,9 @@ interface Props {
   onCategorySelect?: (category: AssetCategory | null) => void;
   onPairSelect: (pair: string | null) => void;
   onOutcomeSelect: (outcome: TradeOutcome | null) => void;
+  onTimeHorizonSelect?: (horizon: BacktestTimeHorizon | null) => void;
   onSummaryUpdate?: (summary: BacktestSummary, allTrades?: BacktestTrade[]) => void;
+  onAskAi?: (prompt: string) => void;
 }
 
 export const BacktestingLabScreen: React.FC<Props> = ({
@@ -63,13 +88,30 @@ export const BacktestingLabScreen: React.FC<Props> = ({
   onCategorySelect,
   onPairSelect,
   onOutcomeSelect,
-  onSummaryUpdate
+  onTimeHorizonSelect,
+  onSummaryUpdate,
+  onAskAi
 }) => {
   const [currentSummary, setCurrentSummary] = useState<BacktestSummary>(initialSummary);
   const [isFetchingLive, setIsFetchingLive] = useState<boolean>(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // Deriv Credentials & State (from localStorage - default App ID 1089, NEVER hardcoded tokens)
+  // Master Engine View Mode: Candle-Based vs Time-Based vs Side-by-Side Dual View
+  const [primaryMode, setPrimaryMode] = useState<BacktestPrimaryMode>('SIDE_BY_SIDE');
+
+  // Time Horizon Local State
+  const [selectedHorizon, setSelectedHorizon] = useState<BacktestTimeHorizon>(filter.timeHorizon || 'ALL');
+
+  // Candle Count Scan Setting for Candle-based engine
+  const [candleScanCount, setCandleScanCount] = useState<number>(5000);
+
+  // Trade Ledger Display Limits (Compact default to avoid bulky scrolling)
+  const [tradeLimit, setTradeLimit] = useState<number>(10);
+  const [tradeSearchQuery, setTradeSearchQuery] = useState<string>('');
+  const [ledgerPairFilter, setLedgerPairFilter] = useState<string>('ALL');
+  const [lastLiveSyncTime, setLastLiveSyncTime] = useState<number>(Date.now());
+
+  // Deriv Credentials & State
   const [derivAppIdInput, setDerivAppIdInput] = useState<string>(() => {
     return localStorage.getItem('fx_deriv_app_id') || 
       (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_DERIV_APP_ID) || 
@@ -86,15 +128,53 @@ export const BacktestingLabScreen: React.FC<Props> = ({
   );
   const [isDerivAuthorized, setIsDerivAuthorized] = useState<boolean>(false);
   const [totalCandlesScanned, setTotalCandlesScanned] = useState<number>(5000);
-  const [totalValidSetups, setTotalValidSetups] = useState<number>(initialSummary.totalTrades);
   const [isApiSettingsOpen, setIsApiSettingsOpen] = useState<boolean>(false);
+  const [isMonteCarloOpen, setIsMonteCarloOpen] = useState<boolean>(false);
 
-  // Keep summary in sync with parent filter
+  // Deriv WS Per-Trade Candle Verification Modal State
+  const [verifyingTrade, setVerifyingTrade] = useState<BacktestTrade | null>(null);
+  const [verificationResult, setVerificationResult] = useState<DerivTradeVerificationResult | null>(null);
+  const [isVerifyingOnDeriv, setIsVerifyingOnDeriv] = useState<boolean>(false);
+
+  const handleVerifyOnDeriv = async (trade: BacktestTrade) => {
+    setVerifyingTrade(trade);
+    setVerificationResult(null);
+    setIsVerifyingOnDeriv(true);
+    try {
+      const res = await DerivHistoricalService.verifyTradeCandlesOnDeriv(trade, {
+        appId: derivAppIdInput,
+        token: derivTokenInput
+      });
+      setVerificationResult(res);
+    } finally {
+      setIsVerifyingOnDeriv(false);
+    }
+  };
+
+  // Keep summary and horizon in sync with parent filter
   useEffect(() => {
     setCurrentSummary(initialSummary);
   }, [initialSummary]);
 
-  // Save credentials to localStorage without logging
+  useEffect(() => {
+    setSelectedHorizon(filter.timeHorizon || 'ALL');
+  }, [filter.timeHorizon]);
+
+  // Handle Horizon Selection
+  const handleSelectHorizon = (horizon: BacktestTimeHorizon) => {
+    setSelectedHorizon(horizon);
+    if (onTimeHorizonSelect) {
+      onTimeHorizonSelect(horizon === 'ALL' ? null : horizon);
+    } else {
+      const updated = BacktestEngine.runBacktest({
+        ...filter,
+        timeHorizon: horizon === 'ALL' ? null : horizon
+      }, undefined, liveSignals);
+      setCurrentSummary(updated);
+    }
+  };
+
+  // Save credentials to localStorage
   const handleSaveCredentials = () => {
     try {
       localStorage.setItem('fx_deriv_app_id', derivAppIdInput.trim() || '1089');
@@ -105,8 +185,8 @@ export const BacktestingLabScreen: React.FC<Props> = ({
   };
 
   /**
-   * 100% Accurate Backtest Runner:
-   * Connects to Deriv Live, fetches at least 5000 real OHLC candles,
+   * 100% Accurate Candle-Based Backtest Runner:
+   * Connects to Deriv Live, fetches real OHLC candles (500 to 5000 count),
    * runs zero-lookahead, spread-aware, fixed 1.5R ATR strategy logic.
    */
   const handleRunAccurateBacktest = async () => {
@@ -114,7 +194,6 @@ export const BacktestingLabScreen: React.FC<Props> = ({
     setFetchError(null);
     setScanStatusMsg('Connecting: wss://ws.derivws.com/websockets/v3...');
 
-    // Resolve credentials from UI input, env, or localStorage
     const elAppId = document.getElementById('derivAppId') as HTMLInputElement | null;
     const elToken = document.getElementById('derivApiToken') as HTMLInputElement | null;
 
@@ -134,9 +213,8 @@ export const BacktestingLabScreen: React.FC<Props> = ({
       ''
     ).trim();
 
-    // Determine Deriv symbols to query
     const targetPair = filter.pairSymbol;
-    let symbolsToFetch = DEFAULT_DERIV_SYMBOLS; // [frxXAUUSD, frxEURUSD, frxGBPUSD, frxUSDJPY, frxAUDUSD, frxUSDCAD]
+    let symbolsToFetch = DEFAULT_DERIV_SYMBOLS;
     if (targetPair && DERIV_PAIR_MAP[targetPair]) {
       symbolsToFetch = [DERIV_PAIR_MAP[targetPair]];
     }
@@ -148,7 +226,7 @@ export const BacktestingLabScreen: React.FC<Props> = ({
       H4: 14400,
       D1: 86400
     };
-    const granularity = filter.timeframe ? (granMap[filter.timeframe] || 900) : 900; // 900 = 15m
+    const granularity = filter.timeframe ? (granMap[filter.timeframe] || 900) : 900;
 
     try {
       const derivResult = await DerivHistoricalService.fetchAndRunBacktest({
@@ -156,34 +234,53 @@ export const BacktestingLabScreen: React.FC<Props> = ({
         token,
         symbols: symbolsToFetch,
         granularity,
-        count: 5000,
+        count: candleScanCount,
         strategy: filter.strategy,
-        timeframe: filter.timeframe || 'M15'
+        timeframe: filter.timeframe || undefined
       });
 
       setScanStatusMsg(derivResult.statusMessage);
       setIsDerivAuthorized(derivResult.isAuthorized);
-      setTotalCandlesScanned(derivResult.totalCandles || 5000);
-      setTotalValidSetups(derivResult.totalSetups || derivResult.trades.length);
+      setTotalCandlesScanned(derivResult.totalCandles || candleScanCount);
+      setLastLiveSyncTime(Date.now());
 
       if (derivResult.trades.length > 0) {
-        const newSummary = BacktestEngine.runBacktest(filter, derivResult.trades);
+        const newSummary = BacktestEngine.runBacktest({
+          ...filter,
+          timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon
+        }, derivResult.trades, liveSignals);
         setCurrentSummary(newSummary);
         if (onSummaryUpdate) {
           onSummaryUpdate(newSummary, derivResult.trades);
         }
       } else {
-        const fallbackSummary = BacktestEngine.runBacktest(filter);
+        const fallbackSummary = BacktestEngine.runBacktest({
+          ...filter,
+          timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon
+        }, undefined, liveSignals);
         setCurrentSummary(fallbackSummary);
       }
     } catch {
       setFetchError('Deriv live connection error. Evaluated on real historical candle database.');
       setScanStatusMsg('Using public feed, login for private data');
-      const fallbackSummary = BacktestEngine.runBacktest(filter);
+      const fallbackSummary = BacktestEngine.runBacktest({
+        ...filter,
+        timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon
+      }, undefined, liveSignals);
       setCurrentSummary(fallbackSummary);
     } finally {
       setIsFetchingLive(false);
     }
+  };
+
+  const formatTradePrice = (pairSymbol: string, price: number): string => {
+    if (!price || isNaN(price)) return '—';
+    const cleanSym = pairSymbol.replace('frx', '').replace('OANDA:', '').replace('BINANCE:', '').replace('OTC_', '');
+    const pair = ALL_PAIRS.find(p => p.symbol === cleanSym || p.symbol.replace('/', '') === cleanSym.replace('/', ''));
+    if (pair) return formatPrice(pair, price);
+    if (price > 1000) return price.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+    if (price > 50) return price.toFixed(2);
+    return price.toFixed(5);
   };
 
   const timeframes: { tf: Timeframe | null; label: string }[] = [
@@ -206,11 +303,10 @@ export const BacktestingLabScreen: React.FC<Props> = ({
     { key: 'MAJORS', label: 'Majors (~$2 Margin)', icon: '🏛️' },
     { key: 'MINORS', label: 'Minors & Crosses', icon: '🔀' },
     { key: 'METALS', label: 'Metals (Gold & Silver)', icon: '🥇' },
-    { key: 'INDICES', label: 'Indices (US30)', icon: '📈' },
   ];
 
   // Dynamically populated pairs filtered strictly by active category
-  const availablePairs = React.useMemo(() => {
+  const availablePairs = useMemo(() => {
     const list = ALL_PAIRS.filter(p => {
       if (!filter.category || filter.category === 'ALL') return true;
       return getAssetCategory(p.symbol) === filter.category;
@@ -227,25 +323,23 @@ export const BacktestingLabScreen: React.FC<Props> = ({
     { outcome: 'LOSS', label: 'Losses Only (✕)' },
   ];
 
-  // Dynamic trade counts per confluence tier for the current model & filters
-  const tierCounts = React.useMemo(() => {
-    const baseFilter = {
-      strategy: filter.strategy,
-      timeframe: filter.timeframe,
-      pairSymbol: filter.pairSymbol,
-      category: filter.category,
-      outcomeFilter: filter.outcomeFilter
+  // Dynamic trade counts per confluence tier (synced directly with active summary confluence matrix)
+  const tierCounts = useMemo(() => {
+    const matrix = currentSummary.confluenceMatrix || [];
+    const findCount = (score: number) => {
+      const row = matrix.find(r => r.minConfluence === score);
+      return row ? row.totalTrades : 0;
     };
     return {
-      70: BacktestEngine.runBacktest({ ...baseFilter, minConfluence: 70 }, undefined, liveSignals).totalTrades,
-      80: BacktestEngine.runBacktest({ ...baseFilter, minConfluence: 80 }, undefined, liveSignals).totalTrades,
-      85: BacktestEngine.runBacktest({ ...baseFilter, minConfluence: 85 }, undefined, liveSignals).totalTrades,
-      90: BacktestEngine.runBacktest({ ...baseFilter, minConfluence: 90 }, undefined, liveSignals).totalTrades,
+      70: findCount(70),
+      80: findCount(80),
+      85: findCount(85),
+      90: findCount(90),
     };
-  }, [filter.strategy, filter.pairSymbol, filter.category, filter.timeframe, filter.outcomeFilter, liveSignals]);
+  }, [currentSummary]);
 
   // Live session signal outcome breakdown
-  const liveSignalStats = React.useMemo(() => {
+  const liveSignalStats = useMemo(() => {
     const running = liveSignals.filter(s => s.status === 'RUNNING');
     const pending = liveSignals.filter(s => s.status === 'PENDING');
     const hitTp = liveSignals.filter(s => s.status === 'HIT_TP');
@@ -253,33 +347,50 @@ export const BacktestingLabScreen: React.FC<Props> = ({
     return { running, pending, hitTp, hitSl };
   }, [liveSignals]);
 
-  // Asset breakdown aggregation from real trades (categorized cleanly without mixing)
-  const assetBreakdown = React.useMemo(() => {
-    const map: Record<string, { wins: number; total: number; pips: number; category: string }> = {};
-    const tradesToScan = !filter.pairSymbol
-      ? currentSummary.filteredTrades
-      : BacktestEngine.runBacktest({ ...filter, pairSymbol: null }, undefined, liveSignals).filteredTrades;
+  // Granular asset performance breakdown
+  const assetStats = useMemo(() => {
+    return currentSummary.assetBreakdown || BacktestEngine.generateAssetBreakdown(currentSummary.filteredTrades);
+  }, [currentSummary]);
 
-    tradesToScan.forEach(trade => {
-      if (!map[trade.pairSymbol]) {
-        map[trade.pairSymbol] = { wins: 0, total: 0, pips: 0, category: getAssetCategory(trade.pairSymbol) };
-      }
-      map[trade.pairSymbol].total++;
-      if (trade.outcome === 'WIN') map[trade.pairSymbol].wins++;
-      map[trade.pairSymbol].pips += trade.pips;
+  // Filtered recent trades list with pair dropdown, search, and pagination limit
+  const displayedTrades = useMemo(() => {
+    const list = currentSummary.filteredTrades.filter(t => {
+      if (ledgerPairFilter !== 'ALL' && t.pairSymbol !== ledgerPairFilter) return false;
+      if (!tradeSearchQuery) return true;
+      const q = tradeSearchQuery.toLowerCase();
+      return (
+        t.pairSymbol.toLowerCase().includes(q) ||
+        t.direction.toLowerCase().includes(q) ||
+        t.rationale.toLowerCase().includes(q) ||
+        t.session.toLowerCase().includes(q)
+      );
     });
-    return Object.entries(map).map(([symbol, data]) => ({
-      symbol,
-      category: data.category,
-      winRate: Math.round((data.wins / (data.total || 1)) * 100),
-      total: data.total,
-      netPips: Math.round(data.pips * 10) / 10
-    }));
-  }, [currentSummary.filteredTrades, filter, liveSignals]);
+    return list.slice(0, tradeLimit);
+  }, [currentSummary.filteredTrades, ledgerPairFilter, tradeSearchQuery, tradeLimit]);
+
+  // Multi-Period Time Horizon comparison stats
+  const horizonComparison = useMemo(() => {
+    return BACKTEST_TIME_HORIZONS.map(h => {
+      const hSummary = BacktestEngine.runBacktest({
+        ...filter,
+        timeHorizon: h.id === 'ALL' ? null : h.id
+      }, undefined, liveSignals);
+      return {
+        ...h,
+        totalTrades: hSummary.totalTrades,
+        winRate: hSummary.winRate,
+        totalPips: hSummary.totalPips,
+        profitFactor: hSummary.profitFactor,
+        netRoiPercent: hSummary.netRoiPercent,
+        winTrades: hSummary.winTrades,
+        lossTrades: hSummary.lossTrades
+      };
+    });
+  }, [filter, liveSignals, currentSummary]);
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto pb-16 text-left">
-      {/* 1. Header & Live Deriv Action Bar */}
+      {/* 1. Header & Live Action Bar */}
       <div className="bg-[#101522] border border-[#222F47] rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-lg">
         <div>
           <div className="flex items-center gap-2">
@@ -289,16 +400,25 @@ export const BacktestingLabScreen: React.FC<Props> = ({
             </h2>
             <span className="text-[10px] font-black text-[#00E676] bg-[#00E676]/15 border border-[#00E676]/30 px-2 py-0.5 rounded-full flex items-center gap-1">
               <Radio className="w-3 h-3 text-[#00E676] animate-pulse" />
-              <span>100% Uncapped Deriv Math + Live Sync</span>
+              <span>Candles + Time Dual Engine</span>
             </span>
           </div>
           <p className="text-xs text-[#94A3B8] mt-1">
-            Evaluates {currentSummary.totalTrades.toLocaleString()} verified setups across all 30 pairs & timeframes + real-time closed signal outcomes.
+            Seamlessly toggle between <strong>Candle-Based Scans (5,000+ Real Candles)</strong> and <strong>Time-Based Horizons (24h to 1yr)</strong> side by side.
           </p>
         </div>
 
         {/* Action Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setIsMonteCarloOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#FFD700] hover:text-white bg-[#182033] hover:bg-[#FFD700]/20 border border-[#FFD700]/40 rounded-lg transition-colors cursor-pointer shadow-xs"
+            title="Run 1,000 Monte Carlo Stress Simulations & Prop Firm Rule Check"
+          >
+            <Dice5 className="w-3.5 h-3.5 text-[#FFD700]" />
+            <span>Monte Carlo</span>
+          </button>
+
           <button
             onClick={() => setIsApiSettingsOpen(!isApiSettingsOpen)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#94A3B8] hover:text-[#F1F5F9] bg-[#182033] hover:bg-[#222F47] border border-[#222F47] rounded-lg transition-colors cursor-pointer"
@@ -317,96 +437,814 @@ export const BacktestingLabScreen: React.FC<Props> = ({
             {isFetchingLive ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <Download className="w-3.5 h-3.5" />
+              <RefreshCw className="w-3.5 h-3.5" />
             )}
-            <span>{isFetchingLive ? 'Scanning 5000 Candles...' : 'Run True Backtest'}</span>
+            <span>{isFetchingLive ? `Scanning ${candleScanCount} Candles...` : 'Run Candle & Time Sync'}</span>
           </button>
         </div>
       </div>
 
-      {/* Live Terminal Signal Outcomes Sync Panel */}
-      <div className="bg-[#101522] border border-[#222F47] rounded-2xl p-3.5 space-y-2.5">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <Radio className="w-4 h-4 text-[#2979FF] animate-pulse" />
-            <span className="text-xs font-black uppercase tracking-wider text-[#F1F5F9]">
-              Live Session Signal Telemetry (Synced with Signals Page)
-            </span>
+      {/* 2. DUAL ENGINE MASTER SWITCHER (Candle-Based vs Time-Based vs Side-by-Side Dual View) */}
+      <div className="bg-[#101522] p-1.5 rounded-2xl border border-[#222F47] flex items-center gap-1.5 shadow-md">
+        <button
+          onClick={() => setPrimaryMode('SIDE_BY_SIDE')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all ${
+            primaryMode === 'SIDE_BY_SIDE'
+              ? 'bg-[#2979FF] text-white shadow-lg shadow-[#2979FF]/30'
+              : 'text-[#94A3B8] hover:text-[#F1F5F9] hover:bg-[#182033]'
+          }`}
+        >
+          <Columns className="w-4 h-4" />
+          <span>⚡ Side-by-Side (Both Engines)</span>
+        </button>
+
+        <button
+          onClick={() => setPrimaryMode('CANDLE_BASED')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all ${
+            primaryMode === 'CANDLE_BASED'
+              ? 'bg-[#00E676] text-[#080B11] shadow-lg shadow-[#00E676]/30'
+              : 'text-[#94A3B8] hover:text-[#F1F5F9] hover:bg-[#182033]'
+          }`}
+        >
+          <FlaskConical className="w-4 h-4" />
+          <span>🔬 1. Candle-Based Engine</span>
+        </button>
+
+        <button
+          onClick={() => setPrimaryMode('TIME_BASED')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all ${
+            primaryMode === 'TIME_BASED'
+              ? 'bg-[#FFD700] text-[#080B11] shadow-lg shadow-[#FFD700]/30'
+              : 'text-[#94A3B8] hover:text-[#F1F5F9] hover:bg-[#182033]'
+          }`}
+        >
+          <Clock className="w-4 h-4" />
+          <span>⏱️ 2. Time-Based Engine</span>
+        </button>
+      </div>
+
+      {/* 3. SECTION 1: CANDLE-BASED BACKTESTING CONTROLS & ENGINE */}
+      {(primaryMode === 'CANDLE_BASED' || primaryMode === 'SIDE_BY_SIDE') && (
+        <div className="bg-[#101522] border border-[#00E676]/40 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xl relative overflow-hidden">
+          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-[#222F47]">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-[#00E676]/15 border border-[#00E676]/40 flex items-center justify-center text-[#00E676]">
+                <FlaskConical className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-[#F1F5F9] flex items-center gap-2">
+                  <span>🔬 1. Candle-Based Backtesting Engine</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40">
+                    {totalCandlesScanned.toLocaleString()} Scanned Candles
+                  </span>
+                </h3>
+                <p className="text-[11px] text-[#94A3B8]">
+                  Zero-lookahead execution on real OHLC candles across M15, H1, H4, and D1 with broker spread deductions
+                </p>
+              </div>
+            </div>
+
+            {/* Candle Scan Count Selector */}
+            <div className="flex items-center gap-1.5 bg-[#182033] p-1 rounded-xl border border-[#222F47]">
+              <span className="text-[10px] text-[#64748B] font-bold px-1.5">Scan:</span>
+              {[500, 1000, 2500, 5000].map(cnt => (
+                <button
+                  key={cnt}
+                  onClick={() => setCandleScanCount(cnt)}
+                  className={`px-2 py-1 text-[10px] font-bold rounded-lg transition-all ${
+                    candleScanCount === cnt
+                      ? 'bg-[#00E676] text-[#080B11]'
+                      : 'text-[#94A3B8] hover:text-[#F1F5F9]'
+                  }`}
+                >
+                  {cnt}
+                </button>
+              ))}
+            </div>
           </div>
-          <span className="text-[10.5px] text-[#94A3B8]">
-            Any live signal that hits TP1 or SL is automatically recorded into the Backtest Log below
+
+          {/* Candle Engine Filter Controls Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
+            {/* Timeframe Filter */}
+            <div className="bg-[#141B2D] p-2.5 rounded-xl border border-[#222F47]">
+              <span className="text-[10px] text-[#94A3B8] uppercase font-bold block mb-1.5">
+                Candle Timeframe
+              </span>
+              <div className="flex gap-1 flex-wrap">
+                {timeframes.map(t => (
+                  <button
+                    key={t.label}
+                    onClick={() => onTimeframeSelect(t.tf)}
+                    className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${
+                      filter.timeframe === t.tf
+                        ? 'bg-[#00E676] text-[#080B11]'
+                        : 'bg-[#182033] text-[#94A3B8] hover:text-[#F1F5F9]'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Confluence Tier Filter */}
+            <div className="bg-[#141B2D] p-2.5 rounded-xl border border-[#222F47]">
+              <span className="text-[10px] text-[#94A3B8] uppercase font-bold block mb-1.5">
+                Confluence Filter
+              </span>
+              <div className="flex gap-1 flex-wrap">
+                {confluenceTiers.map(tier => (
+                  <button
+                    key={tier.score}
+                    onClick={() => onConfluenceSelect(tier.score)}
+                    className={`px-1.5 py-1 rounded text-[9.5px] font-bold transition-all ${
+                      filter.minConfluence === tier.score
+                        ? 'bg-[#FFD700] text-[#080B11]'
+                        : 'bg-[#182033] text-[#94A3B8] hover:text-[#F1F5F9]'
+                    }`}
+                  >
+                    {tier.score}%+ ({tierCounts[tier.score as keyof typeof tierCounts]})
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Asset Category Filter */}
+            <div className="bg-[#141B2D] p-2.5 rounded-xl border border-[#222F47]">
+              <span className="text-[10px] text-[#94A3B8] uppercase font-bold block mb-1.5">
+                Asset Class
+              </span>
+              <select
+                value={filter.category || 'ALL'}
+                onChange={(e) => onCategorySelect && onCategorySelect(e.target.value === 'ALL' ? null : e.target.value as any)}
+                aria-label="Filter by asset class"
+                className="w-full bg-[#182033] border border-[#222F47] rounded-lg px-2 py-1 text-xs text-[#F1F5F9] focus:outline-none focus:border-[#00E676]"
+              >
+                <option value="ALL">All 30 Assets</option>
+                <option value="MAJORS">Majors (~$2 Margin)</option>
+                <option value="MINORS">Minors & Crosses</option>
+                <option value="METALS">Gold & Silver</option>
+              </select>
+            </div>
+
+            {/* Pair Symbol Dropdown */}
+            <div className="bg-[#141B2D] p-2.5 rounded-xl border border-[#222F47]">
+              <span className="text-[10px] text-[#94A3B8] uppercase font-bold block mb-1.5">
+                Specific Asset
+              </span>
+              <select
+                value={filter.pairSymbol || ''}
+                onChange={(e) => onPairSelect(e.target.value || null)}
+                aria-label="Filter by specific asset"
+                className="w-full bg-[#182033] border border-[#222F47] rounded-lg px-2 py-1 text-xs text-[#F1F5F9] focus:outline-none focus:border-[#00E676]"
+              >
+                {availablePairs.map(p => (
+                  <option key={p.label} value={p.pair || ''}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Candle Confluence Matrix Breakdown Table */}
+          <div className="bg-[#141B2D] p-3 rounded-xl border border-[#222F47] overflow-x-auto">
+            <span className="text-[10px] text-[#94A3B8] font-bold uppercase block mb-2">
+              Candlestick Confluence Score Matrix
+            </span>
+            <table className="w-full text-left text-xs font-mono">
+              <thead>
+                <tr className="border-b border-[#222F47] text-[#64748B]">
+                  <th className="pb-1.5">Confluence Tier</th>
+                  <th className="pb-1.5">Win Rate</th>
+                  <th className="pb-1.5">Setups Count</th>
+                  <th className="pb-1.5">Profit Factor</th>
+                  <th className="pb-1.5">Net Pips</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#222F47]/60 text-[#F1F5F9]">
+                {currentSummary.confluenceMatrix.map((tier, idx) => (
+                  <tr key={idx} className="hover:bg-[#182033]/50">
+                    <td className="py-2 font-bold text-[#FFD700]">{tier.label}</td>
+                    <td className="py-2 font-bold text-[#00E676]">{tier.winRate}%</td>
+                    <td className="py-2">{tier.totalTrades}</td>
+                    <td className="py-2">{tier.profitFactor.toFixed(2)}</td>
+                    <td className="py-2 text-[#00E676]">+{tier.netPips}p</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 4. SECTION 2: TIME-BASED BACKTESTING HORIZONS & CATEGORIZED ASSET LEDGER */}
+      {(primaryMode === 'TIME_BASED' || primaryMode === 'SIDE_BY_SIDE') && (
+        <div className="bg-[#101522] border border-[#FFD700]/40 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xl relative overflow-hidden">
+          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-[#222F47]">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-[#FFD700]/15 border border-[#FFD700]/40 flex items-center justify-center text-[#FFD700]">
+                <Clock className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-[#F1F5F9] flex items-center gap-2">
+                  <span>⏱️ 2. Time-Based Backtesting Engine</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#FFD700]/20 text-[#FFD700] border border-[#FFD700]/40">
+                    Active: {selectedHorizon}
+                  </span>
+                </h3>
+                <p className="text-[11px] text-[#94A3B8]">
+                  Results segmented by 24hrs, 1 week, 15 days, 1 month, 3 months, 6 months, and 1 year with real-time live telemetry sync
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 text-[10px] text-[#00E676] font-mono">
+              <span className="w-2 h-2 rounded-full bg-[#00E676] animate-ping" />
+              <span>Live Synced ({new Date(lastLiveSyncTime).toLocaleTimeString()})</span>
+            </div>
+          </div>
+
+          {/* Compact Time Horizon Dropdown & Active Horizon Summary Bar */}
+          {(() => {
+            const activeHorizonStat =
+              horizonComparison.find(h => h.id === selectedHorizon) || horizonComparison[0];
+            const isProfitable = (activeHorizonStat?.netRoiPercent ?? 0) >= 0;
+
+            return (
+              <div className="space-y-2.5">
+                <div className="bg-[#141B2D] border border-[#222F47] rounded-xl p-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                  <div className="flex-1">
+                    <label className="text-[10px] text-[#FFD700] uppercase font-black block mb-1">
+                      Select Backtest Time Horizon
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={selectedHorizon}
+                        onChange={(e) => handleSelectHorizon(e.target.value as BacktestTimeHorizon)}
+                        aria-label="Select backtest time horizon"
+                        className="w-full appearance-none bg-[#182033] border border-[#FFD700]/50 hover:border-[#FFD700] rounded-xl pl-3 pr-8 py-2 text-xs font-mono font-bold text-[#F1F5F9] focus:outline-none focus:border-[#FFD700] cursor-pointer"
+                      >
+                        {horizonComparison.map(h => {
+                          const roiSign = h.netRoiPercent >= 0 ? '+' : '';
+                          const pipSign = h.totalPips >= 0 ? '+' : '';
+                          return (
+                            <option key={h.id} value={h.id}>
+                              {h.label} ({h.id}) — {h.winRate.toFixed(1)}% Win Rate | {h.winTrades}W-{h.lossTrades}L ({h.totalTrades}T) | {roiSign}{h.netRoiPercent}% ROI ({pipSign}{h.totalPips}p)
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <ChevronDown className="w-4 h-4 text-[#FFD700] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  {activeHorizonStat && (
+                    <div className="flex items-center gap-3 bg-[#101522] border border-[#222F47] rounded-xl px-3.5 py-2 text-xs font-mono shrink-0">
+                      <div>
+                        <span className="text-[9.5px] text-[#64748B] block uppercase">Win Rate</span>
+                        <span className="font-black text-[#FFD700] text-sm">
+                          {activeHorizonStat.winRate.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="h-6 w-px bg-[#222F47]" />
+                      <div>
+                        <span className="text-[9.5px] text-[#64748B] block uppercase">Record</span>
+                        <span className="font-bold text-[#F1F5F9]">
+                          {activeHorizonStat.winTrades}W-{activeHorizonStat.lossTrades}L
+                        </span>
+                      </div>
+                      <div className="h-6 w-px bg-[#222F47]" />
+                      <div>
+                        <span className="text-[9.5px] text-[#64748B] block uppercase">Net ROI</span>
+                        <span className={`font-black ${isProfitable ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                          {activeHorizonStat.netRoiPercent >= 0 ? `+${activeHorizonStat.netRoiPercent}%` : `${activeHorizonStat.netRoiPercent}%`}
+                        </span>
+                      </div>
+                      <div className="h-6 w-px bg-[#222F47]" />
+                      <div>
+                        <span className="text-[9.5px] text-[#64748B] block uppercase">Net Pips</span>
+                        <span className="font-bold text-[#00E676]">
+                          {activeHorizonStat.totalPips >= 0 ? `+${activeHorizonStat.totalPips}p` : `${activeHorizonStat.totalPips}p`}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Live Signals Page 24H Sync & 88%+ Confluence Gate Banner */}
+                <div className="bg-[#141B2D]/90 border border-[#00E676]/30 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <div className="flex items-center gap-2 text-[#E2E8F0]">
+                    <CheckCircle2 className="w-4 h-4 text-[#00E676] shrink-0" />
+                    <span>
+                      <strong>24H Signals Page Sync:</strong>{' '}
+                      <span className="text-[#00E676] font-mono font-bold">
+                        {liveSignalStats.hitTp.length + liveSignalStats.hitSl.length} Fulfilled ({liveSignalStats.hitTp.length} TP / {liveSignalStats.hitSl.length} SL)
+                      </span>{' '}
+                      • <span className="text-[#2979FF] font-mono font-bold">{liveSignalStats.running.length} Running</span>{' '}
+                      • <span className="text-[#FFD700] font-mono font-bold">{liveSignalStats.pending.length} Pending</span> on Signals Page
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-mono text-[#FFD700] bg-[#FFD700]/10 border border-[#FFD700]/30 px-2 py-0.5 rounded">
+                    Signals Page Gate: ≥88% Confluence Only (70%–87% Filtered Out)
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Categorized Asset Performance Breakdown component */}
+          <AssetPerformanceBreakdown
+            stats={assetStats}
+            selectedPair={filter.pairSymbol}
+            onSelectPair={onPairSelect}
+            onAskAi={(pair) => {
+              if (onAskAi) {
+                onAskAi(`Analyze full historical backtest and current live trend alignment for ${pair}. What is its win rate, profit factor, and best execution session?`);
+              }
+            }}
+          />
+        </div>
+      )}
+
+      {/* 5. Strategy Model Selector */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {(Object.entries(STRATEGY_CONFIGS) as [StrategyType, any][]).map(([stratKey, config]) => {
+          const isSelected = filter.strategy === stratKey;
+          return (
+            <button
+              key={stratKey}
+              onClick={() => onStrategySelect(stratKey)}
+              className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer ${
+                isSelected
+                  ? 'bg-[#182033] border-[#FFD700] shadow-lg shadow-[#FFD700]/10'
+                  : 'bg-[#101522] border-[#222F47] hover:border-[#2979FF]/50'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-black text-[#F1F5F9] uppercase tracking-wider">
+                  {config.title}
+                </span>
+                {isSelected && (
+                  <span className="text-[10px] font-bold bg-[#FFD700] text-[#080B11] px-1.5 py-0.5 rounded">
+                    ACTIVE
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-[#94A3B8] line-clamp-2 leading-relaxed mb-2">
+                {config.description}
+              </p>
+              <span className="text-[10px] font-mono font-semibold text-[#00E676] bg-[#00E676]/10 px-2 py-0.5 rounded">
+                {config.modelRule}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 6. Overall Performance KPI Summary Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-[#101522] border border-[#222F47] p-3.5 rounded-xl">
+          <span className="text-[10px] text-[#94A3B8] uppercase font-bold tracking-wider block mb-1">
+            True Win Rate ({currentSummary.totalTrades} Trades)
+          </span>
+          <div className="text-xl sm:text-2xl font-black font-mono text-[#FFD700]">
+            {currentSummary.winRate.toFixed(1)}%
+          </div>
+          <span className="text-[10px] text-[#94A3B8] font-mono mt-0.5 block">
+            {currentSummary.winTrades}W / {currentSummary.lossTrades}L ({currentSummary.winTrades}÷{currentSummary.totalTrades})
           </span>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <div className="bg-[#080B11] border border-[#222F47] rounded-xl p-2.5">
-            <div className="text-[10px] font-bold text-[#94A3B8] uppercase">Running in Market</div>
-            <div className="text-base font-black text-[#2979FF] mt-0.5">
-              {liveSignalStats.running.length} <span className="text-[10px] font-normal text-[#64748B]">Active</span>
-            </div>
+        <div className="bg-[#101522] border border-[#222F47] p-3.5 rounded-xl">
+          <span className="text-[10px] text-[#94A3B8] uppercase font-bold tracking-wider block mb-1">
+            Profit Factor
+          </span>
+          <div className="text-xl sm:text-2xl font-black font-mono text-[#00E676]">
+            {currentSummary.profitFactor.toFixed(2)}
           </div>
-          <div className="bg-[#080B11] border border-[#222F47] rounded-xl p-2.5">
-            <div className="text-[10px] font-bold text-[#94A3B8] uppercase">Pending Orders</div>
-            <div className="text-base font-black text-[#FFD700] mt-0.5">
-              {liveSignalStats.pending.length} <span className="text-[10px] font-normal text-[#64748B]">Resting</span>
-            </div>
-          </div>
-          <div className="bg-[#080B11] border border-[#00E676]/30 rounded-xl p-2.5">
-            <div className="text-[10px] font-bold text-[#00E676] uppercase">Live Session TP1 Wins</div>
-            <div className="text-base font-black text-[#00E676] mt-0.5">
-              {liveSignalStats.hitTp.length} <span className="text-[10px] font-normal text-[#94A3B8]">Closed TP</span>
-            </div>
-          </div>
-          <div className="bg-[#080B11] border border-[#FF3366]/30 rounded-xl p-2.5">
-            <div className="text-[10px] font-bold text-[#FF3366] uppercase">Live Session SL Hits</div>
-            <div className="text-base font-black text-[#FF3366] mt-0.5">
-              {liveSignalStats.hitSl.length} <span className="text-[10px] font-normal text-[#94A3B8]">Closed SL</span>
-            </div>
-          </div>
+          <span className="text-[10px] text-[#64748B] font-mono mt-0.5 block">
+            +${(currentSummary.grossProfitDollars || 0).toLocaleString()} / -${(currentSummary.grossLossDollars || 0).toLocaleString()}
+          </span>
         </div>
 
-        {(liveSignalStats.hitTp.length > 0 || liveSignalStats.hitSl.length > 0) && (
-          <div className="flex flex-wrap gap-1.5 pt-1">
-            {liveSignalStats.hitTp.map(sig => (
-              <span
-                key={sig.id}
-                onClick={() => onPairSelect(sig.pair.symbol)}
-                className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#00E676]/15 border border-[#00E676]/40 text-[#00E676] cursor-pointer"
-              >
-                🟢 {sig.pair.symbol} ({sig.type.replace('_', ' ')}) • HIT TP1 @ {sig.takeProfit1}
-              </span>
-            ))}
-            {liveSignalStats.hitSl.map(sig => (
-              <span
-                key={sig.id}
-                onClick={() => onPairSelect(sig.pair.symbol)}
-                className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#FF3366]/15 border border-[#FF3366]/40 text-[#FF3366] cursor-pointer"
-              >
-                🔴 {sig.pair.symbol} ({sig.type.replace('_', ' ')}) • HIT SL @ {sig.stopLoss}
-              </span>
-            ))}
+        <div className="bg-[#101522] border border-[#222F47] p-3.5 rounded-xl">
+          <span className="text-[10px] text-[#94A3B8] uppercase font-bold tracking-wider block mb-1">
+            Net ROI (% on $10k)
+          </span>
+          <div className={`text-xl sm:text-2xl font-black font-mono ${
+            currentSummary.netRoiPercent >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'
+          }`}>
+            {currentSummary.netRoiPercent >= 0 ? `+${currentSummary.netRoiPercent}%` : `${currentSummary.netRoiPercent}%`}
           </div>
-        )}
-      </div>
-
-      {/* 2. Audit Banner: Scanned Candles & Valid Setups */}
-      <div className="bg-[#09151e] border border-[#00E676]/30 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
-        <div className="flex items-center gap-2">
-          <CheckCircle2 className={`w-4 h-4 ${isDerivAuthorized ? 'text-[#00E676]' : 'text-[#FFD700]'}`} />
-          <span className="text-[#F1F5F9] font-bold">Execution Engine Audit:</span>
-          <span className="text-[#00E676] font-bold">{scanStatusMsg}</span>
+          <span className="text-[10px] text-[#64748B] font-mono mt-0.5 block">
+            {currentSummary.totalPips >= 0 ? `+${currentSummary.totalPips} pips` : `${currentSummary.totalPips} pips`}
+          </span>
         </div>
 
-        <div className="flex items-center gap-3 text-[#94A3B8]">
-          <span>Candles: <strong className="text-[#F1F5F9]">{totalCandlesScanned.toLocaleString()}</strong></span>
-          <span>•</span>
-          <span>Valid Setups: <strong className="text-[#00E676]">{currentSummary.totalTrades} logged</strong></span>
-          <span>•</span>
-          <span>Spread: <strong className="text-[#FFD700]">Subtracted</strong></span>
+        <div className="bg-[#101522] border border-[#222F47] p-3.5 rounded-xl">
+          <span className="text-[10px] text-[#94A3B8] uppercase font-bold tracking-wider block mb-1">
+            Max Drawdown
+          </span>
+          <div className="text-xl sm:text-2xl font-black font-mono text-[#FF3366]">
+            -{currentSummary.maxDrawdownPercent}%
+          </div>
+          <span className="text-[10px] text-[#64748B] font-mono mt-0.5 block">
+            Peak to Valley Pullback
+          </span>
         </div>
       </div>
 
-      {/* 3. Deriv User Credentials Panel (Masked token, never exposed) */}
+      {/* 6B. Institutional TP & Stop Loss Execution Measurement Breakdown */}
+      <div className="bg-[#101522] border border-[#222F47] rounded-2xl p-4 space-y-3 shadow-md">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-[#00E676]" />
+            <span className="text-xs font-black text-[#F1F5F9] uppercase tracking-wider">
+              Strict TP vs Stop Loss Execution Accounting (SL Hit First = LOSS)
+            </span>
+          </div>
+          <span className="text-[10px] font-mono text-[#94A3B8]">
+            1R Risk = $100 • Any setup hitting SL first or reversing to SL before TP is counted strictly as LOSS (-1.0R)
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs font-mono">
+          <div className="bg-[#141B2D] border border-[#00E676]/30 rounded-xl p-3 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] font-bold text-[#00E676] uppercase">🎯 Clean Take Profit Wins</div>
+              <div className="text-[11px] text-[#94A3B8] mt-0.5">Reached full TP target without hitting SL first</div>
+            </div>
+            <div className="text-right">
+              <div className="text-base font-black text-[#00E676]">{currentSummary.winTrades}</div>
+              <div className="text-[10px] text-[#00E676]">+1.5R (+$150/ea)</div>
+            </div>
+          </div>
+
+          <div className="bg-[#141B2D] border border-[#FF3366]/30 rounded-xl p-3 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] font-bold text-[#FF3366] uppercase">🛑 Stop Loss Losses (SL Hit First)</div>
+              <div className="text-[11px] text-[#94A3B8] mt-0.5">Hit SL first or reversed to SL before full TP</div>
+            </div>
+            <div className="text-right">
+              <div className="text-base font-black text-[#FF3366]">{currentSummary.lossTrades}</div>
+              <div className="text-[10px] text-[#FF3366]">-1.0R (-$100/ea)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 7. Recharts Dynamic Cumulative PnL & Equity Curve */}
+      <RealEquityCurveChart
+        equityPoints={currentSummary.equityCurve}
+        initialBalance={10000}
+        trades={currentSummary.filteredTrades}
+        summary={currentSummary}
+      />
+
+      {/* 8. RECENT TRADES EXECUTION LEDGER (At least 20 recent trades) */}
+      <div className="bg-[#101522] border border-[#222F47] rounded-2xl p-4 sm:p-5 space-y-4 shadow-xl">
+        <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-[#222F47]">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-[#00E676]/15 border border-[#00E676]/30 flex items-center justify-center text-[#00E676]">
+              <Target className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-[#F1F5F9] flex items-center gap-2">
+                <span>Recent Trade Execution Ledger</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40">
+                  Showing {displayedTrades.length} of {currentSummary.filteredTrades.length} Trades
+                </span>
+              </h3>
+              <p className="text-[11px] text-[#94A3B8]">
+                Real trade entry, exit, stop loss, take profit, pips, and institutional rationale
+              </p>
+            </div>
+          </div>
+
+          {/* Controls: Pair Dropdown, Search and Limit Selector */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Pair Dropdown Filter for Trade Ledger */}
+            <div className="relative min-w-[165px]">
+              <select
+                value={ledgerPairFilter}
+                onChange={(e) => setLedgerPairFilter(e.target.value)}
+                aria-label="Filter recent trades by pair"
+                className="w-full appearance-none bg-[#182033] border border-[#222F47] hover:border-[#00E676]/60 rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono font-bold text-[#F1F5F9] focus:border-[#00E676] outline-hidden cursor-pointer"
+              >
+                <option value="ALL">All Pairs ({currentSummary.filteredTrades.length} Trades)</option>
+                {assetStats.map(st => (
+                  <option key={st.pairSymbol} value={st.pairSymbol}>
+                    {st.pairSymbol} — {st.winRate}% WR ({st.totalTrades}T)
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-[#94A3B8] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+
+            <div className="relative min-w-[130px]">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[#64748B]" />
+              <input
+                type="text"
+                placeholder="Search trades..."
+                value={tradeSearchQuery}
+                onChange={(e) => setTradeSearchQuery(e.target.value)}
+                className="w-full bg-[#182033] border border-[#222F47] rounded-lg pl-7 pr-2.5 py-1 text-xs text-[#F1F5F9] placeholder-[#64748B] focus:border-[#2979FF] outline-hidden"
+              />
+            </div>
+
+            <div className="flex items-center gap-1 bg-[#182033] p-0.5 rounded-lg border border-[#222F47]">
+              {[5, 10, 20, 50].map(lim => (
+                <button
+                  key={lim}
+                  onClick={() => setTradeLimit(lim)}
+                  className={`px-2 py-1 text-[10px] font-bold rounded ${
+                    tradeLimit === lim
+                      ? 'bg-[#2979FF] text-white'
+                      : 'text-[#94A3B8] hover:text-[#F1F5F9]'
+                  }`}
+                >
+                  {lim}
+                </button>
+              ))}
+              <button
+                onClick={() => setTradeLimit(currentSummary.filteredTrades.length || 9999)}
+                className={`px-2 py-1 text-[10px] font-bold rounded ${
+                  tradeLimit >= (currentSummary.filteredTrades.length || 9999)
+                    ? 'bg-[#2979FF] text-white'
+                    : 'text-[#94A3B8] hover:text-[#F1F5F9]'
+                }`}
+              >
+                All
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Timeframe Structural ATR Pip Scaling Strip (Synced 1-to-1 with Signals Page) */}
+        <div className="bg-[#141B2D] border border-[#222F47] rounded-xl p-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] font-mono">
+          <div className="bg-[#0D121F] border border-[#222F47] rounded-lg p-2 space-y-0.5">
+            <div className="font-black text-[#2979FF] uppercase">M15 (Intraday Scalp)</div>
+            <div className="text-[#F1F5F9]">FX: <span className="text-[#FF3366]">12–16p SL</span> / <span className="text-[#00E676]">31–42p TP</span></div>
+            <div className="text-[#94A3B8]">JPY: 15–20p SL • Silver: 22–30p SL</div>
+            <div className="text-[#64748B]">Gold: 65–88p ($6.5–$8.8) SL</div>
+          </div>
+          <div className="bg-[#0D121F] border border-[#222F47] rounded-lg p-2 space-y-0.5">
+            <div className="font-black text-[#00E676] uppercase">H1 (Session Structure)</div>
+            <div className="text-[#F1F5F9]">FX: <span className="text-[#FF3366]">28–38p SL</span> / <span className="text-[#00E676]">73–99p TP</span></div>
+            <div className="text-[#94A3B8]">JPY: 34–46p SL • Silver: 48–64p SL</div>
+            <div className="text-[#64748B]">Gold: 155–210p ($15.5–$21) SL</div>
+          </div>
+          <div className="bg-[#0D121F] border border-[#222F47] rounded-lg p-2 space-y-0.5">
+            <div className="font-black text-[#FFD700] uppercase">H4 (Multi-Day Swing)</div>
+            <div className="text-[#F1F5F9]">FX: <span className="text-[#FF3366]">58–79p SL</span> / <span className="text-[#00E676]">151–205p TP</span></div>
+            <div className="text-[#94A3B8]">JPY: 70–95p SL • Silver: 80–108p SL</div>
+            <div className="text-[#64748B]">Gold: 315–425p ($31.5–$42.5) SL</div>
+          </div>
+          <div className="bg-[#0D121F] border border-[#222F47] rounded-lg p-2 space-y-0.5">
+            <div className="font-black text-[#A855F7] uppercase">D1 (Macro Position)</div>
+            <div className="text-[#F1F5F9]">FX: <span className="text-[#FF3366]">105–142p SL</span> / <span className="text-[#00E676]">273–370p TP</span></div>
+            <div className="text-[#94A3B8]">JPY: 125–170p SL • Silver: 165–220p SL</div>
+            <div className="text-[#64748B]">Gold: 570–760p ($57–$76) SL</div>
+          </div>
+        </div>
+
+        {/* Backtesting Results Table with 'Verification' Column */}
+        <div className="bg-[#141B2D] border border-[#222F47] rounded-xl overflow-x-auto">
+          <table className="w-full text-left text-xs font-mono">
+            <thead>
+              <tr className="border-b border-[#222F47] text-[#64748B] bg-[#0D121F]">
+                <th className="py-2.5 px-3">#</th>
+                <th className="py-2.5 px-3">Pair & TF</th>
+                <th className="py-2.5 px-3">Direction</th>
+                <th className="py-2.5 px-3">Trade Date (UTC)</th>
+                <th className="py-2.5 px-3">Entry → Exit</th>
+                <th className="py-2.5 px-3">SL / TP (Price & Pips)</th>
+                <th className="py-2.5 px-3">Confluence</th>
+                <th className="py-2.5 px-3">Outcome & PnL</th>
+                <th className="py-2.5 px-3 text-right">Verification</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#222F47]/60 text-[#F1F5F9]">
+              {displayedTrades.map((trade, idx) => {
+                const isWin = trade.outcome === 'WIN';
+                const isBuy = trade.direction === 'BUY';
+                const pipMult = StrategyBacktester.getPipMultiplier(trade.pairSymbol, trade.entryPrice);
+                const tpTargetPrice = trade.takeProfit2 ?? trade.takeProfit1 ?? trade.takeProfit ?? trade.exitPrice;
+                const slPipsVal = trade.stopLoss !== undefined
+                  ? Math.max(1, Math.round(Math.abs(trade.entryPrice - trade.stopLoss) * pipMult * 10) / 10)
+                  : Math.abs(trade.pips);
+                const tpPipsVal = tpTargetPrice
+                  ? Math.max(1, Math.round(Math.abs(tpTargetPrice - trade.entryPrice) * pipMult * 10) / 10)
+                  : Math.abs(trade.pips);
+                return (
+                  <tr key={`tbl-${trade.id || idx}`} className="hover:bg-[#182033]/60 transition-colors">
+                    <td className="py-2.5 px-3 text-[#64748B] font-bold">#{idx + 1}</td>
+                    <td className="py-2.5 px-3">
+                      <span className="font-black text-[#F1F5F9]">{trade.pairSymbol}</span>
+                      <span className="ml-1.5 text-[10px] text-[#94A3B8] bg-[#182033] px-1.5 py-0.5 rounded">
+                        {trade.timeframe}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <span
+                        className={`text-[10px] font-black px-2 py-0.5 rounded ${
+                          isBuy
+                            ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
+                            : 'bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40'
+                        }`}
+                      >
+                        {trade.direction}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 text-[11px] text-[#94A3B8] whitespace-nowrap">
+                      {trade.entryTime}
+                    </td>
+                    <td className="py-2.5 px-3 whitespace-nowrap">
+                      <span className="text-[#2979FF] font-bold">{formatTradePrice(trade.pairSymbol, trade.entryPrice)}</span>
+                      <span className="text-[#64748B] mx-1">→</span>
+                      <span className={isWin ? 'text-[#00E676] font-bold' : 'text-[#FF3366] font-bold'}>
+                        {formatTradePrice(trade.pairSymbol, trade.exitPrice)}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 whitespace-nowrap text-[11px]">
+                      <div>
+                        <span className="text-[#FF3366]">
+                          {trade.stopLoss !== undefined ? formatTradePrice(trade.pairSymbol, trade.stopLoss) : '—'}
+                        </span>
+                        <span className="text-[#64748B] mx-1">/</span>
+                        <span className="text-[#00E676]">
+                          {formatTradePrice(trade.pairSymbol, tpTargetPrice)}
+                        </span>
+                      </div>
+                      <div className="text-[10px] font-bold mt-0.5">
+                        <span className="text-[#FF3366]/90">-{slPipsVal}p SL</span>
+                        <span className="text-[#64748B] mx-1">•</span>
+                        <span className="text-[#00E676]/90">+{tpPipsVal}p TP</span>
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <span className="text-[#FFD700] font-bold">{trade.confluenceScore}%</span>
+                    </td>
+                    <td className="py-2.5 px-3 whitespace-nowrap">
+                      <span
+                        className={`font-bold ${
+                          trade.pips >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'
+                        }`}
+                      >
+                        {isWin ? 'WIN' : 'LOSS'} ({trade.pips >= 0 ? `+${trade.pips}p` : `${trade.pips}p`})
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => handleVerifyOnDeriv(trade)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#00E676]/15 hover:bg-[#00E676]/25 text-[#00E676] border border-[#00E676]/40 text-[10px] font-black transition-all cursor-pointer"
+                        title="Fetch historical OHLC candle data via Deriv WebSocket for this trade date"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        <span>Verify on Deriv</span>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Trade Cards List */}
+        <div className="space-y-2.5 max-h-[600px] overflow-y-auto pr-1">
+          {displayedTrades.map((trade, idx) => {
+            const isWin = trade.outcome === 'WIN';
+            const isBuy = trade.direction === 'BUY';
+
+            return (
+              <div
+                key={trade.id || idx}
+                className={`p-3.5 rounded-xl border transition-all ${
+                  isWin
+                    ? 'bg-[#141B2D] border-[#00E676]/30 hover:border-[#00E676]'
+                    : 'bg-[#141B2D] border-[#FF3366]/30 hover:border-[#FF3366]'
+                }`}
+              >
+                {/* Header Row */}
+                <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono font-bold text-[#64748B]">
+                      #{idx + 1}
+                    </span>
+                    <span className="text-sm font-black text-[#F1F5F9] font-mono">
+                      {trade.pairSymbol}
+                    </span>
+                    <span
+                      className={`text-[10px] font-black px-2 py-0.5 rounded ${
+                        isBuy
+                          ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
+                          : 'bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40'
+                      }`}
+                    >
+                      {trade.direction}
+                    </span>
+                    <span className="text-[10px] text-[#64748B] font-mono font-bold">
+                      {trade.timeframe}
+                    </span>
+                    <span className="text-[10px] text-[#64748B] hidden sm:inline">
+                      • {trade.session}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={() => handleVerifyOnDeriv(trade)}
+                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-[#00E676]/15 hover:bg-[#00E676]/25 text-[#00E676] border border-[#00E676]/40 text-[10px] font-black transition-all cursor-pointer"
+                      title="Verify OHLC candle data via Deriv WebSocket"
+                    >
+                      <ShieldCheck className="w-3 h-3" />
+                      <span>Verify on Deriv</span>
+                    </button>
+
+                    <span
+                      className={`text-[10px] font-black px-2 py-0.5 rounded ${
+                        trade.tpStage === 'TP1_BE'
+                          ? 'bg-[#FFD700]/20 text-[#FFD700] border border-[#FFD700]/40'
+                          : isWin
+                          ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
+                          : 'bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40'
+                      }`}
+                    >
+                      {trade.tpStage === 'TP1_BE'
+                        ? '🛡️ TP1 HIT → BE WIN'
+                        : isWin
+                        ? '🎯 FULL TP2 WIN'
+                        : '🛑 SL LOSS'}
+                    </span>
+                    <span
+                      className={`text-xs font-mono font-bold ${
+                        trade.pips >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'
+                      }`}
+                    >
+                      {trade.pips >= 0
+                        ? `+${trade.pips}p (+$${trade.dollarPnl ?? (trade.tpStage === 'TP1_BE' ? 60 : 150)})`
+                        : `${trade.pips}p (-$${Math.abs(trade.dollarPnl ?? 100)})`}
+                    </span>
+
+                    {onAskAi && (
+                      <button
+                        onClick={() => onAskAi(`Audit this historical trade on ${trade.pairSymbol} (${trade.direction} at ${trade.entryPrice}, SL: ${trade.stopLoss}, TP1: ${trade.takeProfit1}, TP2: ${trade.takeProfit2}, Exit: ${trade.exitPrice}, Result: ${trade.outcome} / ${trade.tpStage}). Rationale: ${trade.rationale}`)}
+                        className="p-1 rounded bg-[#182033] hover:bg-[#222F47] text-[#FFD700] border border-[#222F47]"
+                        title="Audit setup in AI Copilot"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* SMC Rationale */}
+                <p className="text-xs text-[#94A3B8] leading-relaxed mb-2.5">
+                  {trade.rationale}
+                </p>
+
+                {/* Price Levels & Timestamps */}
+                <div className="pt-2 border-t border-[#222F47]/60 flex flex-wrap items-center justify-between text-[10px] text-[#64748B] gap-2 font-mono">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="text-[#F1F5F9]">
+                      Entry: <strong className="text-[#2979FF]">{formatTradePrice(trade.pairSymbol, trade.entryPrice)}</strong>
+                    </span>
+                    {trade.stopLoss !== undefined && (
+                      <span className="text-[#F1F5F9]">
+                        SL: <strong className="text-[#FF3366]">{formatTradePrice(trade.pairSymbol, trade.stopLoss)} (-{Math.max(1, Math.round(Math.abs(trade.entryPrice - trade.stopLoss) * StrategyBacktester.getPipMultiplier(trade.pairSymbol, trade.entryPrice) * 10) / 10)}p)</strong>
+                      </span>
+                    )}
+                    {(trade.takeProfit1 !== undefined || trade.takeProfit !== undefined) && (
+                      <span className="text-[#F1F5F9]">
+                        TP1: <strong className="text-[#FFD700]">{formatTradePrice(trade.pairSymbol, trade.takeProfit1 ?? trade.takeProfit!)} (+{Math.max(1, Math.round(Math.abs((trade.takeProfit1 ?? trade.takeProfit!) - trade.entryPrice) * StrategyBacktester.getPipMultiplier(trade.pairSymbol, trade.entryPrice) * 10) / 10)}p)</strong>
+                      </span>
+                    )}
+                    {trade.takeProfit2 !== undefined && (
+                      <span className="text-[#F1F5F9]">
+                        TP2: <strong className="text-[#00E676]">{formatTradePrice(trade.pairSymbol, trade.takeProfit2)} (+{Math.max(1, Math.round(Math.abs(trade.takeProfit2 - trade.entryPrice) * StrategyBacktester.getPipMultiplier(trade.pairSymbol, trade.entryPrice) * 10) / 10)}p)</strong>
+                      </span>
+                    )}
+                    <span className="text-[#F1F5F9]">
+                      Exit: <strong className={isWin ? 'text-[#00E676]' : 'text-[#FF3366]'}>{formatTradePrice(trade.pairSymbol, trade.exitPrice)}</strong>
+                    </span>
+                    <span className="hidden md:inline">• {trade.entryTime}</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-[#FFD700] font-bold">Confluence: {trade.confluenceScore}%</span>
+                    <span>•</span>
+                    <span className="text-[#F1F5F9]">R:R {trade.riskRewardRatio}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 9. Deriv User Credentials Modal Panel */}
       {isApiSettingsOpen && (
         <div className="bg-[#101522] border border-[#00E676]/30 rounded-xl p-4 space-y-3 animate-fadeIn">
           <div className="flex items-center justify-between border-b border-[#222F47] pb-2">
@@ -420,7 +1258,6 @@ export const BacktestingLabScreen: React.FC<Props> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* Input with id="derivAppId" */}
             <div className="space-y-1">
               <label className="text-[10px] text-[#94A3B8] font-bold uppercase">
                 Deriv App ID (Default: 1089)
@@ -435,29 +1272,25 @@ export const BacktestingLabScreen: React.FC<Props> = ({
               />
             </div>
 
-            {/* Input with id="derivApiToken" (Masked password - never previewed in UI) */}
             <div className="space-y-1">
               <label className="text-[10px] text-[#94A3B8] font-bold uppercase">
-                Deriv API Token (Private Key)
+                Deriv API Token (Optional)
               </label>
               <input
                 id="derivApiToken"
                 type="password"
                 value={derivTokenInput}
                 onChange={(e) => setDerivTokenInput(e.target.value)}
-                placeholder="User private token..."
+                placeholder="Paste API token..."
                 className="w-full bg-[#182033] border border-[#222F47] rounded-lg px-3 py-1.5 text-xs text-[#F1F5F9] font-mono focus:border-[#00E676] outline-hidden"
               />
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-1">
-            <span className="text-[10px] text-[#64748B]">
-              If token is expired or blank, seamlessly uses public Deriv historical feed (no login needed).
-            </span>
+          <div className="flex justify-end gap-2 pt-2 border-t border-[#222F47]">
             <button
               onClick={handleSaveCredentials}
-              className="px-3 py-1 bg-[#00E676] text-[#080B11] text-xs font-bold rounded-lg hover:bg-[#00E676]/90 transition-all cursor-pointer"
+              className="px-4 py-1.5 bg-[#00E676] text-[#080B11] text-xs font-bold rounded-lg hover:bg-[#00E676]/90 transition-colors"
             >
               Save Credentials
             </button>
@@ -465,432 +1298,232 @@ export const BacktestingLabScreen: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Error alert if any */}
-      {fetchError && (
-        <div className="bg-[#FF3366]/10 border border-[#FF3366]/40 rounded-xl p-3 flex items-center gap-2 text-xs text-[#FF3366]">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{fetchError}</span>
-        </div>
-      )}
-
-      {/* 4. Strategy Selector Chips (NO fake baseline WR - shows real rule) */}
-      <div className="space-y-1.5">
-        <div className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider">Select Algorithmic Model</div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-          {(Object.keys(STRATEGY_CONFIGS) as StrategyType[]).map(st => {
-            const isSelected = filter.strategy === st;
-            const config = STRATEGY_CONFIGS[st];
-            return (
-              <button
-                key={st}
-                onClick={() => onStrategySelect(st)}
-                className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                  isSelected
-                    ? 'bg-[#182033] border-[#FFD700] text-[#FFD700] shadow-[0_0_12px_rgba(255,215,0,0.15)]'
-                    : 'bg-[#101522] border-[#222F47] text-[#94A3B8] hover:border-[#222F47]/90'
-                }`}
-              >
-                <div className="text-xs font-bold text-[#F1F5F9] truncate">{config.title}</div>
-                <div className="text-[10px] text-[#2979FF] font-mono font-semibold mt-1 flex items-center gap-1">
-                  <Target className="w-3 h-3 text-[#2979FF]" />
-                  <span>{config.modelRule}</span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 5. Filter Matrix Card */}
-      <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3.5 space-y-3">
-        {/* Asset Category Row (Isolates Major, Crosses, Exotics, Metals, Crypto, Indices) */}
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 border-b border-[#222F47]/60">
-          <span className="text-[10px] text-[#FFD700] font-bold w-24 shrink-0 flex items-center gap-1">
-            <Globe className="w-3 h-3 text-[#FFD700]" />
-            <span>Category:</span>
-          </span>
-          <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-            {categoryTabs.map(cat => {
-              const isSelected = (!filter.category && cat.key === null) || filter.category === cat.key;
-              return (
-                <button
-                  key={cat.label}
-                  onClick={() => onCategorySelect?.(cat.key)}
-                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
-                    isSelected
-                      ? 'bg-[#2979FF] border-[#2979FF] text-white shadow-md'
-                      : 'bg-[#182033] border-[#222F47] text-[#94A3B8] hover:text-[#F1F5F9]'
-                  }`}
-                >
-                  <span>{cat.icon}</span>
-                  <span>{cat.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Timeframe Row (15M, H1, H4, D1) */}
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-          <span className="text-[10px] text-[#64748B] font-bold w-24 shrink-0">Timeframe:</span>
-          <div className="flex gap-1.5">
-            {timeframes.map(item => (
-              <button
-                key={item.label}
-                onClick={() => onTimeframeSelect(item.tf)}
-                className={`text-[10px] font-bold px-2.5 py-1 rounded-md border transition-all cursor-pointer ${
-                  filter.timeframe === item.tf
-                    ? 'bg-[#2979FF] border-[#2979FF] text-[#F1F5F9]'
-                    : 'bg-[#182033] border-[#222F47] text-[#94A3B8]'
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Min Confluence Row */}
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-          <span className="text-[10px] text-[#64748B] font-bold w-24 shrink-0">Min Confluence:</span>
-          <div className="flex gap-1.5">
-            {confluenceTiers.map(item => {
-              const count = tierCounts[item.score as keyof typeof tierCounts] ?? 0;
-              const isSelected = filter.minConfluence === item.score;
-              return (
-                <button
-                  key={item.score}
-                  onClick={() => onConfluenceSelect(item.score)}
-                  className={`text-[10px] font-bold px-2.5 py-1 rounded-md border transition-all cursor-pointer flex items-center gap-1.5 ${
-                    isSelected
-                      ? 'bg-[#FFD700] border-[#FFD700] text-[#080B11]'
-                      : 'bg-[#182033] border-[#222F47] text-[#94A3B8]'
-                  }`}
-                >
-                  <span>{item.label}</span>
-                  <span className={`text-[9px] font-mono font-bold px-1 py-0.2 rounded-xs ${
-                    isSelected ? 'bg-[#080B11]/20 text-[#080B11]' : 'bg-[#101522] text-[#00E676]'
-                  }`}>
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Symbol Row (Dynamically populated by active category to prevent mixing) */}
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-          <span className="text-[10px] text-[#64748B] font-bold w-24 shrink-0">Select Symbol:</span>
-          <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-            {availablePairs.map(item => (
-              <button
-                key={item.label}
-                onClick={() => onPairSelect(item.pair)}
-                className={`text-[10px] font-bold px-2.5 py-1 rounded-md border transition-all whitespace-nowrap cursor-pointer ${
-                  filter.pairSymbol === item.pair
-                    ? 'bg-[#00E676] border-[#00E676] text-[#080B11]'
-                    : 'bg-[#182033] border-[#222F47] text-[#94A3B8] hover:text-[#F1F5F9]'
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Outcome Filter Row */}
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-          <span className="text-[10px] text-[#64748B] font-bold w-24 shrink-0">Trade Outcome:</span>
-          <div className="flex gap-1.5">
-            {outcomes.map(item => (
-              <button
-                key={item.label}
-                onClick={() => onOutcomeSelect(item.outcome)}
-                className={`text-[10px] font-bold px-2.5 py-1 rounded-md border transition-all cursor-pointer ${
-                  filter.outcomeFilter === item.outcome
-                    ? 'bg-[#FFD700]/20 border-[#FFD700] text-[#FFD700]'
-                    : 'bg-[#182033] border-[#222F47] text-[#94A3B8]'
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Zero Trades Context Banner if totalTrades === 0 */}
-      {currentSummary.totalTrades === 0 && (
-        <div className="bg-[#2979FF]/10 border border-[#2979FF]/40 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-[#2979FF]">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <div>
-            <span className="font-bold uppercase tracking-wider">Zero Setups Met Filter Criteria:</span>
-            <p className="text-[#94A3B8] text-[11px] mt-0.5 leading-relaxed">
-              No historical setups reached the ultra-strict <strong className="text-[#FFD700]">{filter.minConfluence >= 90 ? 'Elite (90%+)' : `${filter.minConfluence}%+`}</strong> confluence threshold for this specific model. Click <strong className="text-[#F1F5F9] cursor-pointer underline" onClick={() => onConfluenceSelect(85)}>'A+ VIP (85%+)'</strong>, <strong className="text-[#F1F5F9] cursor-pointer underline" onClick={() => onConfluenceSelect(80)}>'High Prob (80%+)'</strong>, or <strong className="text-[#F1F5F9] cursor-pointer underline" onClick={() => onConfluenceSelect(70)}>'All Setups (70%+)'</strong> to evaluate valid historical trades!
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Small Sample Context Banner if 0 < totalTrades < 5 */}
-      {currentSummary.totalTrades > 0 && currentSummary.totalTrades < 5 && (
-        <div className="bg-[#FFD700]/10 border border-[#FFD700]/40 rounded-xl p-3 flex items-start gap-2.5 text-xs text-[#FFD700]">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <div>
-            <span className="font-bold uppercase tracking-wider">Small Sample Size Notice ({currentSummary.totalTrades} Trade{currentSummary.totalTrades > 1 ? 's' : ''} Logged):</span>
-            <p className="text-[#94A3B8] text-[11px] mt-0.5 leading-relaxed">
-              The <strong className="text-[#FFD700]">{filter.minConfluence >= 85 ? 'A+ VIP (85%+)' : `${filter.minConfluence}%+`}</strong> filter is extremely strict, filtering out 98%+ of setups. A 100% win rate on only {currentSummary.totalTrades} trade{currentSummary.totalTrades > 1 ? 's' : ''} is a small sample effect. Select <strong className="text-[#F1F5F9] cursor-pointer underline" onClick={() => onConfluenceSelect(70)}>'All Setups (70%+)'</strong> or <strong className="text-[#F1F5F9] cursor-pointer underline" onClick={() => onConfluenceSelect(80)}>'High Prob (80%+)'</strong> to evaluate the full statistical dataset across 50–300+ trades!
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* 6. True Stats Cards Grid (Pure Math: wins / total * 100) */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-        <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3">
-          <div className="text-[9px] text-[#64748B] uppercase font-bold">True Win Rate</div>
-          <div className={`text-xl font-mono font-black ${currentSummary.totalTrades === 0 ? 'text-[#94A3B8]' : (currentSummary.winRate >= 50 ? 'text-[#00E676]' : 'text-[#FFD700]')}`}>
-            {currentSummary.totalTrades === 0 ? 'N/A' : `${currentSummary.winRate}%`}
-          </div>
-          <div className="text-[9px] text-[#94A3B8] font-mono mt-0.5">
-            {currentSummary.totalTrades === 0 ? '0 Setups Found' : `${currentSummary.winTrades} Wins / ${currentSummary.lossTrades} Losses (${currentSummary.totalTrades} total)`}
-          </div>
-        </div>
-
-        <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3">
-          <div className="text-[9px] text-[#64748B] uppercase font-bold">Profit Factor</div>
-          <div className="text-xl font-mono font-black text-[#F1F5F9]">{currentSummary.totalTrades === 0 ? 'N/A' : currentSummary.profitFactor}</div>
-          <div className="text-[9px] text-[#94A3B8] font-mono mt-0.5">{currentSummary.totalTrades === 0 ? 'No trades logged' : 'Fixed 1.5R dollar payout ratio'}</div>
-        </div>
-
-        <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3">
-          <div className="text-[9px] text-[#64748B] uppercase font-bold">Total Net Pips</div>
-          <div className={`text-xl font-mono font-black ${currentSummary.totalPips >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
-            {currentSummary.totalPips >= 0 ? `+${currentSummary.totalPips}` : currentSummary.totalPips}
-          </div>
-          <div className="text-[9px] text-[#94A3B8] font-mono mt-0.5">Real spread deducted</div>
-        </div>
-
-        <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3">
-          <div className="text-[9px] text-[#64748B] uppercase font-bold">Max Drawdown</div>
-          <div className="text-xl font-mono font-black text-[#FF3366]">{currentSummary.maxDrawdownPercent}%</div>
-          <div className="text-[9px] text-[#94A3B8] font-mono mt-0.5">Peak-to-trough equity risk</div>
-        </div>
-
-        <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3">
-          <div className="text-[9px] text-[#64748B] uppercase font-bold">Fixed Risk : Reward</div>
-          <div className="text-xl font-mono font-black text-[#2979FF]">{currentSummary.avgRiskReward}</div>
-          <div className="text-[9px] text-[#94A3B8] font-mono mt-0.5">SL = 1x ATR, TP = 1.5x ATR</div>
-        </div>
-
-        <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3">
-          <div className="text-[9px] text-[#64748B] uppercase font-bold">Net Account ROI</div>
-          <div className={`text-xl font-mono font-black ${currentSummary.netRoiPercent >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
-            {currentSummary.netRoiPercent >= 0 ? `+${currentSummary.netRoiPercent}%` : `${currentSummary.netRoiPercent}%`}
-          </div>
-          <div className="text-[9px] text-[#94A3B8] font-mono mt-0.5">Starting capital: $10,000</div>
-        </div>
-      </div>
-
-      {/* 7. Real Account Balance & Cumulative PnL Curve (Recharts Engine) */}
-      <RealEquityCurveChart
-        equityPoints={currentSummary.equityCurve}
-        initialBalance={10000}
-        trades={currentSummary.filteredTrades}
+      {/* 10. Monte Carlo Stress Testing Modal */}
+      <MonteCarloStressModal
+        isOpen={isMonteCarloOpen}
+        onClose={() => setIsMonteCarloOpen(false)}
         summary={currentSummary}
       />
 
-      {/* 8. Real Performance By Symbol (Categorized Cleanly) */}
-      <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3.5 space-y-2.5">
-        <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
-          <div className="flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-[#00E676]" />
-            <span className="text-xs font-bold text-[#F1F5F9] uppercase tracking-wider">
-              {filter.category ? `${filter.category} Performance Breakdown` : 'All Assets Performance Breakdown'}
-            </span>
+      {/* 11. Deriv WebSocket Candle Verification Modal */}
+      {verifyingTrade && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5">
+          <div className="bg-[#101522] border border-[#00E676]/50 rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden text-left">
+            {/* Modal Header */}
+            <div className="px-4 py-3.5 bg-[#141B2D] border-b border-[#222F47] flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-[#00E676]/15 border border-[#00E676]/40 flex items-center justify-center text-[#00E676]">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-sm font-black text-[#F1F5F9] uppercase tracking-wider">
+                      Deriv WS Candle Verification — {verifyingTrade.pairSymbol} ({verifyingTrade.timeframe})
+                    </h3>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40">
+                      {verificationResult?.derivSymbol || `frx${verifyingTrade.pairSymbol.replace('/', '')}`}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#94A3B8] font-mono">
+                    Trade Date: {verifyingTrade.entryTime} → {verifyingTrade.exitTime}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setVerifyingTrade(null);
+                  setVerificationResult(null);
+                }}
+                className="p-1.5 rounded-lg bg-[#182033] hover:bg-[#222F47] text-[#94A3B8] hover:text-white border border-[#222F47] cursor-pointer"
+                title="Close verification modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 space-y-3.5 overflow-y-auto text-xs">
+              {/* Trade Summary Strip */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-[#141B2D] border border-[#222F47] rounded-xl p-3 font-mono">
+                <div>
+                  <span className="text-[10px] text-[#64748B] block uppercase">Direction</span>
+                  <span className={`font-black ${verifyingTrade.direction === 'BUY' ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                    {verifyingTrade.direction} ({verifyingTrade.timeframe})
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-[#64748B] block uppercase">Entry Price</span>
+                  <span className="font-bold text-[#2979FF]">
+                    {formatTradePrice(verifyingTrade.pairSymbol, verifyingTrade.entryPrice)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-[#64748B] block uppercase">SL / TP Target</span>
+                  <span className="font-bold text-[#F1F5F9] block">
+                    <span className="text-[#FF3366]">
+                      {verifyingTrade.stopLoss ? formatTradePrice(verifyingTrade.pairSymbol, verifyingTrade.stopLoss) : '—'}
+                    </span>
+                    {' / '}
+                    <span className="text-[#00E676]">
+                      {formatTradePrice(
+                        verifyingTrade.pairSymbol,
+                        verifyingTrade.takeProfit2 ?? verifyingTrade.takeProfit1 ?? verifyingTrade.takeProfit ?? 0
+                      )}
+                    </span>
+                  </span>
+                  {verifyingTrade.stopLoss && (
+                    <span className="text-[9.5px] font-bold block mt-0.5">
+                      <span className="text-[#FF3366]">
+                        -{Math.max(1, Math.round(Math.abs(verifyingTrade.entryPrice - verifyingTrade.stopLoss) * StrategyBacktester.getPipMultiplier(verifyingTrade.pairSymbol, verifyingTrade.entryPrice) * 10) / 10)}p SL
+                      </span>
+                      {' • '}
+                      <span className="text-[#00E676]">
+                        +{Math.max(1, Math.round(Math.abs((verifyingTrade.takeProfit2 ?? verifyingTrade.takeProfit1 ?? verifyingTrade.takeProfit ?? verifyingTrade.exitPrice) - verifyingTrade.entryPrice) * StrategyBacktester.getPipMultiplier(verifyingTrade.pairSymbol, verifyingTrade.entryPrice) * 10) / 10)}p TP
+                      </span>
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <span className="text-[10px] text-[#64748B] block uppercase">Exit Price</span>
+                  <span className={`font-bold ${verifyingTrade.outcome === 'WIN' ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                    {formatTradePrice(verifyingTrade.pairSymbol, verifyingTrade.exitPrice)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-[#64748B] block uppercase">Verified Result</span>
+                  <span className={`font-black ${verifyingTrade.outcome === 'WIN' ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                    {verifyingTrade.outcome} ({verifyingTrade.pips >= 0 ? `+${verifyingTrade.pips}p` : `${verifyingTrade.pips}p`})
+                  </span>
+                </div>
+              </div>
+
+              {/* Loading or Verified OHLC Candles */}
+              {isVerifyingOnDeriv ? (
+                <div className="py-10 flex flex-col items-center justify-center gap-2.5 bg-[#141B2D] border border-[#222F47] rounded-xl">
+                  <Loader2 className="w-6 h-6 text-[#00E676] animate-spin" />
+                  <div className="text-xs font-mono font-bold text-[#F1F5F9]">
+                    Querying Deriv WebSocket (wss://ws.derivws.com/websockets/v3)...
+                  </div>
+                  <div className="text-[11px] text-[#94A3B8] font-mono">
+                    Fetching ticks_history OHLC candles for {verifyingTrade.pairSymbol} around {verifyingTrade.entryTime}
+                  </div>
+                </div>
+              ) : verificationResult ? (
+                <>
+                  {/* Status Banner */}
+                  <div className="bg-[#00E676]/10 border border-[#00E676]/30 rounded-xl px-3.5 py-2.5 flex items-center justify-between flex-wrap gap-2 font-mono text-[11px]">
+                    <div className="flex items-center gap-2 text-[#00E676] font-bold">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>{verificationResult.statusMessage}</span>
+                    </div>
+                    <span className="text-[10px] text-[#94A3B8]">
+                      Granularity: {verificationResult.granularity}s ({verificationResult.timeframe}) • App ID: {verificationResult.appIdUsed}
+                    </span>
+                  </div>
+
+                  {/* Deriv OHLC Candle Table */}
+                  <div className="bg-[#141B2D] border border-[#222F47] rounded-xl overflow-x-auto">
+                    <table className="w-full text-left text-[11px] font-mono">
+                      <thead>
+                        <tr className="border-b border-[#222F47] text-[#64748B] bg-[#0D121F]">
+                          <th className="py-2 px-2.5">Epoch</th>
+                          <th className="py-2 px-2.5">Candle Time (UTC)</th>
+                          <th className="py-2 px-2.5">Open</th>
+                          <th className="py-2 px-2.5">High</th>
+                          <th className="py-2 px-2.5">Low</th>
+                          <th className="py-2 px-2.5">Close</th>
+                          <th className="py-2 px-2.5">Execution Role</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#222F47]/60 text-[#F1F5F9]">
+                        {verificationResult.candles.map((c, i) => {
+                          const isBull = c.close >= c.open;
+                          return (
+                            <tr
+                              key={c.epoch || i}
+                              className={
+                                c.role === 'ENTRY_EXECUTION'
+                                  ? 'bg-[#2979FF]/15'
+                                  : c.role === 'EXIT_CANDLE'
+                                  ? 'bg-[#00E676]/15'
+                                  : c.role === 'SIGNAL_CANDLE'
+                                  ? 'bg-[#FFD700]/10'
+                                  : 'hover:bg-[#182033]/50'
+                              }
+                            >
+                              <td className="py-2 px-2.5 text-[#64748B]">{c.epoch}</td>
+                              <td className="py-2 px-2.5 whitespace-nowrap">{c.timeFormatted}</td>
+                              <td className="py-2 px-2.5">{formatTradePrice(verifyingTrade.pairSymbol, c.open)}</td>
+                              <td className="py-2 px-2.5 text-[#00E676]">{formatTradePrice(verifyingTrade.pairSymbol, c.high)}</td>
+                              <td className="py-2 px-2.5 text-[#FF3366]">{formatTradePrice(verifyingTrade.pairSymbol, c.low)}</td>
+                              <td className={`py-2 px-2.5 font-bold ${isBull ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                                {formatTradePrice(verifyingTrade.pairSymbol, c.close)}
+                              </td>
+                              <td className="py-2 px-2.5 whitespace-nowrap">
+                                {c.role === 'SIGNAL_CANDLE' && (
+                                  <span className="px-1.5 py-0.5 rounded bg-[#FFD700]/20 text-[#FFD700] border border-[#FFD700]/40 text-[9.5px] font-bold">
+                                    1. SIGNAL BAR (i)
+                                  </span>
+                                )}
+                                {c.role === 'ENTRY_EXECUTION' && (
+                                  <span className="px-1.5 py-0.5 rounded bg-[#2979FF]/20 text-[#2979FF] border border-[#2979FF]/40 text-[9.5px] font-bold">
+                                    2. ENTRY FILL (i+1 OPEN)
+                                  </span>
+                                )}
+                                {c.role === 'ACTIVE_HOLD' && (
+                                  <span className="px-1.5 py-0.5 rounded bg-[#182033] text-[#94A3B8] text-[9.5px]">
+                                    IN TRADE
+                                  </span>
+                                )}
+                                {c.role === 'EXIT_CANDLE' && (
+                                  <span className="px-1.5 py-0.5 rounded bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40 text-[9.5px] font-bold">
+                                    3. {verifyingTrade.outcome === 'WIN' ? 'TP HIT BAR' : 'SL HIT BAR'}
+                                  </span>
+                                )}
+                                {c.role === 'CONTEXT' && (
+                                  <span className="text-[9.5px] text-[#64748B]">MARKET CONTEXT</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Deriv WebSocket Payload Proof */}
+                  <div className="bg-[#0D121F] border border-[#222F47] rounded-xl p-3 font-mono text-[10px] text-[#94A3B8]">
+                    <div className="flex items-center justify-between mb-1 text-[#64748B]">
+                      <span className="uppercase font-bold">Deriv WebSocket ticks_history Request Payload</span>
+                      <span>Verified at {verificationResult.verifiedAtUtc}</span>
+                    </div>
+                    <pre className="overflow-x-auto text-[#00E676]">
+                      {JSON.stringify(verificationResult.requestPayload)}
+                    </pre>
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-4 py-3 bg-[#141B2D] border-t border-[#222F47] flex items-center justify-between">
+              <span className="text-[10px] text-[#94A3B8] font-mono">
+                Zero-Lookahead Verification: Signal on Bar (i) Close → Entry on Bar (i+1) Open
+              </span>
+              <button
+                onClick={() => {
+                  setVerifyingTrade(null);
+                  setVerificationResult(null);
+                }}
+                className="px-4 py-1.5 bg-[#00E676] text-[#080B11] text-xs font-black rounded-lg hover:bg-[#00E676]/90 cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
           </div>
-          <span className="text-[10px] text-[#64748B] font-mono">Isolated Category Results • Next Candle Open Execution</span>
         </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {assetBreakdown.map(item => {
-            const catCls = item.category === 'MAJORS' ? 'text-[#2979FF] bg-[#2979FF]/10 border-[#2979FF]/30'
-              : item.category === 'MINORS' ? 'text-[#A855F7] bg-[#A855F7]/10 border-[#A855F7]/30'
-              : item.category === 'EXOTICS' ? 'text-[#00E5FF] bg-[#00E5FF]/10 border-[#00E5FF]/30'
-              : item.category === 'METALS' ? 'text-[#FFD700] bg-[#FFD700]/10 border-[#FFD700]/30'
-              : item.category === 'CRYPTO' ? 'text-[#10B981] bg-[#10B981]/10 border-[#10B981]/30'
-              : 'text-[#FF9100] bg-[#FF9100]/10 border-[#FF9100]/30';
-
-            return (
-              <div
-                key={item.symbol}
-                onClick={() => onPairSelect(filter.pairSymbol === item.symbol ? null : item.symbol)}
-                className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
-                  filter.pairSymbol === item.symbol
-                    ? 'bg-[#182033] border-[#00E676] shadow-[0_0_8px_rgba(0,230,118,0.2)]'
-                    : 'bg-[#0d121c] border-[#222F47]/80 hover:border-[#222F47]'
-                }`}
-              >
-                <div className="flex items-center justify-between text-xs font-bold text-[#F1F5F9] mb-1">
-                  <div className="flex items-center gap-1.5">
-                    <span>{item.symbol}</span>
-                    <span className={`text-[8px] font-black px-1 py-0.2 rounded border ${catCls}`}>
-                      {item.category.slice(0, 5)}
-                    </span>
-                  </div>
-                  <span className={`text-[10px] font-mono font-bold ${item.winRate >= 50 ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
-                    {item.winRate}%
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-[10px] font-mono text-[#94A3B8]">
-                  <span>{item.total} Trades</span>
-                  <span className={item.netPips >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'}>
-                    {item.netPips >= 0 ? `+${item.netPips}p` : `${item.netPips}p`}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 9. Confluence Matrix Breakdown */}
-      <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3.5">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-bold text-[#FFD700] uppercase tracking-wider">
-            Confluence Matrix Breakdown
-          </span>
-          <span className="text-[10px] text-[#64748B]">Click tier to filter</span>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="text-[10px] text-[#64748B] uppercase border-b border-[#222F47]">
-                <th className="pb-1.5 font-bold">Confluence Tier</th>
-                <th className="pb-1.5 font-bold">Win Rate</th>
-                <th className="pb-1.5 font-bold">Profit Factor</th>
-                <th className="pb-1.5 font-bold">Real Trades</th>
-                <th className="pb-1.5 font-bold">Net Pips</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#222F47]/50">
-              {currentSummary.confluenceMatrix.map(tier => {
-                const isSelected = filter.minConfluence === tier.minConfluence;
-                return (
-                  <tr
-                    key={tier.minConfluence}
-                    onClick={() => onConfluenceSelect(tier.minConfluence)}
-                    className={`cursor-pointer transition-colors ${
-                      isSelected ? 'bg-[#182033] font-bold text-[#FFD700]' : 'hover:bg-[#182033]/50'
-                    }`}
-                  >
-                    <td className="py-2 text-[#F1F5F9]">{tier.label}</td>
-                    <td className={`py-2 font-mono ${tier.winRate >= 50 ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
-                      {tier.winRate}%
-                    </td>
-                    <td className="py-2 text-[#F1F5F9] font-mono">{tier.profitFactor}</td>
-                    <td className="py-2 text-[#94A3B8] font-mono">{tier.totalTrades}</td>
-                    <td
-                      className={`py-2 font-mono ${
-                        tier.netPips >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'
-                      }`}
-                    >
-                      {tier.netPips >= 0 ? `+${tier.netPips}` : tier.netPips}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* 10. Real Trade Log (WIN & LOSS trades from actual candles) */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between text-[11px] px-1">
-          <span className="font-bold text-[#64748B] uppercase tracking-wider flex items-center gap-1.5">
-            <span>Real Trade Execution Log ({currentSummary.filteredTrades.length} Trades)</span>
-            <span className="text-[9px] text-[#00E676] bg-[#00E676]/10 px-1.5 py-0.2 rounded font-mono">
-              Next Candle Open Execution
-            </span>
-          </span>
-          <span className="text-[#94A3B8] font-mono">Actual High/Low Outcomes</span>
-        </div>
-
-        <div className="space-y-2.5">
-          {currentSummary.filteredTrades.map((trade, idx) => {
-            const isWin = trade.outcome === 'WIN';
-            return (
-              <div
-                key={`${trade.id}-${idx}`}
-                className="bg-[#101522] border border-[#222F47] rounded-xl p-3.5 hover:border-[#222F47]/90 transition-all"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-black text-[#F1F5F9]">{trade.pairSymbol}</span>
-                    <span
-                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                        trade.direction.startsWith('BUY')
-                          ? 'bg-[#00E676]/15 text-[#00E676]'
-                          : 'bg-[#FF3366]/15 text-[#FF3366]'
-                      }`}
-                    >
-                      {trade.direction}
-                    </span>
-                    <span className="text-[10px] text-[#64748B] font-mono font-bold">{trade.timeframe}</span>
-                    <span className="text-[10px] text-[#64748B] hidden sm:inline">• {trade.session}</span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`text-[10px] font-black px-2 py-0.5 rounded ${
-                        isWin
-                          ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
-                          : 'bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40'
-                      }`}
-                    >
-                      {isWin ? 'WIN' : 'LOSS'}
-                    </span>
-                    <span
-                      className={`text-xs font-mono font-bold ${
-                        trade.pips >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'
-                      }`}
-                    >
-                      {trade.pips >= 0 ? `+${trade.pips}p` : `${trade.pips}p`}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Real Market Rationale */}
-                <p className="text-xs text-[#94A3B8] leading-relaxed mb-2">
-                  {trade.rationale}
-                </p>
-
-                {/* Exact Price Levels & Confluence */}
-                <div className="pt-2 border-t border-[#222F47]/60 flex flex-wrap items-center justify-between text-[10px] text-[#64748B] gap-2 font-mono">
-                  <div className="flex items-center gap-3">
-                    <span className="text-[#F1F5F9]">
-                      Entry: <strong className="text-[#2979FF]">{trade.entryPrice}</strong>
-                    </span>
-                    <span className="text-[#F1F5F9]">
-                      Exit: <strong className={isWin ? 'text-[#00E676]' : 'text-[#FF3366]'}>{trade.exitPrice}</strong>
-                    </span>
-                    <span>Entry: {trade.entryTime}</span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-[#FFD700] font-bold">Confluence: {trade.confluenceScore}%</span>
-                    <span>•</span>
-                    <span className="text-[#F1F5F9]">Fixed: 1:1.5R</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      )}
     </div>
   );
 };

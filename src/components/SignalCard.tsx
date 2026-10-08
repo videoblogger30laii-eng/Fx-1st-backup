@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ForexSignal, getAssetCategory } from '../types';
+import { ForexSignal, getAssetCategory, getSignalStrategy, STRATEGY_CONFIGS } from '../types';
 import {
   formatPrice,
   calculatePips,
@@ -127,12 +127,9 @@ export const SignalCard: React.FC<Props> = ({
             const badgeMap = {
               MAJORS: { label: 'MAJOR', cls: 'bg-[#2979FF]/15 text-[#2979FF] border-[#2979FF]/30' },
               MINORS: { label: 'CROSS', cls: 'bg-[#A855F7]/15 text-[#A855F7] border-[#A855F7]/30' },
-              EXOTICS: { label: 'EXOTIC', cls: 'bg-[#00E5FF]/15 text-[#00E5FF] border-[#00E5FF]/30' },
-              METALS: { label: 'METAL', cls: 'bg-[#FFD700]/15 text-[#FFD700] border-[#FFD700]/30' },
-              INDICES: { label: 'INDEX', cls: 'bg-[#FF9100]/15 text-[#FF9100] border-[#FF9100]/30' },
-              CRYPTO: { label: 'CRYPTO', cls: 'bg-[#10B981]/15 text-[#10B981] border-[#10B981]/30' }
+              METALS: { label: 'METAL', cls: 'bg-[#FFD700]/15 text-[#FFD700] border-[#FFD700]/30' }
             };
-            const b = badgeMap[cat];
+            const b = badgeMap[cat] || badgeMap.MAJORS;
             return (
               <span className={`text-[8.5px] font-black px-1.5 py-0.5 rounded border ${b.cls}`}>
                 {b.label}
@@ -226,14 +223,36 @@ export const SignalCard: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Execution description & timeframe badge */}
-      <div className="flex items-center justify-between text-[10px] text-[#94A3B8] mb-1.5">
-        <span className="truncate max-w-[220px] font-medium">{signal.institutionalFlow}</span>
-        <span className="font-mono bg-[#182033] px-2 py-0.5 rounded border border-[#222F47] text-[#F1F5F9] flex items-center gap-1">
+      {/* Institutional Strategy Model Pill + Flow & Timeframe Badge */}
+      <div className="flex items-center justify-between gap-1.5 text-[10px] text-[#94A3B8] mb-1.5 flex-wrap">
+        <div className="flex items-center gap-1.5 min-w-0">
+          {(() => {
+            const stratKey = getSignalStrategy(signal);
+            const stratCfg = STRATEGY_CONFIGS[stratKey];
+            const badgeColor =
+              stratKey === 'BEST_TRADE_NOW'
+                ? 'bg-[#FFD700]/15 border-[#FFD700]/50 text-[#FFD700]'
+                : stratKey === 'ICT_SMART_MONEY'
+                ? 'bg-[#00E676]/15 border-[#00E676]/50 text-[#00E676]'
+                : stratKey === 'TREND_EMA_CONFLUENCE'
+                ? 'bg-[#2979FF]/20 border-[#2979FF]/50 text-[#60A5FA]'
+                : 'bg-[#A855F7]/20 border-[#A855F7]/50 text-[#C084FC]';
+            return (
+              <span
+                className={`text-[9.5px] font-black px-2 py-0.5 rounded border whitespace-nowrap ${badgeColor}`}
+                title={stratCfg.description}
+              >
+                Strategy: {stratCfg.title}
+              </span>
+            );
+          })()}
+          <span className="truncate max-w-[160px] font-medium text-[#94A3B8] hidden sm:inline">
+            • {signal.institutionalFlow}
+          </span>
+        </div>
+        <span className="font-mono bg-[#182033] px-2 py-0.5 rounded border border-[#222F47] text-[#F1F5F9] flex items-center gap-1 shrink-0">
           <span>{signal.timeframe}</span>
-          {isPending && (
-            <span className="text-[9px] text-[#FFD700] font-semibold">({getFormattedTotalValidity(signal)})</span>
-          )}
+          {isPending && <span className="text-[9px] text-[#FFD700] font-semibold">({getFormattedTotalValidity(signal)})</span>}
         </span>
       </div>
 
@@ -249,7 +268,7 @@ export const SignalCard: React.FC<Props> = ({
               <div className="flex items-center gap-1 text-[#FFD700] font-bold" title="Pending Order Entry Window Timer">
                 <Timer className="w-3 h-3 text-[#FFD700]" />
                 <span>
-                  {isTimeExpired ? 'Expired' : `Entry Window: ${countdown}`}
+                  {isTimeExpired ? 'Expired' : `${signal.timeframe} Window: ${countdown}`}
                 </span>
               </div>
             </div>
@@ -270,13 +289,50 @@ export const SignalCard: React.FC<Props> = ({
               />
             </div>
           </>
+        ) : signal.status === 'HIT_SL' || signal.status === 'HIT_TP' ? (
+          <>
+            <div className="flex items-center justify-between text-[10px] font-mono">
+              <span
+                className={`font-black flex items-center gap-1.5 ${
+                  signal.status === 'HIT_TP' ? 'text-[#00E676]' : 'text-[#FF3366]'
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    signal.status === 'HIT_TP' ? 'bg-[#00E676]' : 'bg-[#FF3366]'
+                  }`}
+                />
+                <span>
+                  {signal.status === 'HIT_TP'
+                    ? '🎯 CLOSED — TAKE PROFIT 1 HIT'
+                    : '🛑 CLOSED — STOP LOSS HIT'}
+                </span>
+              </span>
+              <span
+                className={`font-bold ${
+                  signal.status === 'HIT_TP' ? 'text-[#00E676]' : 'text-[#FF3366]'
+                }`}
+              >
+                {signal.pips >= 0 ? `+${signal.pips} pips` : `${signal.pips} pips`} • Exit{' '}
+                {formatPrice(signal.pair, signal.currentPrice)}
+              </span>
+            </div>
+            <div className="w-full h-1.5 bg-[#182033] rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full ${
+                  signal.status === 'HIT_TP' ? 'bg-[#00E676]' : 'bg-[#FF3366]'
+                }`}
+                style={{ width: '100%' }}
+              />
+            </div>
+          </>
         ) : (
           <>
-            {/* Active Running Trade Progress Track */}
+            {/* Active Running Trade Progress Track (Posted Time Elapsed without Validation Time) */}
             <div className="flex items-center justify-between text-[10px] font-mono">
               <span className="text-[#94A3B8] font-medium flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#00E676] animate-pulse" />
-                <span>Live Open Trade</span>
+                <span>{getFormattedTimeElapsed(signal, nowClockMs)}</span>
               </span>
               <div className="flex items-center gap-1 text-[#00E676] font-bold">
                 <Target className="w-3 h-3 text-[#00E676]" />
@@ -299,19 +355,46 @@ export const SignalCard: React.FC<Props> = ({
         )}
       </div>
 
-      {/* Integrated 5-Column Price Grid: [ Live Price ] [ Entry ] [ SL ] [ TP1 ] [ R:R ] */}
+      {/* Integrated 5-Column Price Grid: [ Live / Exit Price ] [ Entry ] [ SL ] [ TP1 ] [ R:R ] */}
       <div className="grid grid-cols-5 gap-1.5 bg-[#080B11]/90 rounded-lg p-2 border border-[#222F47] mb-2.5">
         <div className={`p-0.5 rounded transition-colors ${
-          flashDir === 'up' ? 'bg-[#00E676]/15' : flashDir === 'down' ? 'bg-[#FF3366]/15' : ''
+          signal.status === 'HIT_SL' || signal.status === 'HIT_TP'
+            ? ''
+            : flashDir === 'up'
+            ? 'bg-[#00E676]/15'
+            : flashDir === 'down'
+            ? 'bg-[#FF3366]/15'
+            : ''
         }`}>
           <div className="text-[8px] text-[#94A3B8] font-bold uppercase flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#00E676] animate-pulse" />
-            Live
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                signal.status === 'HIT_SL'
+                  ? 'bg-[#FF3366]'
+                  : signal.status === 'HIT_TP'
+                  ? 'bg-[#00E676]'
+                  : 'bg-[#00E676] animate-pulse'
+              }`}
+            />
+            {signal.status === 'HIT_SL' || signal.status === 'HIT_TP' ? 'Exit' : 'Live'}
           </div>
           <div className={`text-[11px] font-mono font-black ${
-            flashDir === 'up' ? 'text-[#00E676]' : flashDir === 'down' ? 'text-[#FF3366]' : 'text-[#F1F5F9]'
+            signal.status === 'HIT_SL'
+              ? 'text-[#FF3366]'
+              : signal.status === 'HIT_TP'
+              ? 'text-[#00E676]'
+              : flashDir === 'up'
+              ? 'text-[#00E676]'
+              : flashDir === 'down'
+              ? 'text-[#FF3366]'
+              : 'text-[#F1F5F9]'
           }`}>
-            {formatPrice(signal.pair, livePrice)}
+            {formatPrice(
+              signal.pair,
+              signal.status === 'HIT_SL' || signal.status === 'HIT_TP'
+                ? signal.currentPrice
+                : livePrice
+            )}
           </div>
         </div>
         <div>
@@ -321,13 +404,17 @@ export const SignalCard: React.FC<Props> = ({
           </div>
         </div>
         <div>
-          <div className="text-[8px] text-[#FF3366] font-bold uppercase">SL</div>
+          <div className="text-[8px] text-[#FF3366] font-bold uppercase">
+            SL (-{Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.stopLoss, isBuy))}p)
+          </div>
           <div className="text-[11px] font-mono font-bold text-[#FF3366]">
             {formatPrice(signal.pair, signal.stopLoss)}
           </div>
         </div>
         <div>
-          <div className="text-[8px] text-[#00E676] font-bold uppercase">TP1</div>
+          <div className="text-[8px] text-[#00E676] font-bold uppercase">
+            TP1 (+{Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.takeProfit1, isBuy))}p)
+          </div>
           <div className="text-[11px] font-mono font-bold text-[#00E676]">
             {formatPrice(signal.pair, signal.takeProfit1)}
           </div>
@@ -377,6 +464,23 @@ export const SignalCard: React.FC<Props> = ({
           {isPending && <span className="text-[#94A3B8]">• {countdown}</span>}
         </div>
       </div>
+
+      {/* Hit SL Re-entry Opportunity AI Banner */}
+      {signal.status === 'HIT_SL' && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onAskAi();
+          }}
+          className="w-full mb-2 py-2 px-3 rounded-xl bg-gradient-to-r from-[#FFD700]/20 via-[#FF3366]/20 to-[#FFD700]/20 hover:from-[#FFD700]/30 hover:to-[#FF3366]/30 border border-[#FFD700]/40 text-[#FFD700] font-black text-xs flex items-center justify-between transition-all group shadow-sm cursor-pointer"
+        >
+          <div className="flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-[#FFD700] animate-pulse" />
+            <span>🎯 Audit 2nd Entry Opportunity (AI Re-Entry)</span>
+          </div>
+          <span className="text-[10px] text-[#F1F5F9] font-mono font-normal">Check Sweep ➔</span>
+        </button>
+      )}
 
       {/* Elev8 MT5 Execution Bar */}
       {onOpenElev8Order && (

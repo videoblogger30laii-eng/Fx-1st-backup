@@ -1,5 +1,5 @@
 const STORAGE_KEYS = {
-  SIGNAL_ANCHORS: 'fx_signal_session_store_anchors',
+  SIGNAL_ANCHORS: 'fx_signal_session_store_anchors_v3',
   ALERTS: 'fx_user_custom_alerts',
   FAVORITES: 'fx_signal_favorites',
   SIGNAL_ALERTS: 'fx_signal_alerts_toggled',
@@ -14,6 +14,9 @@ const STORAGE_KEYS = {
   QUOTA: 'fx_api_quota_tracker',
   LAST_SYNC: 'fx_last_sync_timestamp',
   AI_CHAT_MESSAGES: 'fx_ai_copilot_chat_history_v2',
+  LIVE_FORWARD_TRADES: 'elev8_live_forward',
+  SIGNALS_STATE: 'fx_signals_state_v5',
+  NOTIFIED_TRANSITIONS: 'fx_notified_transitions_v5',
 };
 
 export const PersistenceManager = {
@@ -87,7 +90,7 @@ export const PersistenceManager = {
       return 120;
     }
   },
-  getOrAnchorCreatedAt(signalId: string, durationMs: number): number {
+  getOrAnchorCreatedAt(signalId: string, durationMs: number, initialAgeMs?: number): number {
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.SIGNAL_ANCHORS);
       const store: Record<string, number> = raw ? JSON.parse(raw) : {};
@@ -95,26 +98,24 @@ export const PersistenceManager = {
       const storedTime = store[signalId];
 
       if (storedTime && storedTime > 0) {
-        const elapsed = now - storedTime;
-        if (elapsed < 0) {
-          store[signalId] = now;
-          localStorage.setItem(STORAGE_KEYS.SIGNAL_ANCHORS, JSON.stringify(store));
-          return now;
-        }
-
-        // If expired beyond validity duration, auto-renew with fresh active anchor
-        if (elapsed >= durationMs) {
-          store[signalId] = now - 5 * 60 * 1000;
-          localStorage.setItem(STORAGE_KEYS.SIGNAL_ANCHORS, JSON.stringify(store));
-          return now - 5 * 60 * 1000;
-        }
-
         return storedTime;
       }
 
-      store[signalId] = now;
+      // Compute a deterministic, timeframe-proportional initial age
+      let seed = 0;
+      for (let i = 0; i < signalId.length; i++) {
+        seed = (seed * 31 + signalId.charCodeAt(i)) & 0x7fffffff;
+      }
+      const jitterFraction = 0.12 + ((seed % 17) / 100);
+      const defaultAgeMs =
+        typeof initialAgeMs === 'number' && initialAgeMs > 0
+          ? initialAgeMs
+          : Math.round(durationMs * jitterFraction);
+
+      const initialAnchor = now - defaultAgeMs;
+      store[signalId] = initialAnchor;
       localStorage.setItem(STORAGE_KEYS.SIGNAL_ANCHORS, JSON.stringify(store));
-      return now;
+      return initialAnchor;
     } catch {
       return Date.now();
     }
@@ -229,6 +230,135 @@ export const PersistenceManager = {
   clearAiChatMessages(): void {
     try {
       localStorage.removeItem(STORAGE_KEYS.AI_CHAT_MESSAGES);
+    } catch {
+      // ignore
+    }
+  },
+
+  getAlerts(): any[] | null {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.ALERTS);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  },
+
+  saveAlerts(alerts: any[]): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.ALERTS, JSON.stringify(alerts));
+    } catch {
+      // ignore
+    }
+  },
+
+  getLiveForwardTrades(): any[] {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.LIVE_FORWARD_TRADES);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  },
+
+  saveLiveForwardTrades(trades: any[]): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.LIVE_FORWARD_TRADES, JSON.stringify(trades));
+    } catch {
+      // ignore
+    }
+  },
+
+  addLiveForwardTrade(trade: any): any[] {
+    try {
+      const existing = this.getLiveForwardTrades();
+      // Deduplicate by ID
+      const filtered = existing.filter(t => t.id !== trade.id);
+      const updated = [trade, ...filtered].slice(0, 500); // keep up to 500 live forward records
+      this.saveLiveForwardTrades(updated);
+      return updated;
+    } catch {
+      return [trade];
+    }
+  },
+
+  clearLiveForwardTrades(): void {
+    try {
+      localStorage.removeItem(STORAGE_KEYS.LIVE_FORWARD_TRADES);
+    } catch {
+      // ignore
+    }
+  },
+
+  saveSignalsState(signals: any[]): void {
+    try {
+      if (!Array.isArray(signals) || signals.length === 0) return;
+      const now = Date.now();
+      const map: Record<string, any> = {};
+      signals.forEach(s => {
+        if (!s || !s.id) return;
+        if (s.isLiveSynced || s.status === 'HIT_SL' || s.status === 'HIT_TP' || s.id.startsWith('SIG-NEWS-')) {
+          map[s.id] = {
+            ...s,
+            savedAt: now
+          };
+        }
+      });
+      localStorage.setItem(STORAGE_KEYS.SIGNALS_STATE, JSON.stringify(map));
+    } catch {
+      // ignore
+    }
+  },
+
+  getSavedSignalsState(): Record<string, any> {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.SIGNALS_STATE);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return {};
+      const now = Date.now();
+      const valid: Record<string, any> = {};
+      Object.entries(parsed).forEach(([id, item]: [string, any]) => {
+        if (item && typeof item === 'object') {
+          const savedAt = item.savedAt || now;
+          // Keep state valid for 12 hours
+          if (now - savedAt < 12 * 3600 * 1000) {
+            valid[id] = item;
+          }
+        }
+      });
+      return valid;
+    } catch {
+      return {};
+    }
+  },
+
+  getNotifiedTransitions(): string[] {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.NOTIFIED_TRANSITIONS);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  },
+
+  saveNotifiedTransition(key: string): void {
+    try {
+      const existing = this.getNotifiedTransitions();
+      if (!existing.includes(key)) {
+        const updated = [...existing, key].slice(-300);
+        localStorage.setItem(STORAGE_KEYS.NOTIFIED_TRANSITIONS, JSON.stringify(updated));
+      }
     } catch {
       // ignore
     }

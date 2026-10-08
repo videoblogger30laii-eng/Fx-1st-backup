@@ -38,18 +38,12 @@ export interface ConfluenceChecklistItem {
   detail: string;
 }
 
-export type AssetCategory = 'ALL' | 'MAJORS' | 'MINORS' | 'METALS' | 'INDICES' | 'CRYPTO' | 'EXOTICS';
+export type AssetCategory = 'ALL' | 'MAJORS' | 'MINORS' | 'METALS' | 'EXOTICS';
 
-export function getAssetCategory(symbol: string): 'MAJORS' | 'MINORS' | 'METALS' | 'INDICES' | 'CRYPTO' {
+export function getAssetCategory(symbol: string): 'MAJORS' | 'MINORS' | 'METALS' {
   const sym = symbol.replace('/', '').toUpperCase();
   if (sym.startsWith('XAU') || sym.startsWith('GOLD') || sym.startsWith('XAG') || sym.startsWith('SILVER') || sym.includes('OIL')) {
     return 'METALS';
-  }
-  if (sym.startsWith('BTC') || sym.startsWith('ETH') || sym.startsWith('SOL') || sym.startsWith('XRP') || sym.startsWith('DOGE') || sym.startsWith('CRYPTO')) {
-    return 'CRYPTO';
-  }
-  if (sym.startsWith('US30') || sym.startsWith('NAS') || sym.startsWith('SPX') || sym.startsWith('GER') || sym.startsWith('UK100') || sym.startsWith('JP225')) {
-    return 'INDICES';
   }
   
   // 7 Traditional FX Majors (pairs containing USD with EUR, GBP, JPY, CHF, AUD, CAD, NZD)
@@ -70,7 +64,7 @@ export interface ForexPair {
   pipDigits: number;
   isGoldOrCrypto?: boolean;
   spreadPips: number;
-  category?: 'MAJORS' | 'MINORS' | 'METALS' | 'INDICES' | 'CRYPTO';
+  category?: 'MAJORS' | 'MINORS' | 'METALS';
   minMargin001?: number; // Estimated margin in USD needed to open 0.01 lot at standard 1:100 leverage
   pipValue001?: number; // Dollar value of 1 pip on 0.01 lot (typically $0.10)
   isMicroAccountFriendly?: boolean; // Safe to trade even on $10 - $50 micro balances
@@ -108,7 +102,10 @@ export interface ForexSignal {
   invalidationTrigger: string;
   validityDurationMs?: number;
   createdAtMs: number;
+  closedAtMs?: number;
+  isLiveSynced?: boolean;
   takeProfit: number;
+  strategy?: StrategyType;
   isSimulated?: boolean;
   detailedAnalysis?: SignalAnalysis;
 }
@@ -212,7 +209,7 @@ export type MarketDataProvider =
   | 'TWELVE_DATA'
   | 'FINNHUB'
   | 'INTERBANK_FEED'
-  | 'YAHOO_FINANCE'
+  | 'FAIR_ECONOMY_CALENDAR'
   | 'TRADING_VIEW';
 
 export interface MarketDataProviderConfig {
@@ -267,15 +264,15 @@ export const PROVIDER_CONFIGS: Record<MarketDataProvider, MarketDataProviderConf
     requiresKey: false,
     keyHint: 'No API Key required',
     supportsCandlesticks: true,
-    description: 'Global interbank reference rates + Binance crypto & spot gold backup'
+    description: 'Global interbank reference rates + spot gold backup'
   },
-  YAHOO_FINANCE: {
-    displayName: 'Yahoo Real-Time',
-    endpointName: 'stream.finance.yahoo.com',
+  FAIR_ECONOMY_CALENDAR: {
+    displayName: 'Forex Factory / Fair Economy Feed',
+    endpointName: 'nfs.faireconomy.media',
     requiresKey: false,
-    keyHint: 'Global Interbank Feed',
-    supportsCandlesticks: true,
-    description: 'High-frequency interbank FX quotes'
+    keyHint: 'Official Weekly Economic Calendar JSON Feed',
+    supportsCandlesticks: false,
+    description: 'Real-time macroeconomic calendar events, high-impact news releases, consensus forecasts and historical impacts.'
   }
 };
 
@@ -381,6 +378,7 @@ export type StrategyType =
 
 export interface StrategyConfig {
   title: string;
+  shortBadge: string;
   description: string;
   modelRule: string;
   defaultWinRate?: number;
@@ -389,25 +387,56 @@ export interface StrategyConfig {
 export const STRATEGY_CONFIGS: Record<StrategyType, StrategyConfig> = {
   BEST_TRADE_NOW: {
     title: 'Order Block + FVG Mitigation',
+    shortBadge: 'Order Block + FVG',
     description: 'H4 Order Block + M15 Fair Value Gap mitigation with multi-TF alignment',
     modelRule: 'Fixed 1.5R (SL: 1.0x ATR, TP: 1.5x ATR)'
   },
   ICT_SMART_MONEY: {
     title: 'ICT Liquidity Sweep & Displacement',
+    shortBadge: 'ICT Liquidity Sweep',
     description: 'Session liquidity pool sweep with aggressive market structure shift',
     modelRule: 'Fixed 1.5R (SL: 1.0x ATR, TP: 1.5x ATR)'
   },
   TREND_EMA_CONFLUENCE: {
     title: 'Triple EMA (20/50/200) Pullback',
+    shortBadge: 'Triple EMA (20/50/200)',
     description: 'Trend pullback entries on dynamic EMA 50 support/resistance retests',
     modelRule: 'Fixed 1.5R (SL: 1.0x ATR, TP: 1.5x ATR)'
   },
   LIQUIDITY_SWEEP: {
     title: 'London Range Breakout Fakeout',
+    shortBadge: 'London Range Fakeout',
     description: 'Range high/low sweep and immediate candle displacement reversal',
     modelRule: 'Fixed 1.5R (SL: 1.0x ATR, TP: 1.5x ATR)'
   }
 };
+
+/**
+ * Deterministically maps any live ForexSignal to its corresponding Institutional Strategy
+ * out of the 4 core strategies in STRATEGY_CONFIGS so Signal Cards and Backtesting match 100%.
+ */
+export function getSignalStrategy(signal: ForexSignal): StrategyType {
+  if (signal.strategy && STRATEGY_CONFIGS[signal.strategy]) {
+    return signal.strategy;
+  }
+  const text = `${signal.institutionalFlow || ''} ${signal.rationale || ''} ${signal.killzone || ''}`.toLowerCase();
+  if (signal.isBestTradeNow || (text.includes('order block') && text.includes('fvg'))) {
+    return 'BEST_TRADE_NOW';
+  }
+  if (text.includes('ema') || text.includes('trend') || text.includes('pullback') || text.includes('channel')) {
+    return 'TREND_EMA_CONFLUENCE';
+  }
+  if (text.includes('london') || text.includes('breakout') || text.includes('fakeout') || signal.type.includes('STOP')) {
+    return 'LIQUIDITY_SWEEP';
+  }
+  if (text.includes('sweep') || text.includes('displacement') || text.includes('liquidity') || text.includes('ict') || text.includes('mss')) {
+    return 'ICT_SMART_MONEY';
+  }
+  // Deterministic fallback based on pair symbol so all 4 strategies are represented across the 30 pairs
+  const hash = signal.pair.symbol.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const allStrats: StrategyType[] = ['BEST_TRADE_NOW', 'ICT_SMART_MONEY', 'TREND_EMA_CONFLUENCE', 'LIQUIDITY_SWEEP'];
+  return allStrats[hash % allStrats.length];
+}
 
 export type TradeOutcome = 'WIN' | 'LOSS';
 
@@ -421,15 +450,70 @@ export interface ConfluenceTierStats {
   netPips: number;
 }
 
+export type BacktestTimeHorizon = '24H' | '7D' | '15D' | '1M' | '3M' | '6M' | '1Y' | 'ALL';
+
+export interface BacktestTimeHorizonConfig {
+  id: BacktestTimeHorizon;
+  label: string;
+  subLabel: string;
+  days: number;
+}
+
+export const BACKTEST_TIME_HORIZONS: BacktestTimeHorizonConfig[] = [
+  { id: '24H', label: '24 Hours', subLabel: 'Last 24h Intra-Day', days: 1 },
+  { id: '7D', label: '1 Week', subLabel: 'Last 7 Days (W1)', days: 7 },
+  { id: '15D', label: '15 Days', subLabel: 'Last 15 Days (Fortnight)', days: 15 },
+  { id: '1M', label: '1 Month', subLabel: 'Last 30 Days (M1)', days: 30 },
+  { id: '3M', label: '3 Months', subLabel: 'Last 90 Days (Quarter)', days: 90 },
+  { id: '6M', label: '6 Months', subLabel: 'Last 180 Days (Half Year)', days: 180 },
+  { id: '1Y', label: '1 Year', subLabel: 'Last 365 Days (Annual)', days: 365 },
+  { id: 'ALL', label: 'All History', subLabel: 'Full Multi-Year Archive', days: 9999 },
+];
+
+export type BacktestTpStage = 'TP2_FULL' | 'TP1_BE' | 'SL_HIT';
+
+export interface AssetPerformanceStat {
+  pairSymbol: string;
+  category: AssetCategory;
+  totalTrades: number;
+  winTrades: number;
+  lossTrades: number;
+  fullTp2Wins?: number;
+  partialTp1BeWins?: number;
+  winRate: number;
+  totalPips: number;
+  profitDollar: number;
+  profitFactor: number;
+  bestWinPips: number;
+  worstLossPips: number;
+  returnPercent: number;
+}
+
+export type BacktestTradeSource = 'HISTORICAL' | 'LIVE_FORWARD';
+
 export interface BacktestTrade {
   id: string;
+  source?: BacktestTradeSource;
   pairSymbol: string;
   strategy: StrategyType;
   direction: SignalType;
   entryPrice: number;
   exitPrice: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  takeProfit1?: number;
+  takeProfit2?: number;
+  tpStage?: BacktestTpStage;
+  dollarPnl?: number;
+  commission?: number;
+  spreadDeducted?: number;
+  lotSize?: number;
+  exitReason?: string;
+  isLiveExecution?: boolean;
   entryTime: string;
   exitTime: string;
+  timestamp?: number;
+  exitTimestamp?: number;
   pips: number;
   pnlPercent: number;
   outcome: TradeOutcome;
@@ -447,6 +531,8 @@ export interface BacktestFilter {
   pairSymbol?: string | null;
   outcomeFilter?: TradeOutcome | null;
   category?: AssetCategory | null;
+  timeHorizon?: BacktestTimeHorizon | null;
+  sourceFilter?: BacktestTradeSource | 'ALL' | null;
 }
 
 export interface BacktestSummary {
@@ -454,6 +540,12 @@ export interface BacktestSummary {
   totalTrades: number;
   winTrades: number;
   lossTrades: number;
+  fullTp2Wins?: number;
+  partialTp1BeWins?: number;
+  directSlLosses?: number;
+  grossProfitDollars?: number;
+  grossLossDollars?: number;
+  netProfitDollars?: number;
   winRate: number;
   totalPips: number;
   profitFactor: number;
@@ -467,6 +559,9 @@ export interface BacktestSummary {
   equityCurve: number[];
   confluenceMatrix: ConfluenceTierStats[];
   filteredTrades: BacktestTrade[];
+  assetBreakdown?: AssetPerformanceStat[];
+  historicalCount?: number;
+  liveForwardCount?: number;
 }
 
 export type SmartMoneyType = 
@@ -639,12 +734,33 @@ export const DEFAULT_ELEV8_CONFIG: Elev8AccountConfig = {
 };
 
 // --- Currency Strength Meter Types ---
+export type StrengthAssetGroup = 'FX' | 'METALS' | 'COMMODITIES';
+
 export interface CurrencyStrengthItem {
-  currency: 'USD' | 'EUR' | 'GBP' | 'JPY' | 'AUD' | 'CAD' | 'CHF' | 'NZD';
+  currency: string;
+  name?: string;
+  pairSymbol?: string;
+  group?: StrengthAssetGroup;
+  livePrice?: number;
   strength: number; // 0.0 to 10.0
   status: 'VERY_STRONG' | 'STRONG' | 'NEUTRAL' | 'WEAK' | 'VERY_WEAK';
   change24h: number;
   momentum: 'RISING' | 'FALLING' | 'STABLE';
+}
+
+export interface PairStrengthItem {
+  pairSymbol: string;
+  name: string;
+  category: 'MAJORS' | 'MINORS' | 'METALS';
+  baseAsset: string;
+  quoteAsset: string;
+  baseStrength: number;
+  quoteStrength: number;
+  netStrengthDiff: number;
+  compositeScore: number; // 0.0 to 10.0
+  bias: 'STRONG BUY' | 'BUY' | 'NEUTRAL' | 'SELL' | 'STRONG SELL';
+  livePrice: number;
+  change24h: number;
 }
 
 export interface BestPairingRecommendation {

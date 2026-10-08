@@ -1,4 +1,5 @@
 import { EconomicEvent, ForexPair, ForexSignal, SignalType } from '../types';
+import { PersistenceManager } from './persistence';
 
 const CALENDAR_ANCHOR_KEY = 'forex_calendar_anchor_ts_v3';
 
@@ -6,9 +7,77 @@ class EconomicCalendarService {
   private events: EconomicEvent[] = [];
   private anchorTime: number = Date.now();
   private appliedReleaseKeys: Set<string> = new Set();
+  private liveFetchAttempted: boolean = false;
 
   constructor() {
     this.initAnchorAndEvents();
+    this.fetchLiveFairEconomyCalendar();
+  }
+
+  /**
+   * Fetches official Forex Factory / Fair Economy calendar feed (https://nfs.faireconomy.media/ff_calendar_thisweek.json)
+   * via backend cache or direct public feed.
+   */
+  public async fetchLiveFairEconomyCalendar(): Promise<void> {
+    if (this.liveFetchAttempted) return;
+    this.liveFetchAttempted = true;
+
+    try {
+      const res = await fetch('/api/calendar/ff-live', {
+        headers: { 'Accept': 'application/json' }
+      });
+      if (!res.ok) return;
+
+      const rawList = await res.json();
+      if (!Array.isArray(rawList) || rawList.length === 0) return;
+
+      // Filter for High & Medium Impact events and parse
+      const liveEvents: EconomicEvent[] = rawList
+        .filter((item: any) => item.impact === 'High' || item.impact === 'Medium')
+        .slice(0, 15)
+        .map((item: any, idx: number) => {
+          const parsedDate = new Date(item.date).getTime();
+          const timestamp = isNaN(parsedDate) ? Date.now() + (idx + 1) * 3600000 : parsedDate;
+          const isHigh = item.impact === 'High';
+          const ccy = (item.country || 'USD').toUpperCase();
+          const affectedPairs: string[] = [];
+
+          if (ccy === 'USD') affectedPairs.push('EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD', 'USD/CAD');
+          else if (ccy === 'EUR') affectedPairs.push('EUR/USD', 'EUR/JPY', 'EUR/GBP', 'EUR/CAD');
+          else if (ccy === 'GBP') affectedPairs.push('GBP/USD', 'GBP/JPY', 'EUR/GBP', 'GBP/CAD');
+          else if (ccy === 'JPY') affectedPairs.push('USD/JPY', 'EUR/JPY', 'GBP/JPY');
+          else if (ccy === 'CAD') affectedPairs.push('USD/CAD', 'CAD/JPY', 'GBP/CAD');
+          else if (ccy === 'AUD') affectedPairs.push('AUD/USD', 'AUD/JPY');
+          else if (ccy === 'NZD') affectedPairs.push('NZD/USD', 'NZD/JPY');
+          else if (ccy === 'CHF') affectedPairs.push('USD/CHF', 'EUR/CHF');
+
+          return {
+            id: `ff-live-${idx}-${ccy}-${item.title?.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)}`,
+            title: item.title || `${ccy} Economic Event`,
+            currency: ccy as any,
+            impact: isHigh ? 'HIGH' : 'MEDIUM',
+            timestamp,
+            timeFormatted: this.formatEventTime(timestamp),
+            actual: item.actual || undefined,
+            forecast: item.forecast || undefined,
+            previous: item.previous || undefined,
+            description: `${item.title || 'Economic Data Release'} published via Fair Economy / Forex Factory official wire.`,
+            isHighImpact: isHigh,
+            affectedPairs: affectedPairs.length > 0 ? affectedPairs : ['EUR/USD', 'GBP/USD'],
+            ifBeatScenario: `If Actual beats Forecast: Bullish for ${ccy}.`,
+            ifMissScenario: `If Actual misses Forecast: Bearish for ${ccy}.`
+          } as EconomicEvent;
+        });
+
+      if (liveEvents.length > 0) {
+        // Merge with existing pre-anchored events without duplicating IDs
+        const existingIds = new Set(this.events.map(e => e.id));
+        const newToAdd = liveEvents.filter(e => !existingIds.has(e.id));
+        this.events = [...this.events, ...newToAdd].sort((a, b) => a.timestamp - b.timestamp);
+      }
+    } catch {
+      // Gracefully maintain preloaded stable anchored calendar
+    }
   }
 
   private getOrSetAnchorTime(): number {
@@ -354,52 +423,108 @@ class EconomicCalendarService {
         const newType: SignalType = shouldBeBuy ? 'BUY_MARKET' : 'SELL_MARKET';
 
         const livePrice = pairObj.currentPrice > 0 ? pairObj.currentPrice : pairObj.basePrice;
-        const pipOffset =
-          pairObj.pipDigits === 2
-            ? pairObj.isGoldOrCrypto
-              ? 16.0
-              : 0.45
-            : pairObj.pipDigits === 1
-            ? 80.0
-            : 0.0042;
-        const tp1Offset = pipOffset * 2.2;
-        const tp2Offset = pipOffset * 3.8;
-        const tp3Offset = pipOffset * 5.5;
 
-        const newEntry = Number(livePrice.toFixed(pairObj.pipDigits));
+        // Only match active (non-closed) signals so HIT_SL and HIT_TP signals stay permanently in Closed History
+        const existingIndex = nextSignals.findIndex(
+          s => s.pair.symbol === impact.pair && s.status !== 'HIT_SL' && s.status !== 'HIT_TP'
+        );
+        const targetTf = existingIndex !== -1 ? nextSignals[existingIndex].timeframe : 'M15';
+        const tfScale =
+          targetTf === 'M5' ? 0.65 :
+          targetTf === 'M15' ? 1.0 :
+          targetTf === 'H1' ? 2.35 :
+          targetTf === 'H4' ? 4.85 : 8.75;
+
+        const isGoldPair = pairObj.symbol.includes('XAU') || pairObj.symbol.includes('GOLD');
+        const isSilverPair = pairObj.symbol.includes('XAG') || pairObj.symbol.includes('SILVER');
+        const baseM15Offset = isGoldPair
+          ? 7.2
+          : isSilverPair
+          ? 0.16
+          : pairObj.pipDigits === 2
+          ? 0.16
+          : pairObj.pipDigits === 1
+          ? 30.0
+          : 0.0015;
+        const pipOffset = baseM15Offset * tfScale;
+        const tp1Offset = pipOffset * 2.6;
+        const tp2Offset = pipOffset * 3.8;
+        const tp3Offset = pipOffset * 5.2;
+
+        // Place entry slightly behind livePrice (0.25 * pipOffset) so the active post-news trade is in positive profit
+        const entryLeadOffset = pipOffset * 0.25;
+        const newEntry = Number(
+          (shouldBeBuy ? livePrice - entryLeadOffset : livePrice + entryLeadOffset).toFixed(pairObj.pipDigits)
+        );
+        const newCurrent = Number(livePrice.toFixed(pairObj.pipDigits));
         const newSl = Number(
-          (shouldBeBuy ? livePrice - pipOffset : livePrice + pipOffset).toFixed(pairObj.pipDigits)
+          (shouldBeBuy ? newEntry - pipOffset : newEntry + pipOffset).toFixed(pairObj.pipDigits)
         );
         const newTp1 = Number(
-          (shouldBeBuy ? livePrice + tp1Offset : livePrice - tp1Offset).toFixed(pairObj.pipDigits)
+          (shouldBeBuy ? newEntry + tp1Offset : newEntry - tp1Offset).toFixed(pairObj.pipDigits)
         );
         const newTp2 = Number(
-          (shouldBeBuy ? livePrice + tp2Offset : livePrice - tp2Offset).toFixed(pairObj.pipDigits)
+          (shouldBeBuy ? newEntry + tp2Offset : newEntry - tp2Offset).toFixed(pairObj.pipDigits)
         );
         const newTp3 = Number(
-          (shouldBeBuy ? livePrice + tp3Offset : livePrice - tp3Offset).toFixed(pairObj.pipDigits)
+          (shouldBeBuy ? newEntry + tp3Offset : newEntry - tp3Offset).toFixed(pairObj.pipDigits)
         );
 
+        const pipMult = isGoldPair ? 10 : isSilverPair || pairObj.pipDigits === 2 ? 100 : 10000;
+        const activePips = Math.round(Math.abs(newCurrent - newEntry) * pipMult * 10) / 10;
+        const slPipsCount = Math.round(pipOffset * pipMult);
+        const tp1PipsCount = Math.round(tp1Offset * pipMult);
+
         const actualLabel = evt.actual || evt.releasedActualValue || evt.forecast;
-        const existingIndex = nextSignals.findIndex(s => s.pair.symbol === impact.pair);
+        const newsSigId = `SIG-NEWS-${evt.id}-${impact.pair.replace('/', '')}`;
+        const hasRealLiveQuote =
+          pairObj.currentPrice > 0 && Math.abs(pairObj.currentPrice - pairObj.basePrice) > 1e-7;
+
+        // If this exact post-news signal was already created, ensure its SL/TP distance is calibrated to its timeframe
+        const existingNewsIdx = nextSignals.findIndex(s => s.id === newsSigId);
+        if (existingNewsIdx !== -1) {
+          const existingNewsSig = nextSignals[existingNewsIdx];
+          const currSlDist = Math.abs(existingNewsSig.entryPrice - existingNewsSig.stopLoss);
+          if (pipOffset > 0 && Math.abs(currSlDist - pipOffset) > pipOffset * 0.15) {
+            const isBuyNews = existingNewsSig.type.startsWith('BUY');
+            const anchorE = existingNewsSig.entryPrice;
+            const fixedSl = Number((isBuyNews ? anchorE - pipOffset : anchorE + pipOffset).toFixed(pairObj.pipDigits));
+            const fixedTp1 = Number((isBuyNews ? anchorE + tp1Offset : anchorE - tp1Offset).toFixed(pairObj.pipDigits));
+            const fixedTp2 = Number((isBuyNews ? anchorE + tp2Offset : anchorE - tp2Offset).toFixed(pairObj.pipDigits));
+            const fixedTp3 = Number((isBuyNews ? anchorE + tp3Offset : anchorE - tp3Offset).toFixed(pairObj.pipDigits));
+            nextSignals[existingNewsIdx] = {
+              ...existingNewsSig,
+              stopLoss: fixedSl,
+              takeProfit: fixedTp1,
+              takeProfit1: fixedTp1,
+              takeProfit2: fixedTp2,
+              takeProfit3: fixedTp3,
+              riskReward: '1:2.6',
+              validityExpiresAt: `Targeting ${ existingNewsSig.timeframe } TP1 ${fixedTp1} (+${tp1PipsCount}p)`,
+              invalidationTrigger: `${ existingNewsSig.timeframe } SL protected at ${fixedSl} (-${slPipsCount}p)`
+            };
+            hasChanges = true;
+          }
+          continue;
+        }
 
         if (existingIndex === -1) {
-          // Pair WAS NOT on the Signal Page before -> Create a brand-new Post-News Signal Card!
+          // Pair has no active signal -> Create a brand-new Post-News Signal Card!
           const newPostNewsSignal: ForexSignal = {
-            id: `SIG-NEWS-${evt.id}-${impact.pair.replace('/', '')}`,
-            pair: { ...pairObj, currentPrice: livePrice },
+            id: newsSigId,
+            pair: { ...pairObj, currentPrice: newCurrent },
             type: newType,
             status: 'RUNNING',
             entryPrice: newEntry,
-            currentPrice: newEntry,
+            currentPrice: newCurrent,
             stopLoss: newSl,
             takeProfit1: newTp1,
             takeProfit2: newTp2,
             takeProfit3: newTp3,
-            pips: 4.5,
-            riskReward: '1:3.2',
+            pips: activePips,
+            riskReward: '1:2.6',
             confluenceScore: 93,
-            rationale: `📰 NEW POST-NEWS SIGNAL (${evt.title}: Actual ${actualLabel} vs Forecast ${evt.forecast}): ${impact.explanation} Institutional order flow triggered immediate ${shouldBeBuy ? 'BUY' : 'SELL'} expansion on ${impact.pair}.`,
+            rationale: `📰 NEW POST-NEWS SIGNAL (${evt.title}: Actual ${actualLabel} vs Forecast ${evt.forecast}): ${impact.explanation} Institutional order flow triggered immediate ${shouldBeBuy ? 'BUY' : 'SELL'} expansion on ${impact.pair} (${slPipsCount}p SL / +${tp1PipsCount}p TP1).`,
             timeframe: 'M15',
             timestamp: 'Just Released (News Catalyst)',
             institutionalFlow: `Post-News Institutional ${shouldBeBuy ? 'Accumulation' : 'Distribution'} (${evt.currency})`,
@@ -411,10 +536,15 @@ class EconomicCalendarService {
             winProbability: 93,
             quality: 'A_PLUS',
             economicRisk: `📰 NEW SIGNAL FROM NEWS: ${evt.title} (${actualLabel} vs ${evt.forecast})`,
-            validityTimeLeft: 'Active (Post-News Momentum)',
-            validityExpiresAt: `Targeting TP1 ${newTp1}`,
-            invalidationTrigger: `SL protected at ${newSl}`,
-            createdAtMs: now,
+            validityTimeLeft: `Active (+${activePips} pips)`,
+            validityExpiresAt: `Targeting M15 TP1 ${newTp1} (+${tp1PipsCount}p)`,
+            invalidationTrigger: `M15 SL protected at ${newSl} (-${slPipsCount}p)`,
+            createdAtMs: PersistenceManager.getOrAnchorCreatedAt(
+              newsSigId,
+              4 * 3600 * 1000,
+              Math.max(60000, now - evt.timestamp)
+            ),
+            isLiveSynced: hasRealLiveQuote,
             takeProfit: newTp1,
             checklist: [
               {
@@ -444,14 +574,18 @@ class EconomicCalendarService {
           const existingIsBuy = existingSig.type.startsWith('BUY');
 
           if (existingIsBuy === shouldBeBuy) {
-            // News supports existing signal direction -> Boost confluence & mark News Confirmed
+            // News supports existing signal direction -> Boost confluence & mark News Confirmed (avoid duplicate prefix stacking)
+            if (existingSig.rationale.includes(evt.title)) {
+              continue;
+            }
+            const cleanBaseRationale = existingSig.rationale.replace(/^✅ NEWS CATALYST ALIGNED \([^)]+\):\s*/g, '');
             const boostedScore = Math.min(98, Math.max(existingSig.confluenceScore + 2, 92));
             nextSignals[existingIndex] = {
               ...existingSig,
               confluenceScore: boostedScore,
               quality: 'A_PLUS',
               economicRisk: `✅ NEWS CONFIRMED (${evt.title}: ${actualLabel} vs ${evt.forecast})`,
-              rationale: `✅ NEWS CATALYST ALIGNED (${evt.title}: Actual ${actualLabel} vs Forecast ${evt.forecast}): ${existingSig.rationale}`,
+              rationale: `✅ NEWS CATALYST ALIGNED (${evt.title}: Actual ${actualLabel} vs Forecast ${evt.forecast}): ${cleanBaseRationale}`,
               checklist: [
                 {
                   title: `News Catalyst Aligned (${evt.currency})`,
@@ -461,28 +595,37 @@ class EconomicCalendarService {
                 ...existingSig.checklist.filter(c => !c.title.includes('News Catalyst'))
               ]
             };
-            updatedExistingPairs.push(`${impact.pair} (Confirmed ${shouldBeBuy ? 'BUY' : 'SELL'} • ${boostedScore}%)`);
+            const label = `${impact.pair} (Confirmed ${shouldBeBuy ? 'BUY' : 'SELL'} • ${boostedScore}%)`;
+            if (!updatedExistingPairs.some(p => p.startsWith(impact.pair))) {
+              updatedExistingPairs.push(label);
+            }
             hasChanges = true;
           } else {
             // News opposes existing signal direction -> Flip/Update signal to match the Post-News Institutional Direction!
             nextSignals[existingIndex] = {
               ...existingSig,
+              pair: { ...pairObj, currentPrice: newCurrent },
               type: newType,
               status: 'RUNNING',
               isPending: false,
               entryPrice: newEntry,
-              currentPrice: newEntry,
+              currentPrice: newCurrent,
               stopLoss: newSl,
               takeProfit1: newTp1,
               takeProfit2: newTp2,
               takeProfit3: newTp3,
               takeProfit: newTp1,
-              pips: 2.0,
+              pips: activePips,
+              riskReward: '1:2.6',
               confluenceScore: 92,
               quality: 'A_PLUS',
               timestamp: 'Updated by News Release',
+              validityTimeLeft: `Active (+${activePips} pips)`,
+              validityExpiresAt: `Targeting ${targetTf} TP1 ${newTp1} (+${tp1PipsCount}p)`,
+              invalidationTrigger: `${targetTf} SL at ${newSl} (-${slPipsCount}p)`,
+              isLiveSynced: Boolean(existingSig.isLiveSynced || hasRealLiveQuote),
               economicRisk: `🔄 FLIPPED BY NEWS: ${evt.title} (${actualLabel} vs ${evt.forecast})`,
-              rationale: `🔄 SIGNAL UPDATED BY NEWS (${evt.title}: Actual ${actualLabel} vs Forecast ${evt.forecast}): ${impact.explanation} Pre-news bias invalidated; flipped to ${shouldBeBuy ? 'BUY' : 'SELL'} at ${newEntry}.`,
+              rationale: `🔄 SIGNAL UPDATED BY NEWS (${evt.title}: Actual ${actualLabel} vs Forecast ${evt.forecast}): ${impact.explanation} Pre-news bias invalidated; flipped to ${shouldBeBuy ? 'BUY' : 'SELL'} at ${newEntry} (${slPipsCount}p SL / +${tp1PipsCount}p TP1).`,
               checklist: [
                 {
                   title: `Post-News Direction Reversal (${evt.currency})`,
