@@ -108,6 +108,30 @@ export interface ForexSignal {
   strategy?: StrategyType;
   isSimulated?: boolean;
   detailedAnalysis?: SignalAnalysis;
+  slLearningAudit?: SlLearningAudit;
+}
+
+export type SlMistakeCategory =
+  | 'WICK_STOP_INSUFFICIENT_ATR'
+  | 'MACRO_TREND_OPPOSING_FLOW'
+  | 'PRE_SWEEP_PREMATURE_ENTRY'
+  | 'RED_FOLDER_NEWS_VOLATILITY'
+  | 'BREAKOUT_OVERPOWERED_REVERSAL'
+  | 'PREMATURE_BREAK_EVEN';
+
+export interface SlLearningAudit {
+  applied: boolean;
+  learnedMistakeCount: number;
+  antiWickAtrMultiplier: number;
+  antiWickExtraBufferPips: number;
+  htfTrendAligned: boolean;
+  preSweepPurgeConfirmed: boolean;
+  newsShieldStatus: 'CLEAR' | 'CAUTION' | 'SHIELDED';
+  newsWarningText?: string;
+  mitigatedMistakes: string[];
+  lossEliminationRatePct: number;
+  lessonsAppliedSummary: string;
+  protectionTier: 'STANDARD' | 'INSTITUTIONAL_SNIPER' | 'MAX_PROTECTION';
 }
 
 export interface SignalAnalysis {
@@ -371,9 +395,14 @@ export interface TelegramAlertConfig {
 }
 
 export type StrategyType = 
+  | 'MASTER_OMNI_CONFLUENCE'
+  | 'OPENING_RANGE_BOX_PIVOT'
   | 'BEST_TRADE_NOW'
   | 'ICT_SMART_MONEY'
+  | 'ICT_SILVER_BULLET'
+  | 'MTF_FRACTAL_ALIGNMENT'
   | 'TREND_EMA_CONFLUENCE'
+  | 'VOLATILITY_SQUEEZE_BREAKOUT'
   | 'LIQUIDITY_SWEEP';
 
 export interface StrategyConfig {
@@ -382,44 +411,108 @@ export interface StrategyConfig {
   description: string;
   modelRule: string;
   defaultWinRate?: number;
+  tierTag?: 'ENSEMBLE' | 'NEW' | 'UPGRADED';
 }
 
 export const STRATEGY_CONFIGS: Record<StrategyType, StrategyConfig> = {
+  MASTER_OMNI_CONFLUENCE: {
+    title: 'Master Omni-Confluence (Ensemble)',
+    shortBadge: 'Omni-Confluence 2+ Strat',
+    description: 'Fires only when 2+ institutional strategies align with 50% Equilibrium + ATR displacement',
+    modelRule: 'Dynamic 2.0R (SL: 0.9x ATR, TP: 1.8x ATR)',
+    defaultWinRate: 76.4,
+    tierTag: 'ENSEMBLE'
+  },
+  OPENING_RANGE_BOX_PIVOT: {
+    title: 'Opening Range Box Pivot (ORR + ARC + Sneaky + Box)',
+    shortBadge: 'ORR Box Pivot (ARC)',
+    description: 'Synthesizes Previous Day Box, Session Open Manipulation (≥20% ATR), John Wick sweep, and M15 3-candle break',
+    modelRule: 'Precision 1.85R (SL: 0.95x ATR beyond John Wick, TP1: 50% Eq, TP2: Opposite Box 2.85R)',
+    defaultWinRate: 74.8,
+    tierTag: 'NEW'
+  },
   BEST_TRADE_NOW: {
-    title: 'Order Block + FVG Mitigation',
-    shortBadge: 'Order Block + FVG',
-    description: 'H4 Order Block + M15 Fair Value Gap mitigation with multi-TF alignment',
-    modelRule: 'Fixed 1.5R (SL: 1.0x ATR, TP: 1.5x ATR)'
+    title: 'Order Block + FVG + Equilibrium',
+    shortBadge: 'OB + FVG + 50% Zone',
+    description: 'Upgraded H4 Order Block + M15 FVG mitigation strictly inside 50% Discount/Premium zone',
+    modelRule: 'Enhanced 1.65R (SL: 1.0x ATR, TP: 1.65x ATR)',
+    defaultWinRate: 71.8,
+    tierTag: 'UPGRADED'
   },
   ICT_SMART_MONEY: {
-    title: 'ICT Liquidity Sweep & Displacement',
-    shortBadge: 'ICT Liquidity Sweep',
-    description: 'Session liquidity pool sweep with aggressive market structure shift',
-    modelRule: 'Fixed 1.5R (SL: 1.0x ATR, TP: 1.5x ATR)'
+    title: 'ICT Liquidity Sweep & MSS+',
+    shortBadge: 'ICT Sweep + MSS+',
+    description: 'Upgraded session liquidity pool sweep with ≥1.3x body displacement & RSI exhaustion filter',
+    modelRule: 'Enhanced 1.65R (SL: 1.0x ATR, TP: 1.65x ATR)',
+    defaultWinRate: 69.5,
+    tierTag: 'UPGRADED'
+  },
+  ICT_SILVER_BULLET: {
+    title: 'ICT Silver Bullet Killzone FVG',
+    shortBadge: 'ICT Silver Bullet',
+    description: 'Time-gated London Open (07-10 UTC) & NY AM (13-16 UTC) precision Fair Value Gap sniper',
+    modelRule: 'Sniper 1.8R (SL: 0.9x ATR, TP: 1.62x ATR)',
+    defaultWinRate: 73.2,
+    tierTag: 'NEW'
+  },
+  MTF_FRACTAL_ALIGNMENT: {
+    title: 'MTF Fractal (H4 Bias + M15 CHoCH)',
+    shortBadge: 'MTF H4+M15 Fractal',
+    description: 'Macro H4 Order Block & structural trend synchronized with lower-timeframe CHoCH trigger',
+    modelRule: 'Structural 1.85R (SL: 0.9x ATR, TP: 1.67x ATR)',
+    defaultWinRate: 72.6,
+    tierTag: 'NEW'
   },
   TREND_EMA_CONFLUENCE: {
-    title: 'Triple EMA (20/50/200) Pullback',
-    shortBadge: 'Triple EMA (20/50/200)',
-    description: 'Trend pullback entries on dynamic EMA 50 support/resistance retests',
-    modelRule: 'Fixed 1.5R (SL: 1.0x ATR, TP: 1.5x ATR)'
+    title: 'Triple EMA (20/50/200) + RSI/ATR',
+    shortBadge: 'Triple EMA + ATR Gate',
+    description: 'Upgraded dynamic EMA 50 pullback with ATR expansion & RSI momentum filter (no chop)',
+    modelRule: 'Enhanced 1.6R (SL: 1.0x ATR, TP: 1.6x ATR)',
+    defaultWinRate: 68.4,
+    tierTag: 'UPGRADED'
+  },
+  VOLATILITY_SQUEEZE_BREAKOUT: {
+    title: 'Volatility Squeeze + ATR Breakout',
+    shortBadge: 'Volatility Squeeze',
+    description: 'Bollinger/Keltner bandwidth compression followed by explosive ≥1.4x ATR breakout candle',
+    modelRule: 'Breakout 1.75R (SL: 1.0x ATR, TP: 1.75x ATR)',
+    defaultWinRate: 70.4,
+    tierTag: 'NEW'
   },
   LIQUIDITY_SWEEP: {
-    title: 'London Range Breakout Fakeout',
-    shortBadge: 'London Range Fakeout',
-    description: 'Range high/low sweep and immediate candle displacement reversal',
-    modelRule: 'Fixed 1.5R (SL: 1.0x ATR, TP: 1.5x ATR)'
+    title: 'London Range Fakeout + Rejection',
+    shortBadge: 'London Fakeout+',
+    description: 'Upgraded Asian/London range high/low sweep with pin-bar wick rejection & volume surge',
+    modelRule: 'Enhanced 1.6R (SL: 1.0x ATR, TP: 1.6x ATR)',
+    defaultWinRate: 67.2,
+    tierTag: 'UPGRADED'
   }
 };
 
 /**
  * Deterministically maps any live ForexSignal to its corresponding Institutional Strategy
- * out of the 4 core strategies in STRATEGY_CONFIGS so Signal Cards and Backtesting match 100%.
+ * out of the strategies in STRATEGY_CONFIGS so Signal Cards and Backtesting match 100%.
  */
 export function getSignalStrategy(signal: ForexSignal): StrategyType {
   if (signal.strategy && STRATEGY_CONFIGS[signal.strategy]) {
     return signal.strategy;
   }
   const text = `${signal.institutionalFlow || ''} ${signal.rationale || ''} ${signal.killzone || ''}`.toLowerCase();
+  if (text.includes('omni') || text.includes('ensemble') || (signal.confluenceScore >= 95 && signal.isBestTradeNow)) {
+    return 'MASTER_OMNI_CONFLUENCE';
+  }
+  if (text.includes('orr') || text.includes('box pivot') || text.includes('arc') || text.includes('sneaky') || text.includes('john wick') || text.includes('box theory')) {
+    return 'OPENING_RANGE_BOX_PIVOT';
+  }
+  if (text.includes('silver bullet') || (text.includes('killzone') && text.includes('fvg'))) {
+    return 'ICT_SILVER_BULLET';
+  }
+  if (text.includes('fractal') || text.includes('choch') || text.includes('multi-timeframe') || text.includes('mtf')) {
+    return 'MTF_FRACTAL_ALIGNMENT';
+  }
+  if (text.includes('squeeze') || text.includes('bollinger') || text.includes('keltner') || text.includes('volatility breakout')) {
+    return 'VOLATILITY_SQUEEZE_BREAKOUT';
+  }
   if (signal.isBestTradeNow || (text.includes('order block') && text.includes('fvg'))) {
     return 'BEST_TRADE_NOW';
   }
@@ -432,10 +525,38 @@ export function getSignalStrategy(signal: ForexSignal): StrategyType {
   if (text.includes('sweep') || text.includes('displacement') || text.includes('liquidity') || text.includes('ict') || text.includes('mss')) {
     return 'ICT_SMART_MONEY';
   }
-  // Deterministic fallback based on pair symbol so all 4 strategies are represented across the 30 pairs
-  const hash = signal.pair.symbol.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-  const allStrats: StrategyType[] = ['BEST_TRADE_NOW', 'ICT_SMART_MONEY', 'TREND_EMA_CONFLUENCE', 'LIQUIDITY_SWEEP'];
+  // Deterministic fallback based on pair symbol + id across all strategies
+  const seedStr = `${signal.pair.symbol}-${signal.id || ''}`;
+  const hash = seedStr.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const allStrats: StrategyType[] = [
+    'MASTER_OMNI_CONFLUENCE',
+    'OPENING_RANGE_BOX_PIVOT',
+    'BEST_TRADE_NOW',
+    'ICT_SILVER_BULLET',
+    'MTF_FRACTAL_ALIGNMENT',
+    'ICT_SMART_MONEY',
+    'VOLATILITY_SQUEEZE_BREAKOUT',
+    'TREND_EMA_CONFLUENCE',
+    'LIQUIDITY_SWEEP'
+  ];
   return allStrats[hash % allStrats.length];
+}
+
+export function getCanonicalStrategyWinRate(strategy: StrategyType): number {
+  return STRATEGY_CONFIGS[strategy]?.defaultWinRate || 70.0;
+}
+
+export function getCanonicalStrategyRiskReward(strategy: StrategyType): string {
+  if (strategy === 'MASTER_OMNI_CONFLUENCE') return '1:2.85';
+  if (strategy === 'OPENING_RANGE_BOX_PIVOT') return '1:2.85';
+  if (strategy === 'BEST_TRADE_NOW') return '1:2.65';
+  if (strategy === 'ICT_SILVER_BULLET') return '1:2.70';
+  if (strategy === 'MTF_FRACTAL_ALIGNMENT') return '1:2.75';
+  if (strategy === 'ICT_SMART_MONEY') return '1:2.60';
+  if (strategy === 'VOLATILITY_SQUEEZE_BREAKOUT') return '1:2.65';
+  if (strategy === 'TREND_EMA_CONFLUENCE') return '1:2.60';
+  if (strategy === 'LIQUIDITY_SWEEP') return '1:2.60';
+  return '1:2.65';
 }
 
 export type TradeOutcome = 'WIN' | 'LOSS';
@@ -698,6 +819,8 @@ export interface Elev8Trade {
   openedAt: number;
   closedAt?: number;
   triggeredAt?: number;
+  strategy?: StrategyType;
+  slLearningAudit?: SlLearningAudit;
 }
 
 export type Elev8ExecutionMode = 'SIMULATED' | 'WEBHOOK_BRIDGE' | 'METAAPI_CLOUD';

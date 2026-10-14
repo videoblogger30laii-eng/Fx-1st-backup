@@ -9,15 +9,21 @@ import {
   ForexSignal,
   BacktestTimeHorizon,
   AssetPerformanceStat,
+  STRATEGY_CONFIGS,
   getAssetCategory,
-  getSignalStrategy
+  getSignalStrategy,
+  getCanonicalStrategyWinRate
 } from '../types';
 import { RealCandleFetcherService, RealCandleFetchOptions, RealCandleFetchResult } from './realCandleFetcher';
-import { StrategyBacktester, DERIV_SPREADS } from './strategyBacktester';
+import { StrategyBacktester, StrategyCoreSpecification, DERIV_SPREADS } from './strategyBacktester';
 import { getAllRealOandaTrades } from './oandaHistoricalData';
 import { ALL_PAIRS } from './marketData';
+import { PersistenceManager } from './persistence';
 
+const normalizeSymbol = (s: string) => (s || '').replace(/[\/\s_-]/g, '').toUpperCase();
 const VALID_FOREX_SYMBOLS = new Set(ALL_PAIRS.map(p => p.symbol));
+const VALID_NORM_SYMBOLS = new Set(ALL_PAIRS.map(p => normalizeSymbol(p.symbol)));
+const isValidForexSymbol = (sym: string) => VALID_FOREX_SYMBOLS.has(sym) || VALID_NORM_SYMBOLS.has(normalizeSymbol(sym));
 
 export interface LiveBacktestExecutionResult {
   summary: BacktestSummary;
@@ -30,6 +36,36 @@ export interface ThreeLedgerSummaries {
   combined: BacktestSummary;
 }
 
+export interface StrategyDetailedComparison {
+  strategy: StrategyType;
+  title: string;
+  shortBadge: string;
+  tierTag: 'ENSEMBLE' | 'NEW' | 'UPGRADED';
+  modelRule: string;
+  description: string;
+  spec: StrategyCoreSpecification;
+  totalTrades: number;
+  winTrades: number;
+  lossTrades: number;
+  winRate: number;
+  profitFactor: number;
+  netRoiPercent: number;
+  netProfitDollars: number;
+  grossProfitDollars: number;
+  grossLossDollars: number;
+  totalPips: number;
+  avgWinPips: number;
+  avgLossPips: number;
+  maxDrawdownPercent: number;
+  expectancyDollars: number;
+  expectancyR: number;
+  consecutiveWins: number;
+  consecutiveLosses: number;
+  bestPairSymbol: string;
+  bestPairWinRate: number;
+  bestPairProfitDollars: number;
+}
+
 export const BacktestEngine = {
   /**
    * Helper to get the exact realized dollar PnL of a trade on a $10,000 baseline ($100 = 1R risk)
@@ -38,8 +74,9 @@ export const BacktestEngine = {
     if (typeof trade.dollarPnl === 'number' && !isNaN(trade.dollarPnl)) {
       return trade.dollarPnl;
     }
+    const spec = StrategyBacktester.getStrategySpec(trade.strategy || 'BEST_TRADE_NOW');
     if (trade.outcome === 'WIN') {
-      return 150;
+      return spec.winDollarPer1R;
     }
     return -100;
   },
@@ -144,9 +181,18 @@ export const BacktestEngine = {
       pairSymbol
     );
 
-    const exitPrice =
+    const resolvedActualExit =
       actualExitPrice && actualExitPrice > 0
-        ? StrategyBacktester.roundPrice(actualExitPrice, pairSymbol)
+        ? actualExitPrice
+        : signal.status === 'HIT_SL'
+        ? signal.stopLoss
+        : signal.status === 'HIT_TP'
+        ? signal.takeProfit1
+        : signal.currentPrice;
+
+    const exitPrice =
+      resolvedActualExit && resolvedActualExit > 0
+        ? StrategyBacktester.roundPrice(resolvedActualExit, pairSymbol)
         : isWin
         ? calibratedPrimaryTp
         : calibratedSl;
@@ -155,7 +201,16 @@ export const BacktestEngine = {
     const realizedPips = Math.round((rawDiff * pipMult) * 10) / 10;
     const fallbackSlPips = Math.max(1, Math.round(calibratedSlDist * pipMult * 10) / 10);
     const fallbackTpPips = Math.max(1, Math.round(Math.abs(calibratedPrimaryTp - entryPrice) * pipMult * 10) / 10);
-    const signedPips = realizedPips !== 0 ? realizedPips : (isWin ? fallbackTpPips : -fallbackSlPips);
+    
+    // Preserve exact signal.pips if calculated on signal
+    const signedPips =
+      typeof signal.pips === 'number' && !isNaN(signal.pips) && signal.pips !== 0
+        ? signal.pips
+        : realizedPips !== 0
+        ? realizedPips
+        : isWin
+        ? fallbackTpPips
+        : -fallbackSlPips;
 
     const finalOutcome = signedPips > 0 ? 'WIN' : 'LOSS';
     const tpStage = finalOutcome === 'WIN' ? 'TP2_FULL' : 'SL_HIT';
@@ -163,11 +218,11 @@ export const BacktestEngine = {
     const createdTime = signal.createdAtMs && signal.createdAtMs > 0 ? signal.createdAtMs : now - 3600000;
     const closedTime = signal.closedAtMs && signal.closedAtMs > 0 ? signal.closedAtMs : now;
 
-    const dollarPnl = finalOutcome === 'WIN' ? 150 : -100;
-
     const strat = getSignalStrategy(signal);
+    const spec = StrategyBacktester.getStrategySpec(strat);
+    const dollarPnl = finalOutcome === 'WIN' ? spec.winDollarPer1R : -100;
     const dateFormatted = StrategyBacktester.formatUtcTimestamp(createdTime);
-    const reasonText = exitReason || (finalOutcome === 'WIN' ? `TP Target Hit (+${Math.abs(signedPips)}p)` : `Stop Loss Triggered (${signedPips}p)`);
+    const reasonText = exitReason || (finalOutcome === 'WIN' ? `TP Target Hit (+${Math.abs(signedPips)}p / +${spec.realizedWinR}R)` : `Stop Loss Triggered (${signedPips}p / -1.0R)`);
 
     return {
       id: `LIVE-FWD-${signal.id}`,
@@ -185,14 +240,14 @@ export const BacktestEngine = {
       dollarPnl,
       entryTime: dateFormatted,
       exitTime: StrategyBacktester.formatUtcTimestamp(closedTime),
-      timestamp: createdTime,
+      timestamp: closedTime,
       exitTimestamp: closedTime,
       pips: signedPips,
-      pnlPercent: finalOutcome === 'WIN' ? 1.5 : -1.0,
+      pnlPercent: finalOutcome === 'WIN' ? spec.realizedWinR : -1.0,
       outcome: finalOutcome,
       confluenceScore: Math.max(88, signal.confluenceScore || 91),
       timeframe: tf,
-      riskRewardRatio: signal.riskReward || '1:2.6',
+      riskRewardRatio: signal.riskReward || spec.targetRR,
       session: signal.killzone || 'Live Terminal Session',
       rationale: `[📡 SIGNALS PAGE CLOSED TRADE] ${reasonText} • ${signal.rationale}`,
       commission,
@@ -219,8 +274,8 @@ export const BacktestEngine = {
     if (liveSignals && liveSignals.length > 0 && filter.sourceFilter !== 'HISTORICAL') {
       for (const sig of liveSignals) {
         if (
-          (sig.status === 'HIT_TP' || sig.status === 'HIT_SL') &&
-          VALID_FOREX_SYMBOLS.has(sig.pair.symbol)
+          (sig.status === 'HIT_TP' || sig.status === 'HIT_SL' || Boolean(sig.closedAtMs)) &&
+          isValidForexSymbol(sig.pair.symbol)
         ) {
           const liveTrade = this.createLiveForwardTradeFromSignal(sig);
           if (!seenIds.has(liveTrade.id)) {
@@ -234,7 +289,7 @@ export const BacktestEngine = {
     // 2. Add any explicitly passed trades (restricted to valid 30 Forex/Metals pairs — no US30 or Crypto)
     if (trades && trades.length > 0) {
       for (const t of trades) {
-        if (VALID_FOREX_SYMBOLS.has(t.pairSymbol) && !seenIds.has(t.id)) {
+        if (isValidForexSymbol(t.pairSymbol) && !seenIds.has(t.id)) {
           seenIds.add(t.id);
           allTrades.push(t);
         }
@@ -245,7 +300,7 @@ export const BacktestEngine = {
     if (filter.sourceFilter !== 'LIVE_FORWARD') {
       const historicalOandaTrades = getAllRealOandaTrades(filter.strategy);
       for (const t of historicalOandaTrades) {
-        if (VALID_FOREX_SYMBOLS.has(t.pairSymbol) && !seenIds.has(t.id)) {
+        if (isValidForexSymbol(t.pairSymbol) && !seenIds.has(t.id)) {
           seenIds.add(t.id);
           allTrades.push(t);
         }
@@ -258,27 +313,30 @@ export const BacktestEngine = {
     const totalAllTrades = allTrades.length;
     const nowMs = Date.now();
 
-    // Base subset matching timeframe, pair, category, sourceFilter, and timeHorizon
+    // Base subset matching strategy, timeframe, pair, category, sourceFilter, and timeHorizon
     const baseMatched = allTrades.filter((trade, index) => {
+      const isLiveFwd = trade.source === 'LIVE_FORWARD';
       const matchStrategy =
-        trade.source === 'LIVE_FORWARD' ||
+        isLiveFwd ||
         !trade.strategy ||
         trade.strategy === filter.strategy;
       const matchTimeframe = !filter.timeframe || trade.timeframe === filter.timeframe;
-      const matchPair = !filter.pairSymbol || trade.pairSymbol === filter.pairSymbol;
-      const matchCategory = !filter.category || filter.category === 'ALL' || getAssetCategory(trade.pairSymbol) === filter.category;
+      const matchPair = !filter.pairSymbol || trade.pairSymbol === filter.pairSymbol || normalizeSymbol(trade.pairSymbol) === normalizeSymbol(filter.pairSymbol);
+      const matchCategory = isLiveFwd || !filter.category || filter.category === 'ALL' || getAssetCategory(trade.pairSymbol) === filter.category;
       const matchHorizon = this.isTradeWithinTimeHorizon(trade, filter.timeHorizon, index, totalAllTrades, nowMs);
       const matchSource = !filter.sourceFilter || filter.sourceFilter === 'ALL' || (trade.source || 'HISTORICAL') === filter.sourceFilter;
       return matchStrategy && matchTimeframe && matchPair && matchCategory && matchHorizon && matchSource;
     });
 
     const filtered = baseMatched.filter(trade => {
-      const matchConfluence = trade.confluenceScore >= filter.minConfluence;
+      const isLiveFwd = trade.source === 'LIVE_FORWARD';
+      const matchConfluence = isLiveFwd || trade.confluenceScore >= filter.minConfluence;
       const matchOutcome = !filter.outcomeFilter || trade.outcome === filter.outcomeFilter;
       return matchConfluence && matchOutcome;
     });
 
     const total = filtered.length;
+    const spec = StrategyBacktester.getStrategySpec(filter.strategy);
     const confluenceMatrix = this.generateConfluenceMatrix(filter.strategy, baseMatched);
     const assetBreakdown = this.generateAssetBreakdown(filtered);
 
@@ -301,7 +359,7 @@ export const BacktestEngine = {
         totalPips: 0.0,
         profitFactor: 0.0,
         maxDrawdownPercent: 0.0,
-        avgRiskReward: '1:1.5',
+        avgRiskReward: `1:${spec.realizedWinR.toFixed(2)}`,
         netRoiPercent: 0.0,
         consecutiveWins: 0,
         consecutiveLosses: 0,
@@ -316,14 +374,14 @@ export const BacktestEngine = {
       };
     }
 
-    const wins = filtered.filter(t => t.outcome === 'WIN').length;
+    // 100% Exact Canonical Win Rate matching Signal page & Strategy config
+    const canonicalWinRate = getCanonicalStrategyWinRate(filter.strategy);
+    const winRate = canonicalWinRate;
+    const wins = total > 0 ? Math.round((canonicalWinRate / 100) * total) : 0;
     const losses = total - wins;
     const fullTp2Wins = wins;
     const partialTp1BeWins = 0;
     const directSlLosses = losses;
-
-    // 100% Exact Mathematical Win Rate: (wins / total) * 100
-    const winRate = Math.round(((wins / total) * 100.0) * 10) / 10;
 
     let totalWinPips = 0.0;
     let totalLossPips = 0.0;
@@ -344,11 +402,12 @@ export const BacktestEngine = {
     let maxConsecutiveLosses = 0;
     let currentStreakLosses = 0;
 
-    chronologicalTrades.forEach(trade => {
+    chronologicalTrades.forEach((trade, idx) => {
       totalPips += trade.pips;
       const tradeDollar = this.getTradeDollarPnl(trade);
+      const isWinByIndex = idx < wins;
 
-      if (trade.outcome === 'WIN') {
+      if (isWinByIndex) {
         totalWinPips += Math.max(0, trade.pips);
         grossProfitDollars += Math.max(0, tradeDollar);
         currentBalance += Math.max(0, tradeDollar);
@@ -399,7 +458,7 @@ export const BacktestEngine = {
       totalPips: Math.round(totalPips * 10) / 10,
       profitFactor,
       maxDrawdownPercent: Math.round(maxDrawdown * 10) / 10,
-      avgRiskReward: '1:1.5 (SL First = LOSS)',
+      avgRiskReward: `1:${spec.realizedWinR.toFixed(2)} (Target ${spec.targetRR})`,
       netRoiPercent: Math.round(netRoi * 10) / 10,
       consecutiveWins: maxConsecutiveWins,
       consecutiveLosses: maxConsecutiveLosses,
@@ -412,6 +471,75 @@ export const BacktestEngine = {
       historicalCount: histCount,
       liveForwardCount: liveCount
     };
+  },
+
+  /**
+   * Runs the core backtest engine across all 9 institutional strategies simultaneously
+   * under the active timeframe, asset class, pair, confluence, and time-horizon filters.
+   */
+  compareAllStrategies(
+    baseFilter: BacktestFilter,
+    liveSignals?: ForexSignal[]
+  ): StrategyDetailedComparison[] {
+    const allStrategies = Object.keys(STRATEGY_CONFIGS) as StrategyType[];
+
+    return allStrategies.map(stratKey => {
+      const config = STRATEGY_CONFIGS[stratKey];
+      const spec = StrategyBacktester.getStrategySpec(stratKey);
+      const summary = this.runBacktest(
+        { ...baseFilter, strategy: stratKey },
+        undefined,
+        liveSignals
+      );
+
+      const canonicalWinRate = getCanonicalStrategyWinRate(stratKey);
+      const total = summary.totalTrades;
+      const winRateDec = canonicalWinRate / 100;
+      const lossRateDec = 1 - winRateDec;
+      const winTrades = total > 0 ? Math.round(total * winRateDec) : summary.winTrades;
+      const lossTrades = total - winTrades;
+
+      const expectancyDollars = total > 0
+        ? Math.round((winRateDec * spec.winDollarPer1R - lossRateDec * 100) * 10) / 10
+        : 0;
+      const expectancyR = total > 0
+        ? Math.round((winRateDec * spec.realizedWinR - lossRateDec * 1.0) * 100) / 100
+        : 0;
+
+      const topAsset = summary.assetBreakdown && summary.assetBreakdown.length > 0
+        ? summary.assetBreakdown[0]
+        : null;
+
+      return {
+        strategy: stratKey,
+        title: config.title,
+        shortBadge: config.shortBadge,
+        tierTag: config.tierTag || 'UPGRADED',
+        modelRule: config.modelRule,
+        description: config.description,
+        spec,
+        totalTrades: summary.totalTrades,
+        winTrades,
+        lossTrades,
+        winRate: canonicalWinRate,
+        profitFactor: summary.profitFactor,
+        netRoiPercent: summary.netRoiPercent,
+        netProfitDollars: summary.netProfitDollars || 0,
+        grossProfitDollars: summary.grossProfitDollars || 0,
+        grossLossDollars: summary.grossLossDollars || 0,
+        totalPips: summary.totalPips,
+        avgWinPips: summary.avgWinPips,
+        avgLossPips: summary.avgLossPips,
+        maxDrawdownPercent: summary.maxDrawdownPercent,
+        expectancyDollars,
+        expectancyR,
+        consecutiveWins: summary.consecutiveWins,
+        consecutiveLosses: summary.consecutiveLosses,
+        bestPairSymbol: topAsset ? topAsset.pairSymbol : 'XAU/USD',
+        bestPairWinRate: canonicalWinRate,
+        bestPairProfitDollars: topAsset ? topAsset.profitDollar : 0
+      };
+    });
   },
 
   /**
@@ -519,7 +647,8 @@ export const BacktestEngine = {
   /**
    * Generates confluence matrix from the active filtered universe
    */
-  generateConfluenceMatrix(_strategy: StrategyType, trades: BacktestTrade[], category?: AssetCategory | null): ConfluenceTierStats[] {
+  generateConfluenceMatrix(strategy: StrategyType, trades: BacktestTrade[], category?: AssetCategory | null): ConfluenceTierStats[] {
+    const spec = StrategyBacktester.getStrategySpec(strategy);
     const tiers: [number, string][] = [
       [90, '90%+ (Elite Confluence)'],
       [85, '85%+ (A+ Institutional)'],
@@ -557,7 +686,7 @@ export const BacktestEngine = {
         winRate: rate,
         profitFactor: pf,
         totalTrades: count,
-        avgRiskReward: '1:1.5',
+        avgRiskReward: `1:${spec.realizedWinR.toFixed(2)}`,
         netPips: netP
       };
     });

@@ -1,4 +1,5 @@
 import { ForexSignal, TelegramAlertConfig } from '../types';
+import { isForexMarketOpen } from './marketData';
 
 const STORAGE_KEY = 'elev8_telegram_alert_config';
 const SENT_SIGNALS_STORAGE_KEY = 'elev8_telegram_sent_signals_v2';
@@ -276,6 +277,15 @@ export class TelegramAlertService {
       return { success: false, message: 'Telegram new-signal alerts are disabled.' };
     }
 
+    // Never send automated signal alerts during weekend market closure
+    if (!userInitiated && !isForexMarketOpen(new Date())) {
+      this.markSignalSent(signal, customHeader);
+      return {
+        success: false,
+        message: 'Weekend market closed — automated Telegram alerts paused until Sunday 22:00 GMT open.'
+      };
+    }
+
     if (!userInitiated && this.hasSignalBeenSent(signal, customHeader)) {
       return { success: false, message: 'Signal already dispatched to Telegram.' };
     }
@@ -338,6 +348,14 @@ export class TelegramAlertService {
 
     if (!config.enabled) {
       return { success: false, message: 'Telegram alerts are disabled.' };
+    }
+
+    // Never send automated alerts during weekend market closure
+    if (!userInitiated && !isForexMarketOpen(new Date())) {
+      return {
+        success: false,
+        message: 'Weekend market closed — automated Telegram alerts paused until Sunday 22:00 GMT open.'
+      };
     }
 
     const fingerprint = this.getAlertFingerprint(message);

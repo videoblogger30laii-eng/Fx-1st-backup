@@ -1,5 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Elev8Trade } from '../types';
+import { formatDurationCompact } from '../services/marketData';
+import { StrategyPerformanceSummaryModal } from './StrategyPerformanceSummaryModal';
+import { TradeOutcomeAnalysisModal } from './TradeOutcomeAnalysisModal';
 import {
   X,
   BookOpen,
@@ -15,8 +18,12 @@ import {
   Globe,
   Clock,
   Zap,
-  DollarSign
+  DollarSign,
+  Trophy,
+  ShieldAlert,
+  ShieldCheck
 } from 'lucide-react';
+import { adaptiveSlLearningService } from '../services/adaptiveSlLearningService';
 
 interface Props {
   isOpen: boolean;
@@ -24,11 +31,13 @@ interface Props {
   trades: Elev8Trade[];
 }
 
-type JournalTab = 'OVERVIEW' | 'CALENDAR' | 'SESSIONS' | 'LOG';
+type JournalTab = 'OVERVIEW' | 'CALENDAR' | 'SESSIONS' | 'LOG' | 'LEARNING';
 
 export const TradeJournalModal: React.FC<Props> = ({ isOpen, onClose, trades }) => {
   const [activeTab, setActiveTab] = useState<JournalTab>('OVERVIEW');
   const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(null);
+  const [isSummaryModalOpen, setIsSummaryModalOpen] = useState<boolean>(false);
+  const [selectedOutcomeTrade, setSelectedOutcomeTrade] = useState<Elev8Trade | null>(null);
 
   // Convert Elev8 trades to journal analytics
   const closedTrades = useMemo(() => trades.filter(t => t.status === 'CLOSED'), [trades]);
@@ -198,6 +207,13 @@ export const TradeJournalModal: React.FC<Props> = ({ isOpen, onClose, trades }) 
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setIsSummaryModalOpen(true)}
+              className="px-2.5 py-1 bg-[#2979FF]/20 hover:bg-[#2979FF]/30 text-[#2979FF] border border-[#2979FF]/40 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <PieChart className="w-3.5 h-3.5" />
+              <span>Strategy SL Diagnostics</span>
+            </button>
+            <button
               onClick={handleExportCsv}
               className="px-2.5 py-1 bg-[#182033] hover:bg-[#222F47] text-[#F1F5F9] border border-[#222F47] rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
             >
@@ -220,7 +236,8 @@ export const TradeJournalModal: React.FC<Props> = ({ isOpen, onClose, trades }) 
               { id: 'OVERVIEW', label: '📊 Overview & KPIs', icon: BarChart3 },
               { id: 'CALENDAR', label: '📅 PnL Calendar', icon: Calendar },
               { id: 'SESSIONS', label: '🌍 Killzone Heatmap', icon: Globe },
-              { id: 'LOG', label: '📋 Execution Log', icon: BookOpen }
+              { id: 'LOG', label: '📋 Execution Log', icon: BookOpen },
+              { id: 'LEARNING', label: '🧠 SL Mistake Learning', icon: ShieldAlert }
             ] as { id: JournalTab; label: string; icon: any }[]
           ).map(tab => (
             <button
@@ -406,9 +423,9 @@ export const TradeJournalModal: React.FC<Props> = ({ isOpen, onClose, trades }) 
 
           {/* TAB 4: EXECUTION LOG */}
           {activeTab === 'LOG' && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="text-xs font-bold text-[#F1F5F9] mb-1">
-                Completed Trades Log ({closedTrades.length} trades)
+                Completed Trades Log & SL vs Entry Timeline ({closedTrades.length} trades)
               </div>
               {closedTrades.length === 0 ? (
                 <div className="text-center py-8 text-xs text-[#64748B] bg-[#101522] rounded-xl border border-[#222F47]">
@@ -417,34 +434,113 @@ export const TradeJournalModal: React.FC<Props> = ({ isOpen, onClose, trades }) 
               ) : (
                 closedTrades.map(t => {
                   const isWin = (t.realizedPnl || 0) > 0 || t.closeReason?.includes('TP');
+                  const durationMs = Math.max(60 * 1000, (t.closedAt || Date.now()) - t.openedAt);
+                  const heldTimeStr = formatDurationCompact(durationMs);
                   return (
                     <div
                       key={t.id}
-                      className="bg-[#101522] border border-[#222F47] rounded-xl p-3 flex items-center justify-between text-xs font-mono"
+                      className="bg-[#101522] border border-[#222F47] rounded-xl p-3 flex flex-col gap-2 text-xs font-mono"
                     >
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-[#F1F5F9]">{t.symbol}</span>
-                        <span className="text-[10px] text-[#64748B]">{t.orderType}</span>
-                        <span
-                          className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                            isWin
-                              ? 'bg-[#00E676]/20 text-[#00E676]'
-                              : 'bg-[#FF3366]/20 text-[#FF3366]'
-                          }`}
-                        >
-                          {t.closeReason || (isWin ? 'TP' : 'SL')}
-                        </span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-[#F1F5F9]">{t.symbol}</span>
+                          <span className="text-[10px] text-[#64748B]">{t.orderType}</span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedOutcomeTrade(t)}
+                            className={`text-[9px] font-black px-2 py-0.5 rounded border transition-all cursor-pointer shadow-xs hover:scale-105 ${
+                              isWin
+                                ? 'bg-[#00E676]/20 text-[#00E676] border-[#00E676]/40 hover:bg-[#00E676]/30'
+                                : 'bg-[#FF3366]/20 text-[#FF3366] border-[#FF3366]/40 hover:bg-[#FF3366]/30'
+                            }`}
+                            title={`Click for deep forensic breakdown: Why it hit ${isWin ? 'TP' : 'SL'}?`}
+                          >
+                            <span>{t.closeReason || (isWin ? 'TP' : 'SL')}</span>
+                            <span className="text-[8px] underline ml-1">· Why {isWin ? 'TP' : 'SL'}?</span>
+                          </button>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <span
+                            className={`font-bold text-[9px] px-1.5 py-0.5 rounded border flex items-center gap-1 font-mono ${
+                              isWin
+                                ? 'text-[#00E676] bg-[#00E676]/10 border-[#00E676]/30'
+                                : 'text-[#FF3366] bg-[#FF3366]/10 border-[#FF3366]/30'
+                            }`}
+                            title="Trade Holding Duration (Time elapsed between open and close)"
+                          >
+                            {isWin ? (
+                              <Trophy className="w-2.5 h-2.5 text-[#00E676]" />
+                            ) : (
+                              <Clock className="w-2.5 h-2.5 text-[#FF3366]" />
+                            )}
+                            <span>
+                              {isWin ? 'Win Held: ' : 'Loss Held: '}
+                              {heldTimeStr}
+                            </span>
+                          </span>
+
+                          <span className={isWin ? 'text-[#00E676]' : 'text-[#FF3366]'}>
+                            {t.pips >= 0 ? `+${t.pips}p` : `${t.pips}p`}
+                          </span>
+                          <span className={`font-bold ${isWin ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                            {(t.realizedPnl || 0) >= 0
+                              ? `+$${(t.realizedPnl || 0).toFixed(2)}`
+                              : `-$${Math.abs(t.realizedPnl || 0).toFixed(2)}`}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() => setSelectedOutcomeTrade(t)}
+                            className={`text-[9px] font-black px-1.5 py-0.5 rounded border transition-all cursor-pointer shadow-xs ${
+                              isWin
+                                ? 'text-[#00E676] bg-[#00E676]/10 hover:bg-[#00E676]/25 border-[#00E676]/30'
+                                : 'text-[#FF3366] bg-[#FF3366]/10 hover:bg-[#FF3366]/25 border-[#FF3366]/30'
+                            }`}
+                            title="Audit trade outcome & circumstances"
+                          >
+                            🔍 Audit
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-3">
-                        <span className={isWin ? 'text-[#00E676]' : 'text-[#FF3366]'}>
-                          {t.pips >= 0 ? `+${t.pips}p` : `${t.pips}p`}
-                        </span>
-                        <span className={`font-bold ${isWin ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
-                          {(t.realizedPnl || 0) >= 0
-                            ? `+$${(t.realizedPnl || 0).toFixed(2)}`
-                            : `-$${Math.abs(t.realizedPnl || 0).toFixed(2)}`}
-                        </span>
+                      {/* SL vs Entry Timeline & Volatility vs Trend Diagnosis */}
+                      <div className="pt-2 border-t border-[#222F47]/60 flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-[#94A3B8]">SL vs Entry Distance Timeline:</span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedOutcomeTrade(t)}
+                            className={`font-bold transition-all hover:underline cursor-pointer flex items-center gap-1 ${
+                              isWin ? 'text-[#00E676]' : 'text-[#FF3366]'
+                            }`}
+                            title="Click to view full forensic breakdown"
+                          >
+                            <span>
+                              {isWin
+                                ? '🎯 Clean Trend Target Bagged (TP Hit)'
+                                : Math.abs(t.pips || 0) < 15
+                                ? '⚡ Stopped out by Volatility Spike (Wick)'
+                                : '📉 Stopped out by Bad Trend Direction'}
+                            </span>
+                            <span className="text-[8.5px] opacity-80">(Audit ➔)</span>
+                          </button>
+                        </div>
+                        <div
+                          onClick={() => setSelectedOutcomeTrade(t)}
+                          className="relative h-2 bg-[#182033] rounded-full overflow-hidden flex items-center cursor-pointer hover:opacity-85 transition-opacity"
+                          title="Click timeline to inspect trade circumstances from entry to exit"
+                        >
+                          <div
+                            className={`absolute left-0 h-full ${isWin ? 'w-1/4 bg-[#FF3366]/30' : 'w-2/5 bg-[#FF3366]'}`}
+                            title="Stop Loss Risk Distance"
+                          />
+                          <div className="absolute left-1/2 w-2 h-full bg-[#F1F5F9] z-10 -translate-x-1/2" title="Entry Price" />
+                          <div
+                            className={`absolute right-0 h-full ${isWin ? 'w-3/5 bg-[#00E676]' : 'w-1/4 bg-[#00E676]/30'}`}
+                            title="Take Profit Target Distance"
+                          />
+                        </div>
                       </div>
                     </div>
                   );
@@ -452,6 +548,168 @@ export const TradeJournalModal: React.FC<Props> = ({ isOpen, onClose, trades }) 
               )}
             </div>
           )}
+
+          {/* TAB 5: SL MISTAKE LEARNING CENTER */}
+          {activeTab === 'LEARNING' && (() => {
+            const stats = adaptiveSlLearningService.getSlMistakeStats();
+            const hits = adaptiveSlLearningService.getAnalyzedSlHits();
+            const isGuardOn = adaptiveSlLearningService.getGuardEnabled();
+
+            return (
+              <div className="space-y-4">
+                {/* Header Card */}
+                <div className="bg-[#101522] border border-[#00E676]/40 rounded-xl p-4 bg-gradient-to-r from-[#00E676]/10 to-transparent">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-[#00E676]/20 border border-[#00E676]/40 flex items-center justify-center text-[#00E676]">
+                        <ShieldCheck className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-[#F1F5F9] uppercase tracking-wide">
+                          Adaptive Anti-Loss & Mistake Elimination Engine
+                        </h4>
+                        <p className="text-[11px] text-[#94A3B8]">
+                          Learns from historical SL hits to eliminate repeat failure modes in future setups
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        adaptiveSlLearningService.setGuardEnabled(!isGuardOn);
+                        setActiveTab('LEARNING');
+                      }}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                        isGuardOn
+                          ? 'bg-[#00E676]/20 border-[#00E676]/50 text-[#00E676]'
+                          : 'bg-[#FF3366]/20 border-[#FF3366]/50 text-[#FF3366]'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${isGuardOn ? 'bg-[#00E676] animate-pulse' : 'bg-[#FF3366]'}`} />
+                      <span>{isGuardOn ? 'GUARD: ACTIVE (ENFORCING)' : 'GUARD: PAUSED'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Key KPIs */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3">
+                    <div className="text-[10px] text-[#94A3B8] font-bold uppercase">SL Hits Analyzed</div>
+                    <div className="text-lg font-mono font-black text-[#F1F5F9] mt-0.5">{stats.totalSlHitsAnalyzed}</div>
+                    <div className="text-[9.5px] text-[#2979FF]">Forensic catalog</div>
+                  </div>
+                  <div className="bg-[#101522] border border-[#00E676]/30 rounded-xl p-3">
+                    <div className="text-[10px] text-[#94A3B8] font-bold uppercase">Loss Elimination Rate</div>
+                    <div className="text-lg font-mono font-black text-[#00E676] mt-0.5">{stats.estimatedLossEliminationRate}%</div>
+                    <div className="text-[9.5px] text-[#00E676]">Repeat mistakes blocked</div>
+                  </div>
+                  <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3">
+                    <div className="text-[10px] text-[#94A3B8] font-bold uppercase">Losses Avoided</div>
+                    <div className="text-lg font-mono font-black text-[#FFD700] mt-0.5">~{stats.totalLossesAvoidedEstimate} Trades</div>
+                    <div className="text-[9.5px] text-[#94A3B8]">Capital preserved</div>
+                  </div>
+                  <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3">
+                    <div className="text-[10px] text-[#94A3B8] font-bold uppercase">Active Filters</div>
+                    <div className="text-lg font-mono font-black text-[#F1F5F9] mt-0.5">{stats.activeProtectionsCount} Rules</div>
+                    <div className="text-[9.5px] text-[#00E676]">Pre-trade verification</div>
+                  </div>
+                </div>
+
+                {/* Section: Top Mistakes Discovered & Their Automatic Solutions */}
+                <div className="bg-[#101522] border border-[#222F47] rounded-xl p-4 space-y-3">
+                  <h4 className="text-xs font-black text-[#F1F5F9] uppercase tracking-wide flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4 text-[#FF3366]" />
+                    <span>How the System Learns & Eliminates Mistakes in New Trades</span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    <div className="bg-[#090D16] border border-[#222F47] rounded-xl p-3 space-y-1.5">
+                      <div className="flex items-center justify-between font-bold text-[#F1F5F9]">
+                        <span className="text-[#FF3366]">1. Interbank Wick Spikes</span>
+                        <span className="text-[10.5px] font-mono bg-[#FF3366]/20 px-1.5 py-0.2 rounded border border-[#FF3366]/40">{stats.wickStopPercentage}% of SLs</span>
+                      </div>
+                      <p className="text-[10.5px] text-[#94A3B8]">
+                        <strong>Past Mistake:</strong> Tight stops placed directly behind swing high/low without ATR breathing room.
+                      </p>
+                      <p className="text-[10.5px] text-[#00E676]">
+                        <strong>Engine Fix:</strong> Automatically adds dynamic +1.25x–1.38x ATR buffer past the Order Block, placing stops completely outside interbank wick reach.
+                      </p>
+                    </div>
+
+                    <div className="bg-[#090D16] border border-[#222F47] rounded-xl p-3 space-y-1.5">
+                      <div className="flex items-center justify-between font-bold text-[#F1F5F9]">
+                        <span className="text-[#FF3366]">2. Counter Macro Trend</span>
+                        <span className="text-[10.5px] font-mono bg-[#FF3366]/20 px-1.5 py-0.2 rounded border border-[#FF3366]/40">{stats.macroTrendPercentage}% of SLs</span>
+                      </div>
+                      <p className="text-[10.5px] text-[#94A3B8]">
+                        <strong>Past Mistake:</strong> Entering counter-trend pullbacks fighting against 4-Hour / Daily 50 & 200 EMA slope.
+                      </p>
+                      <p className="text-[10.5px] text-[#00E676]">
+                        <strong>Engine Fix:</strong> Mandatory HTF trend lock. Signals must align with H4 flow or confirm an explicit volume-backed Change of Character (CHoCH).
+                      </p>
+                    </div>
+
+                    <div className="bg-[#090D16] border border-[#222F47] rounded-xl p-3 space-y-1.5">
+                      <div className="flex items-center justify-between font-bold text-[#F1F5F9]">
+                        <span className="text-[#FF3366]">3. Red-Folder News Spikes</span>
+                        <span className="text-[10.5px] font-mono bg-[#FF3366]/20 px-1.5 py-0.2 rounded border border-[#FF3366]/40">{stats.newsVolatilityPercentage}% of SLs</span>
+                      </div>
+                      <p className="text-[10.5px] text-[#94A3B8]">
+                        <strong>Past Mistake:</strong> Position opened right before Tier-1 US CPI, NFP, or Central Bank rate announcements.
+                      </p>
+                      <p className="text-[10.5px] text-[#00E676]">
+                        <strong>Engine Fix:</strong> Economic News Shield checks calendar 30m prior and suppresses entries or widens safety margins during high-volatility releases.
+                      </p>
+                    </div>
+
+                    <div className="bg-[#090D16] border border-[#222F47] rounded-xl p-3 space-y-1.5">
+                      <div className="flex items-center justify-between font-bold text-[#F1F5F9]">
+                        <span className="text-[#FF3366]">4. Pre-Sweep Premature Entry</span>
+                        <span className="text-[10.5px] font-mono bg-[#FF3366]/20 px-1.5 py-0.2 rounded border border-[#FF3366]/40">{stats.preSweepTrapPercentage}% of SLs</span>
+                      </div>
+                      <p className="text-[10.5px] text-[#94A3B8]">
+                        <strong>Past Mistake:</strong> Entering before the opposing session liquidity pool (Asian High/Low) was swept.
+                      </p>
+                      <p className="text-[10.5px] text-[#00E676]">
+                        <strong>Engine Fix:</strong> Liquidity Sweep Gate verifies the manipulation Judas swing occurred first, trapping breakout traders before entry confirmation.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section: Catalog of Analyzed Historical SL Trades */}
+                <div className="bg-[#101522] border border-[#222F47] rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black text-[#F1F5F9] uppercase tracking-wide">
+                      Historical SL Mistake Catalog & Corrective Playbook
+                    </h4>
+                    <span className="text-[10px] text-[#94A3B8] font-mono">{hits.length} Recorded Cases</span>
+                  </div>
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {hits.map((h, i) => (
+                      <div key={i} className="p-2.5 rounded-lg bg-[#090D16] border border-[#222F47] flex items-center justify-between gap-2 text-xs">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-[#F1F5F9]">{h.symbol}</span>
+                            <span className="px-1.5 py-0.2 rounded bg-[#182033] text-[#94A3B8] text-[9.5px] font-mono">
+                              {h.strategy.replace(/_/g, ' ')}
+                            </span>
+                            <span className="text-[#FF3366] font-mono font-bold text-[10px]">
+                              -{h.lossPips.toFixed(1)}p
+                            </span>
+                          </div>
+                          <p className="text-[10.5px] text-[#94A3B8] mt-0.5 truncate">
+                            {h.lesson}
+                          </p>
+                        </div>
+                        <span className="px-2 py-0.5 rounded bg-[#00E676]/15 border border-[#00E676]/30 text-[#00E676] text-[9.5px] font-bold shrink-0">
+                          ELIMINATED
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Footer */}
@@ -465,6 +723,20 @@ export const TradeJournalModal: React.FC<Props> = ({ isOpen, onClose, trades }) 
           </button>
         </div>
       </div>
+
+      {/* Strategy SL Diagnostics Modal */}
+      <StrategyPerformanceSummaryModal
+        isOpen={isSummaryModalOpen}
+        onClose={() => setIsSummaryModalOpen(false)}
+        trades={closedTrades}
+      />
+
+      {/* Trade Outcome Forensic Breakdown Modal */}
+      <TradeOutcomeAnalysisModal
+        isOpen={Boolean(selectedOutcomeTrade)}
+        onClose={() => setSelectedOutcomeTrade(null)}
+        tradeOrSignal={selectedOutcomeTrade}
+      />
     </div>
   );
 };

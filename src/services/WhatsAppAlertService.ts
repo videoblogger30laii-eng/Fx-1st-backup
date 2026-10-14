@@ -1,4 +1,5 @@
 import { WhatsAppAlertConfig } from '../types';
+import { isForexMarketOpen } from './marketData';
 
 const STORAGE_KEY = 'elev8_whatsapp_alert_config';
 const sentWhatsAppFingerprints = new Map<string, number>();
@@ -56,6 +57,13 @@ export class WhatsAppAlertService {
 
     if (!config.enabled) {
       return { success: false, message: 'WhatsApp alerts are currently disabled.' };
+    }
+
+    if (!allowDuplicate && !isForexMarketOpen(new Date())) {
+      return {
+        success: false,
+        message: 'Weekend market closed — automated WhatsApp alerts paused until Sunday 22:00 GMT open.'
+      };
     }
 
     const fingerprint = message

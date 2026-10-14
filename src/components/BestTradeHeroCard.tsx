@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ForexSignal, getSignalStrategy, STRATEGY_CONFIGS } from '../types';
-import { formatPrice, calculatePips, getFormattedCountdown, getValidityProgress } from '../services/marketData';
+import { formatPrice, calculatePips, getFormattedCountdown, getValidityProgress, isForexMarketOpen, getWeekendMarketState } from '../services/marketData';
 import { realPriceService } from '../services/RealPriceService';
 import {
   Sparkles,
@@ -14,7 +14,8 @@ import {
   BarChart2,
   TrendingUp,
   TrendingDown,
-  Zap
+  Zap,
+  Clock
 } from 'lucide-react';
 
 interface Props {
@@ -25,6 +26,7 @@ interface Props {
   onTestBacktest: () => void;
   onOpenElev8Order?: () => void;
   nowClockMs: number;
+  isMarketOpen?: boolean;
 }
 
 export const BestTradeHeroCard: React.FC<Props> = ({
@@ -34,8 +36,11 @@ export const BestTradeHeroCard: React.FC<Props> = ({
   onOpenChart,
   onTestBacktest,
   onOpenElev8Order,
-  nowClockMs
+  nowClockMs,
+  isMarketOpen
 }) => {
+  const marketOpen = typeof isMarketOpen === 'boolean' ? isMarketOpen : isForexMarketOpen(new Date(nowClockMs));
+  const weekendState = getWeekendMarketState(new Date(nowClockMs));
   const [copied, setCopied] = useState(false);
   const countdown = getFormattedCountdown(signal, nowClockMs);
   const progress = getValidityProgress(signal, nowClockMs);
@@ -84,143 +89,159 @@ export const BestTradeHeroCard: React.FC<Props> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const slPips = Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.stopLoss, isBuy));
+  const tp1Pips = Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.takeProfit1, isBuy));
+  const stratTitle = STRATEGY_CONFIGS[getSignalStrategy(signal)].title;
+
   return (
     <div
       onClick={onInspect}
-      className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-[#182033] to-[#101522] border-2 border-[#FFD700]/40 p-4 shadow-lg cursor-pointer hover:border-[#FFD700] transition-all text-left"
+      className="relative overflow-hidden rounded-xl bg-gradient-to-b from-[#182033] to-[#101522] border border-[#FFD700]/50 px-3 py-2.5 shadow-md cursor-pointer hover:border-[#FFD700] transition-all text-left terminal-card"
     >
-      {/* Top Banner Tag */}
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="flex items-center gap-1.5 bg-[#FFD700]/15 border border-[#FFD700]/50 rounded-full px-2.5 py-0.5">
-          <Flame className="w-3.5 h-3.5 text-[#FFD700]" />
-          <span className="text-[10px] font-black text-[#FFD700] tracking-wider uppercase">
-            BEST TRADE NOW • 84.8% WIN RATE EDGE
+      {/* Row 1: Top Header Strip + Pair + Strategy (Left) | Confluence + Copy MT4 (Right) */}
+      <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-[#222F47]/70">
+        <div className="flex items-center flex-wrap gap-1.5 min-w-0">
+          <span className="inline-flex items-center gap-1 bg-[#FFD700]/15 border border-[#FFD700]/50 rounded px-1.5 py-0.5 text-[9px] font-black text-[#FFD700] uppercase leading-none">
+            <Flame className="w-2.5 h-2.5 text-[#FFD700]" />
+            <span>A+ Best</span>
+          </span>
+
+          <span className="text-sm font-black text-[#F1F5F9] leading-none">{signal.pair.symbol}</span>
+
+          <span
+            className={`text-[9.5px] font-black px-1.5 py-0.5 rounded leading-none ${
+              isBuy
+                ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
+                : 'bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40'
+            }`}
+          >
+            {signal.type}
+          </span>
+
+          <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#101522] border border-[#222F47] text-[#F1F5F9] leading-none">
+            {signal.timeframe}
+          </span>
+
+          <span className="text-[9.5px] text-[#94A3B8] truncate hidden sm:inline">
+            · <strong className="text-[#FFD700]">{stratTitle}</strong> · {signal.institutionalFlow}
           </span>
         </div>
 
-        <button
-          onClick={copyMt4}
-          className="flex items-center gap-1 text-[10px] font-bold bg-[#101522] hover:bg-[#182033] text-[#F1F5F9] px-2 py-1 rounded-lg border border-[#222F47] transition-colors"
-          title="Copy MT4 Order"
+        {/* Right Side: Prominent Confluence Badge + MT4 Copy Button */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span
+            className="inline-flex items-center gap-1 text-[9.5px] font-mono font-black text-[#FFD700] bg-[#FFD700]/15 px-2 py-1 rounded border border-[#FFD700]/40 leading-none"
+            title={`Institutional Confluence Score: ${signal.confluenceScore}%`}
+          >
+            <Flame className="w-2.5 h-2.5 text-[#FFD700]" />
+            <span>{signal.confluenceScore}% CONF</span>
+          </span>
+
+          <button
+            onClick={copyMt4}
+            className="flex items-center gap-1 text-[9.5px] font-bold bg-[#101522] hover:bg-[#182033] text-[#F1F5F9] px-2 py-1 rounded border border-[#222F47] transition-colors shrink-0"
+            title="Copy MT4 Order"
+          >
+            {copied ? <Check className="w-2.5 h-2.5 text-[#00E676]" /> : <Copy className="w-2.5 h-2.5 text-[#94A3B8]" />}
+            <span>{copied ? 'Copied' : 'MT4'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Weekend Compact Notice */}
+      {!marketOpen && (
+        <div className="flex items-center justify-between bg-[#FFB300]/10 border border-[#FFB300]/30 rounded-md px-2 py-1 text-[9.5px] text-[#FFB300] font-medium my-1.5">
+          <div className="flex items-center gap-1 truncate">
+            <Clock className="w-3 h-3 text-[#FFB300] shrink-0" />
+            <span className="truncate">
+              <strong>Weekend Hold:</strong> Friday swing ({isProfit ? `+${livePips}` : livePips}p) · {stratTitle}
+            </span>
+          </div>
+          <span className="font-mono font-bold text-[#F1F5F9] shrink-0 ml-2">
+            {weekendState.reopenCountdownFormatted}
+          </span>
+        </div>
+      )}
+
+      {/* Row 2: 6-Column Systematic Execution Ledger */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-y sm:divide-y-0 divide-[#222F47]/60 bg-[#080B11]/90 rounded-lg border border-[#222F47] my-1.5 overflow-hidden">
+        <div
+          className={`px-2 py-1 transition-colors ${
+            flashDir === 'up' ? 'bg-[#00E676]/15' : flashDir === 'down' ? 'bg-[#FF3366]/15' : ''
+          }`}
         >
-          {copied ? <Check className="w-3 h-3 text-[#00E676]" /> : <Copy className="w-3 h-3 text-[#94A3B8]" />}
-          <span>{copied ? 'Copied' : 'MT4'}</span>
-        </button>
-      </div>
-
-      {/* Main Signal Identification */}
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#FFD700]/10 border border-[#FFD700]/30 flex items-center justify-center font-black text-[#FFD700] text-sm">
-            A+
+          <div className="text-[8px] text-[#94A3B8] font-bold uppercase flex items-center gap-1 leading-tight">
+            <span className={`w-1.5 h-1.5 rounded-full ${marketOpen ? 'bg-[#00E676] animate-pulse' : 'bg-[#FFB300]'}`} />
+            <span>{marketOpen ? 'Live' : 'Fri Close'}</span>
+            {marketOpen && flashDir === 'up' && <TrendingUp className="w-2.5 h-2.5 text-[#00E676] ml-auto" />}
+            {marketOpen && flashDir === 'down' && <TrendingDown className="w-2.5 h-2.5 text-[#FF3366] ml-auto" />}
           </div>
-          <div>
-            <div className="flex items-center flex-wrap gap-2">
-              <span className="text-xl font-black text-[#F1F5F9]">{signal.pair.symbol}</span>
-              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#182033] border border-[#222F47] text-[#F1F5F9]">
-                {signal.timeframe}
-              </span>
-              <span
-                className={`text-xs font-black px-2 py-0.5 rounded ${
-                  isBuy
-                    ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
-                    : 'bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40'
-                }`}
-              >
-                {signal.type}
-              </span>
-
-              {/* Real-time Live Price Pill */}
-              <div
-                className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg border font-mono text-xs font-bold transition-all duration-300 ${
-                  flashDir === 'up'
-                    ? 'bg-[#00E676]/30 border-[#00E676] text-[#00E676] shadow-[0_0_12px_rgba(0,230,118,0.3)]'
-                    : flashDir === 'down'
-                    ? 'bg-[#FF3366]/30 border-[#FF3366] text-[#FF3366] shadow-[0_0_12px_rgba(255,51,102,0.3)]'
-                    : 'bg-[#101522] border-[#222F47] text-[#F8FAFC]'
-                }`}
-                title="Live Broker Quote"
-              >
-                <span className="w-2 h-2 rounded-full bg-[#00E676] animate-pulse" />
-                <span>{formatPrice(signal.pair, livePrice)}</span>
-                {flashDir === 'up' ? (
-                  <TrendingUp className="w-3.5 h-3.5 text-[#00E676]" />
-                ) : flashDir === 'down' ? (
-                  <TrendingDown className="w-3.5 h-3.5 text-[#FF3366]" />
-                ) : null}
-              </div>
-            </div>
-            <div className="flex items-center flex-wrap gap-1.5 mt-1">
-              <span className="text-[10px] font-black px-2 py-0.5 rounded bg-[#FFD700]/15 border border-[#FFD700]/40 text-[#FFD700]">
-                Strategy: {STRATEGY_CONFIGS[getSignalStrategy(signal)].title}
-              </span>
-              <span className="text-xs text-[#94A3B8] font-medium">{signal.institutionalFlow}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="text-right">
-          <div className="text-xs text-[#64748B] font-semibold">Confluence</div>
-          <div className="text-xl font-black text-[#FFD700] font-mono">{signal.confluenceScore}%</div>
-        </div>
-      </div>
-
-      {/* Execution Prices Grid with Live Price as First Column */}
-      <div className="grid grid-cols-5 gap-1.5 bg-[#080B11]/90 rounded-xl p-2.5 border border-[#222F47] mb-3">
-        <div className={`p-1 rounded-lg transition-colors ${
-          flashDir === 'up' ? 'bg-[#00E676]/15' : flashDir === 'down' ? 'bg-[#FF3366]/15' : ''
-        }`}>
-          <div className="text-[9px] text-[#94A3B8] font-bold uppercase tracking-wider flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#00E676] animate-pulse" />
-            Live
-          </div>
-          <div className={`text-xs font-mono font-black mt-0.5 ${
-            flashDir === 'up' ? 'text-[#00E676]' : flashDir === 'down' ? 'text-[#FF3366]' : 'text-[#F1F5F9]'
-          }`}>
+          <div
+            className={`text-[11px] font-mono font-black tabular-nums leading-tight mt-0.5 ${
+              flashDir === 'up' ? 'text-[#00E676]' : flashDir === 'down' ? 'text-[#FF3366]' : 'text-[#F1F5F9]'
+            }`}
+          >
             {formatPrice(signal.pair, livePrice)}
           </div>
         </div>
-        <div>
-          <div className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider">Entry</div>
-          <div className="text-xs font-mono font-bold text-[#F1F5F9] mt-0.5">
+
+        <div className="px-2 py-1">
+          <div className="text-[8px] text-[#64748B] font-bold uppercase leading-tight">Entry</div>
+          <div className="text-[11px] font-mono font-bold text-[#F1F5F9] tabular-nums leading-tight mt-0.5">
             {formatPrice(signal.pair, signal.entryPrice)}
           </div>
         </div>
-        <div>
-          <div className="text-[9px] text-[#FF3366] font-bold uppercase tracking-wider">
-            SL (-{Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.stopLoss, isBuy))}p)
+
+        <div className="px-2 py-1">
+          <div className="text-[8px] text-[#FF3366] font-bold uppercase leading-tight flex items-center justify-between">
+            <span>SL</span>
+            <span className="font-mono text-[7.5px]">-{slPips}p</span>
           </div>
-          <div className="text-xs font-mono font-bold text-[#FF3366] mt-0.5">
+          <div className="text-[11px] font-mono font-bold text-[#FF3366] tabular-nums leading-tight mt-0.5">
             {formatPrice(signal.pair, signal.stopLoss)}
           </div>
         </div>
-        <div>
-          <div className="text-[9px] text-[#00E676] font-bold uppercase tracking-wider">
-            TP1 (+{Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.takeProfit1, isBuy))}p)
+
+        <div className="px-2 py-1">
+          <div className="text-[8px] text-[#00E676] font-bold uppercase leading-tight flex items-center justify-between">
+            <span>TP1</span>
+            <span className="font-mono text-[7.5px]">+{tp1Pips}p</span>
           </div>
-          <div className="text-xs font-mono font-bold text-[#00E676] mt-0.5">
+          <div className="text-[11px] font-mono font-bold text-[#00E676] tabular-nums leading-tight mt-0.5">
             {formatPrice(signal.pair, signal.takeProfit1)}
           </div>
         </div>
-        <div>
-          <div className="text-[9px] text-[#2979FF] font-bold uppercase tracking-wider">R:R Ratio</div>
-          <div className="text-xs font-mono font-bold text-[#2979FF] mt-0.5">
+
+        <div className="px-2 py-1">
+          <div className="text-[8px] text-[#2979FF] font-bold uppercase leading-tight flex items-center justify-between">
+            <span>R:R</span>
+            <span className="text-[#64748B] font-mono text-[7.5px]">Spd {signal.pair.spreadPips}p</span>
+          </div>
+          <div className="text-[11px] font-mono font-bold text-[#2979FF] tabular-nums leading-tight mt-0.5">
             {signal.riskReward}
+          </div>
+        </div>
+
+        <div className="px-2 py-1">
+          <div className="text-[8px] text-[#94A3B8] font-bold uppercase leading-tight">
+            {isPending ? 'Window' : 'Live P&L'}
+          </div>
+          <div
+            className={`text-[11px] font-mono font-black tabular-nums leading-tight mt-0.5 ${
+              isPending ? 'text-[#FFD700]' : isProfit ? 'text-[#00E676]' : 'text-[#FF3366]'
+            }`}
+          >
+            {isPending ? countdown : `${isProfit ? `+${livePips}` : livePips}p`}
           </div>
         </div>
       </div>
 
-      {/* Validity Countdown Indicator */}
+      {/* Pending Validity Slim Bar */}
       {isPending && (
-        <div className="mb-3 bg-[#101522] rounded-lg p-2 border border-[#222F47]">
-          <div className="flex items-center justify-between text-[10px] text-[#94A3B8] mb-1">
-            <span className="flex items-center gap-1 font-semibold">
-              <ShieldCheck className="w-3 h-3 text-[#00E676]" />
-              Setup Invalidation Window:
-            </span>
-            <span className="font-mono font-bold text-[#FFD700]">{countdown}</span>
-          </div>
-          <div className="w-full bg-[#182033] h-1.5 rounded-full overflow-hidden">
+        <div className="mb-1.5 flex items-center gap-2 text-[9px] font-mono text-[#94A3B8]">
+          <ShieldCheck className="w-3 h-3 text-[#00E676] shrink-0" />
+          <span className="shrink-0">Setup Window: {countdown}</span>
+          <div className="flex-1 bg-[#182033] h-1 rounded-full overflow-hidden">
             <div
               className="bg-gradient-to-r from-[#FFD700] to-[#00E676] h-full transition-all duration-1000"
               style={{ width: `${Math.round(progress * 100)}%` }}
@@ -229,37 +250,31 @@ export const BestTradeHeroCard: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Elev8 MT5 Execution Bar */}
-      {onOpenElev8Order && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenElev8Order();
-          }}
-          className="w-full mb-2.5 py-2 px-3 rounded-xl bg-gradient-to-r from-[#2979FF]/20 via-[#00E676]/15 to-[#2979FF]/20 hover:from-[#2979FF]/30 hover:to-[#00E676]/25 border border-[#2979FF]/40 text-[#F1F5F9] font-black text-xs flex items-center justify-between transition-all group shadow"
-        >
-          <div className="flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5 text-[#00E676] group-hover:scale-110 transition-transform" />
-            <span>Elev8 MT5 Order</span>
-          </div>
-          <div className="flex items-center gap-1 text-[10px] font-mono text-[#00E676]">
-            <span>Custom Lots & Projected P&L</span>
-            <span>➔</span>
-          </div>
-        </button>
-      )}
+      {/* Row 3: Unified Action Dock (MT5 Order + Setup + AI Audit + Chart + Backtest in 1 Row) */}
+      <div className="flex items-center gap-1 pt-1.5 border-t border-[#222F47]/60">
+        {onOpenElev8Order && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenElev8Order();
+            }}
+            className="flex-1 flex items-center justify-center gap-1 text-[10px] font-black py-1 px-1.5 rounded-md bg-[#2979FF]/20 hover:bg-[#2979FF]/30 text-[#F1F5F9] border border-[#2979FF]/45 transition-all"
+            title="Elev8 MT5 Order: Custom Lots & Projected P&L"
+          >
+            <Zap className="w-2.5 h-2.5 text-[#00E676] shrink-0" />
+            <span className="truncate">MT5 Order</span>
+          </button>
+        )}
 
-      {/* 4 Action Buttons Row: [ Setup ] [ AI Audit ] [ Chart ] [ Backtest ] */}
-      <div className="grid grid-cols-4 gap-1.5 pt-2 border-t border-[#222F47]/60">
         <button
           onClick={(e) => {
             e.stopPropagation();
             onInspect();
           }}
-          className="flex items-center justify-center gap-1 text-[11px] font-bold py-1.5 px-1 rounded-lg bg-[#182033] hover:bg-[#222F47] text-[#F1F5F9] border border-[#222F47] transition-all"
+          className="flex-1 flex items-center justify-center gap-1 text-[10px] font-bold py-1 px-1.5 rounded-md bg-[#182033] hover:bg-[#222F47] text-[#F1F5F9] border border-[#222F47] transition-all"
           title="Open Setup Details"
         >
-          <SlidersHorizontal className="w-3.5 h-3.5 text-[#94A3B8]" />
+          <SlidersHorizontal className="w-2.5 h-2.5 text-[#94A3B8] shrink-0" />
           <span>Setup</span>
         </button>
 
@@ -268,10 +283,10 @@ export const BestTradeHeroCard: React.FC<Props> = ({
             e.stopPropagation();
             onAskAi();
           }}
-          className="flex items-center justify-center gap-1 text-[11px] font-bold py-1.5 px-1 rounded-lg bg-[#2979FF]/15 hover:bg-[#2979FF]/25 text-[#2979FF] border border-[#2979FF]/40 transition-all"
+          className="flex-1 flex items-center justify-center gap-1 text-[10px] font-bold py-1 px-1.5 rounded-md bg-[#2979FF]/15 hover:bg-[#2979FF]/25 text-[#2979FF] border border-[#2979FF]/40 transition-all"
           title="Audit setup with Gemini AI"
         >
-          <Sparkles className="w-3.5 h-3.5" />
+          <Sparkles className="w-2.5 h-2.5 shrink-0" />
           <span>AI Audit</span>
         </button>
 
@@ -280,10 +295,10 @@ export const BestTradeHeroCard: React.FC<Props> = ({
             e.stopPropagation();
             if (onOpenChart) onOpenChart();
           }}
-          className="flex items-center justify-center gap-1 text-[11px] font-bold py-1.5 px-1 rounded-lg bg-[#00E676]/15 hover:bg-[#00E676]/25 text-[#00E676] border border-[#00E676]/40 shadow-[0_0_10px_rgba(0,230,118,0.2)] transition-all"
-          title="Open Live TradingView Chart (Deriv & Forex Feed)"
+          className="flex-1 flex items-center justify-center gap-1 text-[10px] font-bold py-1 px-1.5 rounded-md bg-[#00E676]/15 hover:bg-[#00E676]/25 text-[#00E676] border border-[#00E676]/40 transition-all"
+          title="Open Live TradingView Chart"
         >
-          <BarChart2 className="w-3.5 h-3.5" />
+          <BarChart2 className="w-2.5 h-2.5 shrink-0" />
           <span>Chart</span>
         </button>
 
@@ -292,10 +307,10 @@ export const BestTradeHeroCard: React.FC<Props> = ({
             e.stopPropagation();
             onTestBacktest();
           }}
-          className="flex items-center justify-center gap-1 text-[11px] font-bold py-1.5 px-1 rounded-lg bg-[#FFD700]/15 hover:bg-[#FFD700]/25 text-[#FFD700] border border-[#FFD700]/40 transition-all"
+          className="flex-1 flex items-center justify-center gap-1 text-[10px] font-bold py-1 px-1.5 rounded-md bg-[#FFD700]/15 hover:bg-[#FFD700]/25 text-[#FFD700] border border-[#FFD700]/40 transition-all"
           title="Test historical performance in Quant Lab"
         >
-          <FlaskConical className="w-3.5 h-3.5" />
+          <FlaskConical className="w-2.5 h-2.5 shrink-0" />
           <span>Backtest</span>
         </button>
       </div>

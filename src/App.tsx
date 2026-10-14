@@ -21,7 +21,8 @@ import {
   DEFAULT_ELEV8_CONFIG,
   Elev8Trade,
   getAssetCategory,
-  getSignalStrategy
+  getSignalStrategy,
+  STRATEGY_CONFIGS
 } from './types';
 import {
   ALL_PAIRS,
@@ -46,6 +47,8 @@ import { GeminiChatEngine } from './services/geminiChatEngine';
 import { PersistenceManager } from './services/persistence';
 import { economicCalendarService } from './services/economicCalendarService';
 import { marketPrecisionService } from './services/marketPrecisionService';
+import { signalScannerService } from './services/signalScannerService';
+import { adaptiveSlLearningService } from './services/adaptiveSlLearningService';
 
 // Components & Modals
 import { SignalDetailSheet } from './components/SignalDetailSheet';
@@ -76,6 +79,9 @@ import { ChartTerminalScreen } from './screens/ChartTerminalScreen';
 import { SmartMoneyScreen } from './screens/SmartMoneyScreen';
 import { FundamentalsScreen } from './screens/FundamentalsScreen';
 
+import { ThemeSelectorModal } from './components/ThemeSelectorModal';
+import { visualThemeService, VisualTheme, VISUAL_THEMES } from './services/themeService';
+
 // Icons
 import {
   TrendingUp,
@@ -94,7 +100,9 @@ import {
   Smartphone,
   Monitor,
   Download,
-  Wifi
+  Wifi,
+  RefreshCw,
+  Palette
 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -111,6 +119,12 @@ export const App: React.FC = () => {
   });
   const [isInstallModalOpen, setIsInstallModalOpen] = useState<boolean>(false);
   const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<any>(null);
+  const [isThemeModalOpen, setIsThemeModalOpen] = useState<boolean>(false);
+  const [activeVisualTheme, setActiveVisualTheme] = useState<VisualTheme>(() => visualThemeService.getTheme());
+
+  useEffect(() => {
+    return visualThemeService.subscribe((t) => setActiveVisualTheme(t));
+  }, []);
 
   useEffect(() => {
     try {
@@ -151,8 +165,51 @@ export const App: React.FC = () => {
     return false;
   };
 
-  // Market & Signals State
-  const [signals, setSignals] = useState<ForexSignal[]>(() => getInitialSignals());
+  // Market & Signals State (Calibrated by Adaptive Anti-Loss Mistake Elimination Engine)
+  const [signals, setSignals] = useState<ForexSignal[]>(() => {
+    const raw = getInitialSignals();
+    return raw.map(s => {
+      if ((s.status === 'RUNNING' || s.status === 'PENDING') && !s.slLearningAudit) {
+        return adaptiveSlLearningService.calibrateSignalWithSlLessons(s, s.pair, s.currentPrice);
+      }
+      return s;
+    });
+  });
+  const [enabledStrategies, setEnabledStrategies] = useState<StrategyType[]>(() =>
+    PersistenceManager.getEnabledStrategies() as StrategyType[]
+  );
+
+  const handleToggleStrategyEnabled = (strat: StrategyType) => {
+    setEnabledStrategies(prev => {
+      const next = prev.includes(strat)
+        ? prev.filter(s => s !== strat)
+        : [...prev, strat];
+      PersistenceManager.saveEnabledStrategies(next);
+      return next;
+    });
+  };
+
+  const handleSelectAllStrategies = () => {
+    const all: StrategyType[] = [
+      'MASTER_OMNI_CONFLUENCE',
+      'OPENING_RANGE_BOX_PIVOT',
+      'BEST_TRADE_NOW',
+      'ICT_SMART_MONEY',
+      'ICT_SILVER_BULLET',
+      'MTF_FRACTAL_ALIGNMENT',
+      'TREND_EMA_CONFLUENCE',
+      'VOLATILITY_SQUEEZE_BREAKOUT',
+      'LIQUIDITY_SWEEP'
+    ];
+    setEnabledStrategies(all);
+    PersistenceManager.saveEnabledStrategies(all);
+  };
+
+  const handleDeselectAllStrategies = () => {
+    setEnabledStrategies([]);
+    PersistenceManager.saveEnabledStrategies([]);
+  };
+
   const [selectedFilter, setSelectedFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortOption, setSortOption] = useState<string>('CONFLUENCE');
@@ -346,15 +403,21 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
   // Backtest State
   const [cachedBacktestTrades, setCachedBacktestTrades] = useState<BacktestTrade[]>([]);
   const [backtestFilter, setBacktestFilter] = useState<BacktestFilter>({
-    strategy: 'BEST_TRADE_NOW',
+    strategy: 'MASTER_OMNI_CONFLUENCE',
     timeframe: null,
     minConfluence: 85,
     pairSymbol: null,
     outcomeFilter: null
   });
   const [backtestSummary, setBacktestSummary] = useState<BacktestSummary>(() =>
-    BacktestEngine.runBacktest({ strategy: 'BEST_TRADE_NOW', minConfluence: 85 }, undefined, signals)
+    BacktestEngine.runBacktest({ strategy: 'MASTER_OMNI_CONFLUENCE', minConfluence: 85 }, undefined, signals)
   );
+
+  // Automatically sync backtest summary whenever signals, filter, or cached trades change
+  useEffect(() => {
+    const updatedSummary = BacktestEngine.runBacktest(backtestFilter, cachedBacktestTrades, signals);
+    setBacktestSummary(updatedSummary);
+  }, [signals, backtestFilter, cachedBacktestTrades]);
 
   // Macro & Fundamentals
   const [macroData, setMacroData] = useState<MacroMarketData>(() => ({
@@ -444,8 +507,10 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
   });
 
   const handleExecuteElev8Trade = (trade: Elev8Trade) => {
+    const pair = ALL_PAIRS.find(p => p.symbol === trade.symbol) || selectedPair;
+    const calibratedTrade = adaptiveSlLearningService.calibrateElev8TradeWithSlLessons(trade, pair);
     setElev8Trades(prev => {
-      const updated = [trade, ...prev];
+      const updated = [calibratedTrade, ...prev];
       PersistenceManager.saveElev8Trades(updated);
       return updated;
     });
@@ -588,15 +653,65 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
     });
   }, [allPairs, appendUniqueTriggeredEvent]);
 
+  // Institutional SMC Signal Scanner: automatically replenishes closed trades and enables on-demand scanning
+  const runAutoSignalScanner = useCallback(
+    (showBanner: boolean = false, forceForTopPairs: boolean = false, targetPairSymbol?: string) => {
+      setSignals(prevSignals => {
+        const res = signalScannerService.scanAndReplenishSignals(prevSignals, allPairs, {
+          forceFormNewForTopPairs: forceForTopPairs,
+          targetPairSymbol
+        });
+        if (res.newlyFormed.length > 0) {
+          if (showBanner) {
+            soundFx.playVipSignalPing();
+            const formedSymbols = res.newlyFormed.map(s => s.pair.symbol).join(', ');
+            const bannerEvt: TriggeredAlertEvent = {
+              id: `scanner-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              alertId: 'smc-scanner',
+              pairSymbol: res.newlyFormed[0]?.pair.symbol || 'SMC',
+              title: `⚡ ${res.newlyFormed.length} Fresh Institutional Signal${res.newlyFormed.length > 1 ? 's' : ''} Formed!`,
+              message: `Institutional SMC scan formed active setups for: ${formedSymbols}.`,
+              timestamp: Date.now(),
+              condition: 'VIP_SIGNAL',
+              price: res.newlyFormed[0]?.entryPrice || 0
+            };
+            appendUniqueTriggeredEvent(bannerEvt);
+          }
+          return res.updatedSignals;
+        }
+        return prevSignals;
+      });
+    },
+    [allPairs, appendUniqueTriggeredEvent]
+  );
+
   // Persist live signals state (including HIT_SL / HIT_TP closed status) & dispatch transition alerts strictly from committed state
   useEffect(() => {
     PersistenceManager.saveSignalsState(signals);
+
+    const marketOpen = isForexMarketOpen(new Date());
 
     signals.forEach(sig => {
       const prevStatus = prevSignalsStatusRef.current.get(sig.id);
       prevSignalsStatusRef.current.set(sig.id, sig.status);
 
       if (!prevStatus || prevStatus === sig.status) return;
+
+      // Immediately emit unified PersistenceManager transition event whenever RUNNING transitions to HIT_SL or HIT_TP
+      if (prevStatus === 'RUNNING' && (sig.status === 'HIT_TP' || sig.status === 'HIT_SL')) {
+        PersistenceManager.emitSignalTransition({
+          signalId: sig.id,
+          pairSymbol: sig.pair.symbol,
+          previousStatus: prevStatus,
+          newStatus: sig.status,
+          closedAtMs: sig.closedAtMs || Date.now(),
+          signal: sig,
+          allSignals: signals
+        });
+      }
+
+      // Do not fire automated transition alerts or sounds during weekend market closure
+      if (!marketOpen) return;
 
       const quote = sig.currentPrice || sig.pair.currentPrice;
 
@@ -647,6 +762,11 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
             price: quote
           };
           appendUniqueTriggeredEvent(tpEvt);
+
+          // Automatically schedule scanner to formulate the next fresh trade setup for this pair
+          setTimeout(() => {
+            runAutoSignalScanner(true, false, sig.pair.symbol);
+          }, 2500);
         }
       } else if (prevStatus === 'RUNNING' && sig.status === 'HIT_SL') {
         const transKey = `${sig.id}:HIT_SL`;
@@ -672,14 +792,46 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
             price: quote
           };
           appendUniqueTriggeredEvent(slEvt);
+
+          // Automatically schedule scanner to formulate the next fresh trade setup for this pair
+          setTimeout(() => {
+            runAutoSignalScanner(true, false, sig.pair.symbol);
+          }, 2500);
         }
       }
     });
-  }, [signals, appendUniqueTriggeredEvent]);
+  }, [signals, appendUniqueTriggeredEvent, runAutoSignalScanner]);
+
+  // Unified PersistenceManager Signal Transition Subscriber: immediately re-run backtest engine on RUNNING -> HIT_SL / HIT_TP
+  useEffect(() => {
+    const unsubscribe = PersistenceManager.onSignalTransition(evt => {
+      const latestSignals = evt.allSignals && evt.allSignals.length > 0 ? evt.allSignals : signals;
+      const updatedSummary = BacktestEngine.runBacktest(
+        backtestFilter,
+        cachedBacktestTrades.length > 0 ? cachedBacktestTrades : undefined,
+        latestSignals
+      );
+      setBacktestSummary(updatedSummary);
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [backtestFilter, cachedBacktestTrades, signals]);
 
   // Automatically dispatch any newly formed signal in `signals` to Telegram (strictly once per signal)
   useEffect(() => {
     const activeValid = signals.filter(s => isSignalValidAndActive(s));
+
+    // During weekend market closure, mark any synced signals as already known and do NOT send automated alerts
+    if (!isForexMarketOpen(new Date())) {
+      activeValid.forEach(sig => {
+        if (sig.isLiveSynced) {
+          TelegramAlertService.markSignalSent(sig);
+        }
+      });
+      return;
+    }
+
     const alreadySent = TelegramAlertService.getSentSignalKeys();
 
     // Wait until at least one signal is calibrated to live prices before dispatching initial signal
@@ -721,14 +873,26 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
   }, [signals]);
 
   useEffect(() => {
-    // Initial sync for already-released session news
-    runNewsSignalSync(false);
+    // Initial sync for already-released session news and auto-replenish check (only during active market hours)
+    const marketOpen = isForexMarketOpen(new Date());
+    if (marketOpen) {
+      runNewsSignalSync(false);
+      runAutoSignalScanner(false);
+    }
     const clockTimer = setInterval(() => {
-      setNowClockMs(Date.now());
-      runNewsSignalSync(true);
+      const now = Date.now();
+      setNowClockMs(now);
+      const isOpen = isForexMarketOpen(new Date(now));
+      if (isOpen) {
+        runNewsSignalSync(true);
+        // Auto-scan every 20 seconds for missing setups during open market hours
+        if (Math.floor(now / 1000) % 20 === 0) {
+          runAutoSignalScanner(false);
+        }
+      }
     }, 1000);
     return () => clearInterval(clockTimer);
-  }, [runNewsSignalSync]);
+  }, [runNewsSignalSync, runAutoSignalScanner]);
 
   // Update backtest when filter, live signals, or live market rate sync changes
   useEffect(() => {
@@ -771,6 +935,11 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       }
       return prev;
     });
+
+    // During weekend market closure, do not fire automated Price Alerts or Elev8 Order triggers
+    if (!isForexMarketOpen(new Date())) {
+      return;
+    }
 
     // Check alerts with synchronous Ref lock to prevent StrictMode or multi-tick duplicate alerts
     setAlerts(prev => {
@@ -1101,6 +1270,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       const updatedUsed = PersistenceManager.incrementApiQuota(1);
       setApiQuota({ used: updatedUsed, limit: 800 });
       setProviderStatus('TradingView • Live Interbank Real Feed');
+      runAutoSignalScanner(false);
     } catch {
       // fallback
     } finally {
@@ -1228,6 +1398,12 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
     const isValidAndActive = isSignalValidAndActive(sig, nowClockMs);
     const isClosedOrExpired = !isValidAndActive;
 
+    // Exclude signals from disabled/unchecked strategies (for active signals)
+    const strat = getSignalStrategy(sig);
+    if (!enabledStrategies.includes(strat)) {
+      if (selectedFilter !== 'HISTORY') return false;
+    }
+
     // The Closed / History tab displays closed, hit-TP, hit-SL, or expired orders
     if (selectedFilter === 'HISTORY') {
       if (!isClosedOrExpired) return false;
@@ -1244,10 +1420,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       if ((selectedFilter === 'METALS' || selectedFilter === 'GOLD') && getAssetCategory(sig.pair.symbol) !== 'METALS') return false;
       if (selectedFilter === 'FAVORITES' && !sig.isFavorite) return false;
       if (
-        (selectedFilter === 'BEST_TRADE_NOW' ||
-          selectedFilter === 'ICT_SMART_MONEY' ||
-          selectedFilter === 'TREND_EMA_CONFLUENCE' ||
-          selectedFilter === 'LIQUIDITY_SWEEP') &&
+        selectedFilter in STRATEGY_CONFIGS &&
         getSignalStrategy(sig) !== selectedFilter
       ) {
         return false;
@@ -1447,37 +1620,37 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
   const liveClockStr = new Date(nowClockMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 
   return (
-    <div className="min-h-screen bg-[#05070B] text-[#F1F5F9] flex flex-col items-center justify-start font-sans select-none">
+    <div className="min-h-screen terminal-canvas text-[#F1F5F9] flex flex-col items-center justify-start font-sans select-none">
       {/* Native Mobile App Shell */}
       <div
-        className={`w-full min-h-screen bg-[#080B11] flex flex-col relative transition-all duration-300 ${
+        className={`w-full min-h-screen terminal-app-bg flex flex-col relative transition-all duration-300 ${
           isMobileShell
             ? 'mobile-app-shell max-w-[480px] mx-auto shadow-[0_0_50px_rgba(0,0,0,0.85)] overflow-x-hidden'
             : ''
         }`}
       >
         {/* Native Mobile App Top Navigation Bar */}
-        <header className="sticky top-0 z-30 bg-[#0B0F19]/95 backdrop-blur-xl border-b border-[#1E293B] px-3.5 py-2.5">
+        <header className="sticky top-0 z-30 bg-[var(--app-bg)]/95 backdrop-blur-xl border-b border-[var(--border-color)] px-3 py-2">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
               <img
                 src="/icon.svg"
                 alt="FX Signals Pro"
-                className="w-9 h-9 rounded-xl border border-[#FFD700]/40 shadow-md shrink-0"
+                className="w-8 h-8 rounded-lg border border-[#FFD700]/40 shadow-sm shrink-0"
               />
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-black tracking-tight text-white truncate">
+                  <span className="text-xs sm:text-sm font-black tracking-tight text-white truncate">
                     FX Signals Pro
                   </span>
-                  <span className="flex items-center gap-1 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-[#00E676]/15 text-[#00E676] border border-[#00E676]/40 shrink-0">
+                  <span className="flex items-center gap-1 text-[8.5px] font-black px-1.5 py-0.5 rounded bg-[#00E676]/15 text-[#00E676] border border-[#00E676]/40 shrink-0 leading-none">
                     <span className="w-1.5 h-1.5 rounded-full bg-[#00E676] animate-pulse" />
                     LIVE
                   </span>
                 </div>
-                <div className="text-[10.5px] text-[#94A3B8] font-medium truncate">
+                <div className="text-[10px] text-[#94A3B8] font-medium truncate">
                   {selectedTab === 'SIGNALS'
-                    ? `${signals.filter(s => isSignalValidAndActive(s, nowClockMs)).length} Active Setups • Gold, Silver & FX`
+                    ? `${signals.filter(s => isSignalValidAndActive(s, nowClockMs)).length} Active Setups · ${liveClockStr} UTC`
                     : selectedTab === 'AI_CHAT'
                     ? 'AI Institutional Copilot'
                     : selectedTab === 'ALERTS'
@@ -1489,32 +1662,76 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1 shrink-0">
+              {/* Compact Inline Theme Selector Pills */}
+              <div className="hidden md:flex items-center gap-1 bg-[#101522] p-0.5 rounded-lg border border-[#222F47] mr-1">
+                {VISUAL_THEMES.map((t) => {
+                  const isSelected = activeVisualTheme === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => visualThemeService.setTheme(t.id, true)}
+                      className={`px-2 py-0.5 rounded text-[9.5px] font-bold whitespace-nowrap transition-all flex items-center gap-1 cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#2979FF] text-white shadow-xs'
+                          : 'text-[#94A3B8] hover:text-white'
+                      }`}
+                      title={`Switch to ${t.name}`}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{ backgroundColor: isSelected ? '#FFFFFF' : t.accentColor }}
+                      />
+                      <span>{t.shortLabel}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Quick Instant Refresh & Sync Button */}
+              <button
+                onClick={refreshRates}
+                disabled={isRefreshing}
+                className="p-1.5 rounded-lg bg-[#141C2E] hover:bg-[#1E293B] border border-[#2979FF]/40 text-[#2979FF] active:scale-95 transition-all disabled:opacity-50"
+                title="Instant Refresh Market Rates & Signals"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-[#00E676]' : ''}`} />
+              </button>
+
               {/* Quick Strength Meter Button */}
               <button
                 onClick={() => setIsStrengthModalOpen(true)}
-                className="p-2 rounded-xl bg-[#141C2E] hover:bg-[#1E293B] border border-[#FFD700]/30 text-[#FFD700] active:scale-95 transition-all"
+                className="p-1.5 rounded-lg bg-[#141C2E] hover:bg-[#1E293B] border border-[#FFD700]/30 text-[#FFD700] active:scale-95 transition-all"
                 title="Live Strength Meter (Gold, Silver & FX)"
               >
-                <Gauge className="w-4 h-4" />
+                <Gauge className="w-3.5 h-3.5" />
               </button>
 
               {/* Quick News Guard Button */}
               <button
                 onClick={() => setIsCalendarModalOpen(true)}
-                className="p-2 rounded-xl bg-[#141C2E] hover:bg-[#1E293B] border border-[#FF3366]/30 text-[#FF3366] active:scale-95 transition-all"
+                className="p-1.5 rounded-lg bg-[#141C2E] hover:bg-[#1E293B] border border-[#FF3366]/30 text-[#FF3366] active:scale-95 transition-all"
                 title="Economic Calendar & News Guard"
               >
-                <Flame className="w-4 h-4" />
+                <Flame className="w-3.5 h-3.5" />
+              </button>
+
+              {/* Visual Appearance & Themes Studio Button */}
+              <button
+                onClick={() => setIsThemeModalOpen(true)}
+                className="p-1.5 rounded-lg bg-[#141C2E] hover:bg-[#1E293B] border border-[#A855F7]/40 text-[#C084FC] active:scale-95 transition-all cursor-pointer"
+                title={`Visual Theme: ${visualThemeService.getThemeConfig(activeVisualTheme).name}`}
+              >
+                <Palette className="w-3.5 h-3.5" />
               </button>
 
               {/* Download Native Android APK / QR Modal Button */}
               <button
                 onClick={() => setIsInstallModalOpen(true)}
-                className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-[#00E676] to-[#10B981] hover:opacity-95 text-[#080B11] text-[10.5px] font-black flex items-center gap-1 active:scale-95 transition-all shadow-md"
+                className="px-2 py-1 rounded-lg bg-gradient-to-r from-[#00E676] to-[#10B981] hover:opacity-95 text-[#080B11] text-[10px] font-black flex items-center gap-1 active:scale-95 transition-all shadow-sm"
                 title="Download Android APK or Scan QR"
               >
-                <Download className="w-3.5 h-3.5" />
+                <Download className="w-3 h-3" />
                 <span>APK</span>
               </button>
             </div>
@@ -1532,7 +1749,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
         />
 
         {/* Main Content Area */}
-        <main className={`flex-1 overflow-y-auto pt-3 pb-28 ${isMobileShell ? 'px-3' : 'px-3 sm:px-6'}`}>
+        <main className={`flex-1 overflow-y-auto pt-2.5 pb-24 ${isMobileShell ? 'px-2.5' : 'px-3 sm:px-5'}`}>
         {selectedTab === 'SIGNALS' && (
           <SignalsScreen
             signals={signals}
@@ -1584,6 +1801,16 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
               setSelectedTab('BACKTEST');
             }}
             onOpenLiveChart={(sig) => setLiveChartSignal(sig)}
+            onClearClosedHistory={() => {
+              PersistenceManager.clearClosedTradesHistory();
+              setSignals(prev => prev.filter(s => isSignalValidAndActive(s, nowClockMs)));
+            }}
+            onScanAndFormSignals={(targetPairSymbol) => runAutoSignalScanner(true, true, targetPairSymbol)}
+            onOpenThemeModal={() => setIsThemeModalOpen(true)}
+            enabledStrategies={enabledStrategies}
+            onToggleStrategyEnabled={handleToggleStrategyEnabled}
+            onSelectAllStrategies={handleSelectAllStrategies}
+            onDeselectAllStrategies={handleDeselectAllStrategies}
           />
         )}
 
@@ -1679,43 +1906,43 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
         )}
 
         {selectedTab === 'MARKETS' && (
-          <div className="max-w-4xl mx-auto space-y-4">
+          <div className="max-w-4xl mx-auto space-y-3">
             {/* Markets Sub-Tab Header */}
-            <div className="flex bg-[#101522] p-1 rounded-xl border border-[#222F47]">
+            <div className="flex bg-[#101522] p-1 rounded-xl border border-[#222F47] terminal-card">
               <button
                 onClick={() => setSelectedMarketsSubTab('CHARTS')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-lg transition-all ${
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
                   selectedMarketsSubTab === 'CHARTS'
-                    ? 'bg-[#182033] text-[#FFD700] border border-[#222F47]'
+                    ? 'bg-[#2979FF] text-white shadow-xs'
                     : 'text-[#94A3B8] hover:text-[#F1F5F9]'
                 }`}
               >
                 <LineChart className="w-3.5 h-3.5" />
-                <span>Charts</span>
+                <span>Live Chart</span>
               </button>
 
               <button
                 onClick={() => setSelectedMarketsSubTab('SMC')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-lg transition-all ${
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
                   selectedMarketsSubTab === 'SMC'
-                    ? 'bg-[#182033] text-[#FFD700] border border-[#222F47]'
+                    ? 'bg-[#2979FF] text-white shadow-xs'
                     : 'text-[#94A3B8] hover:text-[#F1F5F9]'
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
-                <span>SMC Flow</span>
+                <span>SMC Order Flow</span>
               </button>
 
               <button
                 onClick={() => setSelectedMarketsSubTab('CALENDAR')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-lg transition-all ${
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
                   selectedMarketsSubTab === 'CALENDAR'
-                    ? 'bg-[#182033] text-[#FFD700] border border-[#222F47]'
+                    ? 'bg-[#2979FF] text-white shadow-xs'
                     : 'text-[#94A3B8] hover:text-[#F1F5F9]'
                 }`}
               >
                 <Calendar className="w-3.5 h-3.5" />
-                <span>Calendar & Macro</span>
+                <span>Macro & Calendar</span>
               </button>
             </div>
 
@@ -1856,6 +2083,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
             }}
             onOpenElev8Order={(sig) => setSelectedElev8OrderSignal(sig)}
             nowClockMs={nowClockMs}
+            isMarketOpen={isForexMarketOpen(new Date(nowClockMs))}
           />
         );
       })()}
@@ -2006,6 +2234,12 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       <SoundSettingsModal
         isOpen={isSoundSettingsOpen}
         onClose={() => setIsSoundSettingsOpen(false)}
+      />
+
+      {/* Visual Design System & Themes Studio Modal */}
+      <ThemeSelectorModal
+        isOpen={isThemeModalOpen}
+        onClose={() => setIsThemeModalOpen(false)}
       />
 
       {/* Mobile App Mode & Standalone PWA Installation Modal */}

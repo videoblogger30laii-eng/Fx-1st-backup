@@ -235,6 +235,79 @@ export function isForexMarketOpen(now: Date = new Date()): boolean {
   return true;
 }
 
+export function isMarketOpenTimestamp(timestamp: number): boolean {
+  const d = new Date(timestamp);
+  const day = d.getUTCDay(); // 0 = Sunday, 6 = Saturday
+  if (day === 0 || day === 6) return false;
+  return true;
+}
+
+
+export interface WeekendMarketState {
+  isWeekend: boolean;
+  lastFridayCloseMs: number;
+  nextSundayOpenMs: number;
+  reopenCountdownFormatted: string;
+}
+
+export function getWeekendMarketState(now: Date = new Date()): WeekendMarketState {
+  const day = now.getUTCDay(); // 0 = Sun, 1 = Mon, ..., 5 = Fri, 6 = Sat
+  const hour = now.getUTCHours();
+  const minute = now.getUTCMinutes();
+  const totalMins = hour * 60 + minute;
+
+  const isFridayAfterClose = day === 5 && totalMins >= 1320;
+  const isSaturday = day === 6;
+  const isSundayBeforeOpen = day === 0 && totalMins < 1320;
+  const isWeekend = isFridayAfterClose || isSaturday || isSundayBeforeOpen;
+
+  // Calculate most recent Friday 22:00 GMT
+  const lastFriday = new Date(now.getTime());
+  let daysBackToFriday = 0;
+  if (day === 5) {
+    daysBackToFriday = totalMins >= 1320 ? 0 : 7;
+  } else if (day === 6) {
+    daysBackToFriday = 1;
+  } else if (day === 0) {
+    daysBackToFriday = 2;
+  } else {
+    daysBackToFriday = (day + 2) % 7;
+  }
+  lastFriday.setUTCDate(lastFriday.getUTCDate() - daysBackToFriday);
+  lastFriday.setUTCHours(22, 0, 0, 0);
+
+  // Calculate next Sunday 22:00 GMT
+  const nextSunday = new Date(now.getTime());
+  let daysForwardToSunday = 0;
+  if (day === 0) {
+    daysForwardToSunday = totalMins < 1320 ? 0 : 7;
+  } else {
+    daysForwardToSunday = 7 - day;
+  }
+  nextSunday.setUTCDate(nextSunday.getUTCDate() + daysForwardToSunday);
+  nextSunday.setUTCHours(22, 0, 0, 0);
+
+  const msUntilOpen = Math.max(0, nextSunday.getTime() - now.getTime());
+  const hoursUntilOpen = Math.floor(msUntilOpen / (3600 * 1000));
+  const minsUntilOpen = Math.floor((msUntilOpen % (3600 * 1000)) / (60 * 1000));
+  const daysUntilOpen = Math.floor(hoursUntilOpen / 24);
+  const remainingHours = hoursUntilOpen % 24;
+
+  let reopenCountdownFormatted = '';
+  if (daysUntilOpen > 0) {
+    reopenCountdownFormatted = `Reopens in ${daysUntilOpen}d ${remainingHours}h`;
+  } else {
+    reopenCountdownFormatted = `Reopens in ${hoursUntilOpen}h ${minsUntilOpen}m`;
+  }
+
+  return {
+    isWeekend,
+    lastFridayCloseMs: lastFriday.getTime(),
+    nextSundayOpenMs: nextSunday.getTime(),
+    reopenCountdownFormatted
+  };
+}
+
 export function getCurrentGmtTimeFormatted(now: Date = new Date()): string {
   const hour = String(now.getUTCHours()).padStart(2, '0');
   const minute = String(now.getUTCMinutes()).padStart(2, '0');
@@ -486,6 +559,21 @@ export function getEffectiveDurationMs(timeframe: Timeframe): number {
 }
 
 export function getFormattedTimeElapsed(signal: ForexSignal, now: number = Date.now()): string {
+  const nowDate = new Date(now);
+  const weekendState = getWeekendMarketState(nowDate);
+
+  if (weekendState.isWeekend) {
+    if (signal.status === 'PENDING') {
+      return 'Pending for Sun Open';
+    }
+    const sessionName = signal.killzone?.includes('NY')
+      ? 'Fri NY Session'
+      : signal.killzone?.includes('London')
+      ? 'Fri London Session'
+      : 'Fri Session';
+    return `${sessionName} • Weekend Hold`;
+  }
+
   const elapsed = Math.max(0, now - signal.createdAtMs);
   const minutes = Math.floor(elapsed / (60 * 1000));
   const hours = Math.floor(elapsed / (3600 * 1000));
@@ -495,6 +583,58 @@ export function getFormattedTimeElapsed(signal: ForexSignal, now: number = Date.
   if (hours > 0) return `Posted ${hours}h ${minutes % 60}m ago`;
   if (minutes > 0) return `Posted ${minutes}m ago`;
   return `Posted Just Now`;
+}
+
+export function getFormattedClosedTime(signal: ForexSignal, now: number = Date.now()): string {
+  const closedMs = signal.closedAtMs || signal.createdAtMs;
+  if (!closedMs) return 'Closed';
+  const elapsed = Math.max(0, now - closedMs);
+  const minutes = Math.floor(elapsed / (60 * 1000));
+  const hours = Math.floor(elapsed / (3600 * 1000));
+  const days = Math.floor(elapsed / (24 * 3600 * 1000));
+
+  if (days > 0) return `Closed ${days}d ${hours % 24}h ago`;
+  if (hours > 0) return `Closed ${hours}h ${minutes % 60}m ago`;
+  if (minutes > 0) return `Closed ${minutes}m ago`;
+  return `Closed Just Now`;
+}
+
+/**
+ * Calculates elapsed hold duration between trade opening and closing in milliseconds.
+ */
+export function getTradeDurationMs(signal: ForexSignal): number {
+  if (signal.closedAtMs && signal.createdAtMs && signal.closedAtMs > signal.createdAtMs) {
+    return signal.closedAtMs - signal.createdAtMs;
+  }
+  if (signal.validityDurationMs && signal.validityDurationMs > 0) {
+    return signal.validityDurationMs;
+  }
+  switch (signal.timeframe) {
+    case 'M5': return 25 * 60 * 1000;
+    case 'M15': return 45 * 60 * 1000;
+    case 'H1': return 2.5 * 3600 * 1000;
+    case 'H4': return 10 * 3600 * 1000;
+    case 'D1': return 36 * 3600 * 1000;
+    default: return 2 * 3600 * 1000;
+  }
+}
+
+/**
+ * Formats duration in milliseconds into human-readable compact text (e.g. "45m", "2h 15m", "1d 6h").
+ */
+export function formatDurationCompact(ms: number): string {
+  if (ms <= 0) return '0m';
+  const totalMinutes = Math.round(ms / (60 * 1000));
+  if (totalMinutes < 1) return '< 1m';
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const hours = Math.floor(totalMinutes / 60);
+  const remainingMinutes = totalMinutes % 60;
+  if (hours < 24) {
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  }
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
 }
 
 export function getFormattedTotalValidity(signal: ForexSignal): string {
@@ -613,6 +753,16 @@ export function updateSignalWithLiveMarket(signal: ForexSignal, livePrice: numbe
     };
   }
 
+  // During weekend when forex markets are closed, prices and positions are frozen at Friday close settlement
+  if (!isForexMarketOpen()) {
+    return {
+      ...signal,
+      pair: updatedPair,
+      currentPrice: livePrice,
+      isLiveSynced: true
+    };
+  }
+
   const isBuy = signal.type.startsWith('BUY');
   const sym = signal.pair.symbol;
   const decimals =
@@ -632,19 +782,23 @@ export function updateSignalWithLiveMarket(signal: ForexSignal, livePrice: numbe
   const wouldHitSl = isBuy ? livePrice <= signal.stopLoss : livePrice >= signal.stopLoss;
   const wouldHitTp = isBuy ? livePrice >= signal.takeProfit1 : livePrice <= signal.takeProfit1;
 
-  // Pure, deterministic check using signal state (no global mutable Map so React StrictMode never desyncs)
+  // Pure, deterministic check using signal state: ONLY re-anchor on the very first initial boot sync (!signal.isLiveSynced).
+  // Once a signal is live-synced, NEVER move its Entry, SL, or TP even if the user re-opens the app after a large market move!
   const isFirstLiveSync = !signal.isLiveSynced;
   const referencePrice = signal.currentPrice > 0 ? signal.currentPrice : signal.entryPrice;
   const singleTickJump = Math.abs(livePrice - referencePrice);
-  const isFeedSyncJump = isFirstLiveSync || (slDist > 0 && singleTickJump > slDist * 0.45);
 
   const remainingSlCushion = isBuy ? livePrice - signal.stopLoss : signal.stopLoss - livePrice;
+  // Also re-anchor if a single tick jumps by > 1.35x the entire SL distance (which only happens when
+  // transitioning from a static fallback basePrice to the real interbank feed)
+  const isMockToRealFeedJump = slDist > 0 && singleTickJump > slDist * 1.35;
   const needsReanchorOnSync =
-    isFeedSyncJump &&
-    (wouldHitSl ||
-      wouldHitTp ||
-      (slDist > 0 && remainingSlCushion < slDist * 0.75) ||
-      (isFirstLiveSync && slDist > 0 && singleTickJump > slDist * 0.15));
+    (isFirstLiveSync &&
+      (wouldHitSl ||
+        wouldHitTp ||
+        (slDist > 0 && remainingSlCushion < slDist * 0.75) ||
+        (slDist > 0 && singleTickJump > slDist * 0.15))) ||
+    isMockToRealFeedJump;
 
   if (needsReanchorOnSync && (signal.status === 'RUNNING' || signal.status === 'PENDING')) {
     let newEntry = signal.entryPrice;
@@ -764,6 +918,10 @@ export function updateSignalWithLiveMarket(signal: ForexSignal, livePrice: numbe
 export function getInitialSignals(): ForexSignal[] {
   const favorites = PersistenceManager.getFavorites();
   const alertToggled = PersistenceManager.getAlertToggledSignals();
+  const weekendState = getWeekendMarketState();
+  const defaultCreatedAt = weekendState.isWeekend
+    ? weekendState.lastFridayCloseMs - 4 * 3600 * 1000 // Friday 18:00 GMT (Active NY session)
+    : Date.now();
 
   const rawSignals: ForexSignal[] = [
     {
@@ -782,7 +940,7 @@ export function getInitialSignals(): ForexSignal[] {
       confluenceScore: 95,
       rationale: 'A+ Confluence: H1 Institutional Demand Block at 4152.00 + London sweep of Asian liquidity. H1 ATR structure: 170p ($17.00) SL targeting 440p ($44.00) TP1.',
       timeframe: 'H1',
-      timestamp: 'Just Now',
+      timestamp: weekendState.isWeekend ? 'Fri NY Session • Weekend Hold' : '18 min ago',
       institutionalFlow: 'Bullish Demand Block Mitigation + Liquidity Sweep',
       isBestTradeNow: true,
       isPending: false,
@@ -792,11 +950,12 @@ export function getInitialSignals(): ForexSignal[] {
       winProbability: 94,
       quality: 'A_PLUS',
       economicRisk: 'Safe Window (No Red Folder USD Events)',
-      validityTimeLeft: 'Active (Running +120p)',
+      validityTimeLeft: weekendState.isWeekend ? 'Weekend Hold (Running +120p)' : 'Active (Running +120p)',
       validityExpiresAt: 'Targeting TP1 4196.00 (+440p)',
       invalidationTrigger: 'SL protected at 4135.00 (-170p) below H1 Order Block',
-      createdAtMs: Date.now(),
+      createdAtMs: defaultCreatedAt,
       takeProfit: 4196.00,
+      isLiveSynced: false,
       checklist: [
         { title: 'H4 Trend Direction', isConfirmed: true, detail: 'Bullish market structure above 200 EMA' },
         { title: 'Institutional Demand Block', isConfirmed: true, detail: 'Tested unmitigated H1 Order Block at 4152.00' },
@@ -822,7 +981,7 @@ export function getInitialSignals(): ForexSignal[] {
       confluenceScore: 91,
       rationale: 'M15 Intraday Scalp (Bearish EUR Flow): Euro weakness + Strong USD (8.6/10). M15 Supply Block rejection at 1.1220 with tight 15-pip M15 SL targeting 39-pip liquidity pool at 1.1181.',
       timeframe: 'M15',
-      timestamp: '12 min ago',
+      timestamp: weekendState.isWeekend ? 'Fri London/NY Session • Weekend Hold' : '12 min ago',
       institutionalFlow: 'Bearish Supply Block + USD Dominance',
       isBestTradeNow: false,
       isPending: false,
@@ -832,11 +991,12 @@ export function getInitialSignals(): ForexSignal[] {
       winProbability: 91,
       quality: 'A_PLUS',
       economicRisk: 'Aligned with USD Strength vs EUR Weakness',
-      validityTimeLeft: 'Active (+9 pips)',
+      validityTimeLeft: weekendState.isWeekend ? 'Weekend Hold (+9 pips)' : 'Active (+9 pips)',
       validityExpiresAt: 'Targeting TP1 1.1181 (+39p)',
       invalidationTrigger: 'Tight M15 SL at 1.1235 (-15p)',
-      createdAtMs: Date.now(),
+      createdAtMs: defaultCreatedAt,
       takeProfit: 1.1181,
+      isLiveSynced: false,
       checklist: [
         { title: 'Currency Strength Alignment', isConfirmed: true, detail: 'Strong USD (8.6/10) vs Weak EUR — Bearish EUR/USD continuation' },
         { title: 'M15 Supply Rejection', isConfirmed: true, detail: 'Tight 15-pip M15 structural stop above 1.1235 micro swing high' }
@@ -871,8 +1031,9 @@ export function getInitialSignals(): ForexSignal[] {
       validityTimeLeft: 'Active Trade (+37p)',
       validityExpiresAt: 'Targeting H4 TP1 1.3382 (+177p)',
       invalidationTrigger: 'H4 Swing SL at 1.3137 (-68p)',
-      createdAtMs: Date.now(),
+      createdAtMs: defaultCreatedAt,
       takeProfit: 1.3382,
+      isLiveSynced: false,
       checklist: [
         { title: 'Break of Structure', isConfirmed: true, detail: 'Clean H4 close above previous swing high' },
         { title: 'H4 Structural ATR Stop', isConfirmed: true, detail: '68-pip H4 stop loss below 50 EMA swing low targeting +177 pips' }
@@ -1316,37 +1477,39 @@ export function getInitialSignals(): ForexSignal[] {
       id: 'SIG-NZD-016',
       pair: PAIR_NZDUSD,
       type: 'SELL_LIMIT',
-      status: 'PENDING',
-      entryPrice: 0.5635,
-      currentPrice: 0.5626,
-      stopLoss: 0.5648,
-      takeProfit1: 0.5601,
-      takeProfit2: 0.5585,
-      takeProfit3: 0.5565,
-      pips: 0.0,
+      status: 'HIT_SL',
+      entryPrice: 0.5592,
+      currentPrice: 0.5605,
+      stopLoss: 0.5605,
+      takeProfit1: 0.5558,
+      takeProfit2: 0.5542,
+      takeProfit3: 0.5525,
+      pips: -13.0,
       riskReward: '1:2.6',
       confluenceScore: 90,
-      rationale: 'M15 Intraday Limit Setup (Strong USD 8.6 vs Weak NZD 4.6): NZD/USD M15 Supply Block at 0.5635. Tight 13-pip M15 SL at 0.5648 targeting 34-pip M15 TP1 at 0.5601.',
+      rationale: 'Fulfilled 24H Session Signal (M15 Limit Execution — SL Hit): NZD/USD Sell Limit filled at 0.55920 with tight 13-pip M15 SL at 0.56050 targeting 34-pip M15 TP1 at 0.55580. Stopped out at 0.56050 (-13.0 pips) during USD pullback.',
       timeframe: 'M15',
-      timestamp: '8 min ago',
-      institutionalFlow: 'Premium Supply Mitigation',
+      timestamp: '2 hr ago',
+      institutionalFlow: 'Premium Supply Mitigation (Stopped Out)',
       isBestTradeNow: false,
-      isPending: true,
+      isPending: false,
       isFavorite: false,
       hasAlert: false,
       killzone: 'Asian / London Handover',
       winProbability: 90,
       quality: 'A_PLUS',
-      economicRisk: 'Lowest Margin Forex Major (~$1.15)',
-      validityTimeLeft: '37m left to validate',
-      validityExpiresAt: 'Expires after 3 × M15 Candles (45m Window)',
-      invalidationTrigger: 'Auto-cancels if price breaches 0.5648 (-13p) before fill',
+      economicRisk: 'Stop Loss Hit (-13.0 pips / -$1.30 @ 0.01)',
+      validityTimeLeft: 'Closed (SL Hit)',
+      validityExpiresAt: 'SL Hit at 0.56050 (-13.0p)',
+      invalidationTrigger: 'M15 SL hit at 0.56050 (-13p)',
       validityDurationMs: 45 * 60 * 1000,
-      createdAtMs: Date.now(),
-      takeProfit: 0.5601,
+      createdAtMs: Date.now() - 2 * 3600 * 1000,
+      closedAtMs: Date.now() - 45 * 60 * 1000,
+      isLiveSynced: true,
+      takeProfit: 0.5558,
       checklist: [
         { title: 'Micro Margin Requirement', isConfirmed: true, detail: 'Margin needed: ~$1.15 | 1 pip = $0.10' },
-        { title: 'M15 Intraday Scaling', isConfirmed: true, detail: '13-pip M15 stop loss targeting +34 pips at 0.5601' }
+        { title: 'M15 Intraday Scaling', isConfirmed: true, detail: '13-pip M15 stop loss at 0.56050 (-$1.30 @ 0.01 lot)' }
       ]
     },
     {
@@ -1424,6 +1587,272 @@ export function getInitialSignals(): ForexSignal[] {
         { title: 'Primary GBP Cross Leader', isConfirmed: true, detail: 'GBP (7.7) > CAD (5.2) high-velocity spread' },
         { title: 'M15 Scalp Target Reached', isConfirmed: true, detail: '16-pip M15 SL → +42.0-pip M15 TP reached at 1.8162' }
       ]
+    },
+    {
+      id: 'SIG-EJ-019',
+      pair: PAIR_EURJPY,
+      type: 'BUY_MARKET',
+      status: 'HIT_TP',
+      entryPrice: 177.40,
+      currentPrice: 177.94,
+      stopLoss: 177.16,
+      takeProfit1: 177.94,
+      takeProfit2: 178.25,
+      takeProfit3: 178.60,
+      pips: 54.0,
+      riskReward: '1:2.6',
+      confluenceScore: 92,
+      rationale: 'Fulfilled 48H Trend Trade (H1 Momentum): EUR strength with JPY carry outflow. H1 Bullish order block test at 177.40 reached TP1 at 177.94 (+54.0 pips).',
+      timeframe: 'H1',
+      timestamp: '28 hr ago',
+      institutionalFlow: 'EUR Bullish Breakout Mitigation',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'Frankfurt / London Session',
+      winProbability: 92,
+      quality: 'A_PLUS',
+      economicRisk: 'Target Reached (+54.0 pips)',
+      validityTimeLeft: 'Closed (TP Hit)',
+      validityExpiresAt: 'Take Profit Hit (+54.0p)',
+      invalidationTrigger: 'H1 SL was 177.16 (-24p)',
+      createdAtMs: Date.now() - 32 * 3600 * 1000,
+      closedAtMs: Date.now() - 28 * 3600 * 1000,
+      isLiveSynced: true,
+      takeProfit: 177.94,
+      checklist: [
+        { title: 'Cross Momentum Alignment', isConfirmed: true, detail: 'Strong EUR vs weak JPY institutional flow' },
+        { title: 'Target Reached', isConfirmed: true, detail: '24-pip SL targeting +54.0 pips achieved cleanly' }
+      ]
+    },
+    {
+      id: 'SIG-UC-020',
+      pair: PAIR_USDCAD,
+      type: 'SELL_MARKET',
+      status: 'HIT_SL',
+      entryPrice: 1.4280,
+      currentPrice: 1.4298,
+      stopLoss: 1.4298,
+      takeProfit1: 1.4235,
+      takeProfit2: 1.4210,
+      takeProfit3: 1.4180,
+      pips: -18.5,
+      riskReward: '1:2.5',
+      confluenceScore: 88,
+      rationale: 'Fulfilled 48H Counter-Trend Scalp: M15 Supply zone mitigation at 1.4280 stopped out at 1.4298 (-18.5 pips) following BOC rate announcement volatility.',
+      timeframe: 'M15',
+      timestamp: '36 hr ago',
+      institutionalFlow: 'Liquidity Grab (Stopped Out)',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'New York Session',
+      winProbability: 88,
+      quality: 'A',
+      economicRisk: 'Stop Loss Hit (-18.5 pips)',
+      validityTimeLeft: 'Closed (SL Hit)',
+      validityExpiresAt: 'SL Hit at 1.4298 (-18.5p)',
+      invalidationTrigger: 'M15 SL hit at 1.4298 (-18.5p)',
+      createdAtMs: Date.now() - 38 * 3600 * 1000,
+      closedAtMs: Date.now() - 36 * 3600 * 1000,
+      isLiveSynced: true,
+      takeProfit: 1.4235,
+      checklist: [
+        { title: 'Supply Zone Retest', isConfirmed: true, detail: 'Tested M15 bearish order block' },
+        { title: 'Controlled Risk', isConfirmed: true, detail: 'Disciplined stop loss exited at planned 18.5 pips' }
+      ]
+    },
+    {
+      id: 'SIG-AU-021',
+      pair: PAIR_AUDUSD,
+      type: 'BUY_MARKET',
+      status: 'HIT_TP',
+      entryPrice: 0.6912,
+      currentPrice: 0.6958,
+      stopLoss: 0.6894,
+      takeProfit1: 0.6958,
+      takeProfit2: 0.6980,
+      takeProfit3: 0.7010,
+      pips: 46.0,
+      riskReward: '1:2.6',
+      confluenceScore: 95,
+      rationale: 'Fulfilled 1-Week Swing: AUD commodity rally backed by RBA hawkish statement. Daily liquidity sweep into H4 FVG hit TP1 at 0.6958 (+46.0 pips).',
+      timeframe: 'H4',
+      timestamp: '4 days ago',
+      institutionalFlow: 'Pro-Trend AUD Accumulation',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'Asian / Sydney Session',
+      winProbability: 95,
+      quality: 'A_PLUS',
+      economicRisk: 'Target Reached (+46.0 pips)',
+      validityTimeLeft: 'Closed (TP Hit)',
+      validityExpiresAt: 'Take Profit Hit (+46.0p)',
+      invalidationTrigger: 'H4 SL was 0.6894 (-18p)',
+      createdAtMs: Date.now() - 4.5 * 24 * 3600 * 1000,
+      closedAtMs: Date.now() - 4 * 24 * 3600 * 1000,
+      isLiveSynced: true,
+      takeProfit: 0.6958,
+      checklist: [
+        { title: 'Macro Fundamentals', isConfirmed: true, detail: 'RBA rate divergence vs neutral Fed' },
+        { title: 'H4 Target Reached', isConfirmed: true, detail: '18-pip SL → +46.0-pip TP1 completed' }
+      ]
+    },
+    {
+      id: 'SIG-GJ-022',
+      pair: PAIR_GBPJPY,
+      type: 'BUY_MARKET',
+      status: 'HIT_TP',
+      entryPrice: 206.80,
+      currentPrice: 207.78,
+      stopLoss: 206.42,
+      takeProfit1: 207.78,
+      takeProfit2: 208.20,
+      takeProfit3: 208.80,
+      pips: 98.0,
+      riskReward: '1:2.6',
+      confluenceScore: 96,
+      rationale: 'Fulfilled 1-Week Dragon Run: High-beta GBP/JPY breakout from London consolidation. H1 Displacement reached +98.0 pips target at 207.78.',
+      timeframe: 'H1',
+      timestamp: '5 days ago',
+      institutionalFlow: 'Institutional Order Block Mitigation',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'London Session',
+      winProbability: 96,
+      quality: 'A_PLUS',
+      economicRisk: 'Target Reached (+98.0 pips)',
+      validityTimeLeft: 'Closed (TP Hit)',
+      validityExpiresAt: 'Take Profit Hit (+98.0p)',
+      invalidationTrigger: 'H1 SL was 206.42 (-38p)',
+      createdAtMs: Date.now() - 6 * 24 * 3600 * 1000,
+      closedAtMs: Date.now() - 5.5 * 24 * 3600 * 1000,
+      isLiveSynced: true,
+      takeProfit: 207.78,
+      checklist: [
+        { title: 'High-Beta Cross Momentum', isConfirmed: true, detail: 'Top yielding cross pair trend alignment' },
+        { title: 'Major Target Hit', isConfirmed: true, detail: 'Captured full +98.0 pips institutional expansion' }
+      ]
+    },
+    {
+      id: 'SIG-XAU-023',
+      pair: PAIR_XAUUSD,
+      type: 'BUY_MARKET',
+      status: 'HIT_TP',
+      entryPrice: 4020.00,
+      currentPrice: 4160.00,
+      stopLoss: 3965.00,
+      takeProfit1: 4160.00,
+      takeProfit2: 4210.00,
+      takeProfit3: 4280.00,
+      pips: 140.0,
+      riskReward: '1:2.6',
+      confluenceScore: 97,
+      rationale: 'Fulfilled 1-Month Gold Macro Swing: Geopolitical hedge accumulation. D1 Bullish engulfing retest at 4020.00 reached TP1 at 4160.00 (+140.0 pips).',
+      timeframe: 'D1',
+      timestamp: '12 days ago',
+      institutionalFlow: 'Sovereign Bullion Inflows',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'London / NY Overlap',
+      winProbability: 97,
+      quality: 'A_PLUS',
+      economicRisk: 'Target Reached (+140.0 pips)',
+      validityTimeLeft: 'Closed (TP Hit)',
+      validityExpiresAt: 'Take Profit Hit (+140.0p)',
+      invalidationTrigger: 'D1 SL was 3965.00 (-55p)',
+      createdAtMs: Date.now() - 14 * 24 * 3600 * 1000,
+      closedAtMs: Date.now() - 12 * 24 * 3600 * 1000,
+      isLiveSynced: true,
+      takeProfit: 4160.00,
+      checklist: [
+        { title: 'Macro Safe Haven Catalyst', isConfirmed: true, detail: 'Central bank gold buying support' },
+        { title: 'Multi-Day Swing Expansion', isConfirmed: true, detail: '+140.0 pips realized on micro lot' }
+      ]
+    },
+    {
+      id: 'SIG-EU-024',
+      pair: PAIR_EURUSD,
+      type: 'SELL_MARKET',
+      status: 'HIT_SL',
+      entryPrice: 1.1180,
+      currentPrice: 1.1202,
+      stopLoss: 1.1202,
+      takeProfit1: 1.1125,
+      takeProfit2: 1.1090,
+      takeProfit3: 1.1050,
+      pips: -22.0,
+      riskReward: '1:2.5',
+      confluenceScore: 89,
+      rationale: 'Fulfilled 1-Month Range Reversal: Short EUR/USD from 1.1180 supply ceiling. Exited at 1.1202 SL (-22.0 pips) after US PPI softened.',
+      timeframe: 'H1',
+      timestamp: '18 days ago',
+      institutionalFlow: 'Supply Rejection Failed',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'New York Session',
+      winProbability: 89,
+      quality: 'A',
+      economicRisk: 'Stop Loss Hit (-22.0 pips)',
+      validityTimeLeft: 'Closed (SL Hit)',
+      validityExpiresAt: 'SL Hit at 1.1202 (-22.0p)',
+      invalidationTrigger: 'H1 SL hit at 1.1202 (-22p)',
+      createdAtMs: Date.now() - 19 * 24 * 3600 * 1000,
+      closedAtMs: Date.now() - 18 * 24 * 3600 * 1000,
+      isLiveSynced: true,
+      takeProfit: 1.1125,
+      checklist: [
+        { title: 'Technical Supply Block', isConfirmed: true, detail: 'Respected structure before news spike' },
+        { title: 'Disciplined Stop Out', isConfirmed: true, detail: 'Executed SL protection cleanly' }
+      ]
+    },
+    {
+      id: 'SIG-UJ-025',
+      pair: PAIR_USDJPY,
+      type: 'BUY_MARKET',
+      status: 'HIT_TP',
+      entryPrice: 156.40,
+      currentPrice: 157.08,
+      stopLoss: 156.14,
+      takeProfit1: 157.08,
+      takeProfit2: 157.45,
+      takeProfit3: 157.90,
+      pips: 68.0,
+      riskReward: '1:2.6',
+      confluenceScore: 93,
+      rationale: 'Fulfilled 1-Month Yield Spread Trade: US 10Y Treasury yield breakout. H4 Dip at 156.40 reached TP1 at 157.08 (+68.0 pips).',
+      timeframe: 'H4',
+      timestamp: '24 days ago',
+      institutionalFlow: 'Yield Differential Expansion',
+      isBestTradeNow: false,
+      isPending: false,
+      isFavorite: false,
+      hasAlert: false,
+      killzone: 'Tokyo / London Session',
+      winProbability: 93,
+      quality: 'A_PLUS',
+      economicRisk: 'Target Reached (+68.0 pips)',
+      validityTimeLeft: 'Closed (TP Hit)',
+      validityExpiresAt: 'Take Profit Hit (+68.0p)',
+      invalidationTrigger: 'H4 SL was 156.14 (-26p)',
+      createdAtMs: Date.now() - 25 * 24 * 3600 * 1000,
+      closedAtMs: Date.now() - 24 * 24 * 3600 * 1000,
+      isLiveSynced: true,
+      takeProfit: 157.08,
+      checklist: [
+        { title: 'Interest Rate Divergence', isConfirmed: true, detail: 'Bullish USD carry advantage' },
+        { title: 'Swing Target Hit', isConfirmed: true, detail: '26-pip SL delivered +68.0 pips profit' }
+      ]
     }
   ];
 
@@ -1439,7 +1868,7 @@ export function getInitialSignals(): ForexSignal[] {
       const hrs = parseInt(hrMatch[1], 10);
       return hrs * 3600 * 1000;
     }
-    return 4 * 60 * 1000; // "Just Now" = 4 mins ago
+    return 18 * 60 * 1000; // Default 18 mins ago
   };
 
   const savedState = PersistenceManager.getSavedSignalsState();
@@ -1450,7 +1879,25 @@ export function getInitialSignals(): ForexSignal[] {
     const persisted = PersistenceManager.getOrAnchorCreatedAt(sig.id, duration, initialAgeMs);
     const saved = savedState[sig.id];
 
+    // Canonical fulfilled/closed 24H signals (HIT_TP / HIT_SL) must always retain their locked exit price, status, and timestamps
+    if (sig.status === 'HIT_TP' || sig.status === 'HIT_SL') {
+      return {
+        ...sig,
+        validityDurationMs: duration,
+        createdAtMs: sig.createdAtMs || persisted,
+        closedAtMs: sig.closedAtMs || (Date.now() - 45 * 60 * 1000),
+        isFavorite: favorites.includes(sig.id),
+        hasAlert: alertToggled.includes(sig.id),
+        isLiveSynced: true
+      };
+    }
+
     if (saved) {
+      const lockedCreatedAt =
+        typeof saved.createdAtMs === 'number' && saved.createdAtMs > 0
+          ? Math.min(saved.createdAtMs, persisted)
+          : persisted;
+
       const targetSlDist = Math.abs(sig.entryPrice - sig.stopLoss);
       const targetTp1Dist = Math.abs(sig.takeProfit1 - sig.entryPrice);
       const savedEntry = typeof saved.entryPrice === 'number' ? saved.entryPrice : sig.entryPrice;
@@ -1458,10 +1905,11 @@ export function getInitialSignals(): ForexSignal[] {
       const savedTp1 = typeof saved.takeProfit1 === 'number' ? saved.takeProfit1 : sig.takeProfit1;
       const savedSlDist = Math.abs(savedEntry - savedSl);
       const savedTp1Dist = Math.abs(savedTp1 - savedEntry);
-      // If localStorage holds a stale uncalibrated SL or TP1 distance (differing by >10% from timeframe-scaled ATR), upgrade it
+      // Only recalibrate if not already live-synced and SL/TP distance differs significantly
       const isStalePipScale =
-        (targetSlDist > 0 && Math.abs(savedSlDist - targetSlDist) > targetSlDist * 0.10) ||
-        (targetTp1Dist > 0 && Math.abs(savedTp1Dist - targetTp1Dist) > targetTp1Dist * 0.10);
+        !saved.isLiveSynced &&
+        ((targetSlDist > 0 && Math.abs(savedSlDist - targetSlDist) > targetSlDist * 0.10) ||
+          (targetTp1Dist > 0 && Math.abs(savedTp1Dist - targetTp1Dist) > targetTp1Dist * 0.10));
 
       if (isStalePipScale) {
         const isBuySig = (saved.type || sig.type).startsWith('BUY');
@@ -1471,7 +1919,7 @@ export function getInitialSignals(): ForexSignal[] {
         const sym = sig.pair.symbol;
         const dec = sym.includes('JPY') || sym.includes('XAU') || sym.includes('XAG') ? 2 : 4;
         const roundP = (v: number) => Number(v.toFixed(dec));
-        const anchorEntry = sig.status === 'HIT_TP' || sig.status === 'HIT_SL' ? sig.entryPrice : savedEntry;
+        const anchorEntry = savedEntry;
         const recalibratedSl = roundP(isBuySig ? anchorEntry - targetSlDist : anchorEntry + targetSlDist);
         const recalibratedTp1 = roundP(isBuySig ? anchorEntry + tp1Dist : anchorEntry - tp1Dist);
         const recalibratedTp2 = roundP(isBuySig ? anchorEntry + tp2Dist : anchorEntry - tp2Dist);
@@ -1502,7 +1950,7 @@ export function getInitialSignals(): ForexSignal[] {
           validityTimeLeft: sig.validityTimeLeft,
           validityExpiresAt: sig.validityExpiresAt,
           validityDurationMs: duration,
-          createdAtMs: persisted,
+          createdAtMs: lockedCreatedAt,
           isFavorite: favorites.includes(sig.id),
           hasAlert: alertToggled.includes(sig.id)
         };
@@ -1526,7 +1974,7 @@ export function getInitialSignals(): ForexSignal[] {
         validityTimeLeft: saved.validityTimeLeft || sig.validityTimeLeft,
         validityExpiresAt: saved.validityExpiresAt || sig.validityExpiresAt,
         validityDurationMs: duration,
-        createdAtMs: persisted,
+        createdAtMs: lockedCreatedAt,
         isFavorite: favorites.includes(sig.id),
         hasAlert: alertToggled.includes(sig.id)
       };
@@ -1538,76 +1986,149 @@ export function getInitialSignals(): ForexSignal[] {
       createdAtMs: persisted,
       isFavorite: favorites.includes(sig.id),
       hasAlert: alertToggled.includes(sig.id),
-      isLiveSynced: false
+      isLiveSynced: Boolean(sig.isLiveSynced)
     };
   });
 
-  // Restore any saved post-news signals (including ones that hit SL or TP), recalibrating stale SL/TP distances to their timeframe
+  // Restore any saved scanner or post-news signals (including ones that are active or hit SL/TP)
   const existingIds = new Set(mergedSignals.map(s => s.id));
+  const restoredActivePairs = new Set<string>();
+
   Object.values(savedState).forEach((saved: any) => {
     if (saved && saved.id && saved.pair && !existingIds.has(saved.id)) {
-      const tf: Timeframe = saved.timeframe || 'M15';
-      const tfScale =
-        tf === 'M5' ? 0.65 :
-        tf === 'M15' ? 1.0 :
-        tf === 'H1' ? 2.35 :
-        tf === 'H4' ? 4.85 : 8.75;
-      const sym = String(saved.pair.symbol || '').toUpperCase();
-      const isGoldPair = sym.includes('XAU') || sym.includes('GOLD');
-      const isSilverPair = sym.includes('XAG') || sym.includes('SILVER');
-      const pipDigits = saved.pair.pipDigits ?? (sym.includes('JPY') || isGoldPair || isSilverPair ? 2 : 4);
-      const baseM15Offset = isGoldPair ? 7.2 : isSilverPair ? 0.16 : pipDigits === 2 ? 0.16 : pipDigits === 1 ? 30.0 : 0.0015;
-      const targetSlDist = baseM15Offset * tfScale;
-      const targetTp1Dist = targetSlDist * 2.6;
-      const targetTp2Dist = targetSlDist * 3.8;
-      const targetTp3Dist = targetSlDist * 5.2;
-
-      const savedEntry = Number(saved.entryPrice || saved.pair.currentPrice || saved.pair.basePrice || 1.0);
-      const savedSl = Number(saved.stopLoss || savedEntry);
-      const savedTp1 = Number(saved.takeProfit1 || savedEntry);
-      const savedSlDist = Math.abs(savedEntry - savedSl);
-      const savedTp1Dist = Math.abs(savedTp1 - savedEntry);
-
-      const isStaleDynamicScale =
-        (targetSlDist > 0 && Math.abs(savedSlDist - targetSlDist) > targetSlDist * 0.15) ||
-        (targetTp1Dist > 0 && Math.abs(savedTp1Dist - targetTp1Dist) > targetTp1Dist * 0.15);
-
-      if (isStaleDynamicScale) {
-        const isBuySig = String(saved.type || 'BUY_MARKET').startsWith('BUY');
-        const dec = pipDigits === 2 ? 2 : 4;
-        const roundP = (v: number) => Number(v.toFixed(dec));
-        const recalSl = roundP(isBuySig ? savedEntry - targetSlDist : savedEntry + targetSlDist);
-        const recalTp1 = roundP(isBuySig ? savedEntry + targetTp1Dist : savedEntry - targetTp1Dist);
-        const recalTp2 = roundP(isBuySig ? savedEntry + targetTp2Dist : savedEntry - targetTp2Dist);
-        const recalTp3 = roundP(isBuySig ? savedEntry + targetTp3Dist : savedEntry - targetTp3Dist);
-        const pipMult = isGoldPair ? 10 : isSilverPair || pipDigits === 2 ? 100 : 10000;
-        const slPipsCount = Math.round(targetSlDist * pipMult);
-        const tp1PipsCount = Math.round(targetTp1Dist * pipMult);
-
-        mergedSignals.unshift({
-          ...saved,
-          stopLoss: recalSl,
-          takeProfit: recalTp1,
-          takeProfit1: recalTp1,
-          takeProfit2: recalTp2,
-          takeProfit3: recalTp3,
-          riskReward: '1:2.6',
-          validityExpiresAt: `Targeting ${tf} TP1 ${recalTp1} (+${tp1PipsCount}p)`,
-          invalidationTrigger: `${tf} SL protected at ${recalSl} (-${slPipsCount}p)`,
-          isFavorite: favorites.includes(saved.id),
-          hasAlert: alertToggled.includes(saved.id)
-        });
-      } else {
-        mergedSignals.unshift({
-          ...saved,
-          isFavorite: favorites.includes(saved.id),
-          hasAlert: alertToggled.includes(saved.id)
-        });
+      const isClosed = saved.status === 'HIT_TP' || saved.status === 'HIT_SL' || saved.status === 'EXPIRED';
+      if (!isClosed && restoredActivePairs.has(saved.pair.symbol)) {
+        return;
       }
+      if (!isClosed) {
+        restoredActivePairs.add(saved.pair.symbol);
+      }
+      existingIds.add(saved.id);
+
+      const tf: Timeframe = saved.timeframe || 'M15';
+      const duration = getEffectiveDurationMs(tf);
+      const anchoredCreated =
+        typeof saved.createdAtMs === 'number' && saved.createdAtMs > 0
+          ? saved.createdAtMs
+          : PersistenceManager.getOrAnchorCreatedAt(saved.id, duration, 25 * 60 * 1000);
+
+      // Preserve scanner-calibrated and live-synced signals as-is with their locked creation timestamp
+      mergedSignals.unshift({
+        ...saved,
+        createdAtMs: anchoredCreated,
+        validityDurationMs: saved.validityDurationMs || duration,
+        isFavorite: favorites.includes(saved.id),
+        hasAlert: alertToggled.includes(saved.id)
+      });
     }
   });
 
-  return mergedSignals;
+  // Pair Deduplication & Fresh Trade Support:
+  // 1. All closed trades (HIT_TP, HIT_SL) are permanently preserved in the Closed section.
+  // 2. For active trades (RUNNING, PENDING): only ONE active trade is allowed per pair at a time.
+  //    Since saved scanner/news signals are unshifted to the front of mergedSignals, the saved active signal
+  //    takes precedence and retains its original anchored creation timestamp across browser refreshes.
+  const seenActivePairs = new Set<string>();
+  const dedupedSignals = mergedSignals.filter(s => {
+    const sym = String(s.pair?.symbol || '').toUpperCase();
+    // Remove all XAG/USD closed trades from closed trades
+    if ((s.status === 'HIT_TP' || s.status === 'HIT_SL' || !isSignalValidAndActive(s)) && (sym.includes('XAG') || sym.includes('SILVER'))) {
+      return false;
+    }
+    // Always preserve closed trades in history
+    if (s.status === 'HIT_TP' || s.status === 'HIT_SL') {
+      return true;
+    }
+
+    const symbol = s.pair.symbol;
+
+    // Only allow 1 active trade per pair simultaneously (keep the first/active saved setup)
+    if (seenActivePairs.has(symbol)) {
+      return false;
+    }
+    seenActivePairs.add(symbol);
+    return true;
+  });
+
+  // Guaranteed Active Gold Setup:
+  // If Gold has no currently active trade in dedupedSignals (e.g. because earlier trades hit TP/SL or closed),
+  // spawn a stable institutional A+ active signal with a persisted anchor timestamp so it never resets on refresh.
+  const hasActiveGold = dedupedSignals.some(
+    s => s.pair.symbol === 'XAU/USD' && (s.status === 'RUNNING' || s.status === 'PENDING')
+  );
+  if (!hasActiveGold) {
+    const liveGold = PAIR_XAUUSD;
+    const currentGoldPrice = liveGold.currentPrice > 0 ? liveGold.currentPrice : 4181.30;
+    const entryPrice = 4180.50;
+    const stopLoss = 4164.00;
+    const takeProfit1 = 4212.00;
+    const fallbackGoldId = 'SIG-XAU-ACTIVE';
+    const anchoredGoldTime = PersistenceManager.getOrAnchorCreatedAt(
+      fallbackGoldId,
+      4 * 3600 * 1000,
+      18 * 60 * 1000
+    );
+    const freshGoldSignal: ForexSignal = {
+      id: fallbackGoldId,
+      pair: { ...liveGold, currentPrice: currentGoldPrice },
+      type: 'BUY_MARKET',
+      status: 'RUNNING',
+      entryPrice,
+      currentPrice: currentGoldPrice,
+      stopLoss,
+      takeProfit1,
+      takeProfit2: 4238.00,
+      takeProfit3: 4275.00,
+      pips: Math.round((currentGoldPrice - entryPrice) * 10) / 10,
+      riskReward: '1:2.4',
+      confluenceScore: 96,
+      rationale: 'Fresh A+ Institutional Setup: H1 Demand Order Block at 4180.50 mitigated following Asian liquidity sweep. Sovereign bullion safe-haven inflows and US Dollar softening reinforce bullish expansion towards 4200+ liquidity pools.',
+      timeframe: 'H1',
+      timestamp: '18 min ago',
+      institutionalFlow: 'Bullish Demand Block Mitigation + Sovereign Bullion Inflows',
+      isBestTradeNow: true,
+      isPending: false,
+      isFavorite: true,
+      hasAlert: false,
+      killzone: 'NY AM Killzone (13:30 - 16:30 GMT)',
+      winProbability: 95,
+      quality: 'A_PLUS',
+      economicRisk: 'High Confluence Trend Window',
+      validityTimeLeft: 'Active (Running +8.0p)',
+      validityExpiresAt: 'Targeting TP1 4212.00 (+315p)',
+      invalidationTrigger: 'SL protected at 4164.00 (-165p) below H1 Institutional Order Block',
+      createdAtMs: anchoredGoldTime,
+      takeProfit: takeProfit1,
+      isLiveSynced: false,
+      checklist: [
+        { title: 'H4 Trend Direction', isConfirmed: true, detail: 'Bullish market structure above 200 EMA' },
+        { title: 'Institutional Demand Block', isConfirmed: true, detail: 'Tested unmitigated H1 Order Block at 4180.50' },
+        { title: 'Fair Value Gap (FVG)', isConfirmed: true, detail: '15M Bullish FVG filled cleanly during session overlap' },
+        { title: 'Liquidity Pool Sweep', isConfirmed: true, detail: 'Asian session retail stops swept before expansion' },
+        { title: 'RSI Divergence', isConfirmed: true, detail: 'H1 Bullish Hidden Divergence at 44 level' },
+        { title: 'Central Bank / Bullion Inflow', isConfirmed: true, detail: 'Global reserve accumulation & safe haven tailwind' }
+      ]
+    };
+    dedupedSignals.unshift(freshGoldSignal);
+  }
+
+  // Ensure every signal has a valid persisted createdAtMs without ever overwriting existing valid timestamps on refresh
+  const normalizedSignals = dedupedSignals.map((s, idx) => {
+    if (!s.createdAtMs || s.createdAtMs <= 0) {
+      const fallbackAgeMs = (idx + 1) * 18 * 60 * 1000;
+      return {
+        ...s,
+        createdAtMs: PersistenceManager.getOrAnchorCreatedAt(
+          s.id,
+          getEffectiveDurationMs(s.timeframe),
+          fallbackAgeMs
+        )
+      };
+    }
+    return s;
+  });
+
+  return normalizedSignals;
 }
 
 export function generateCandles(pair: ForexPair, timeframe: Timeframe, count: number = 120): CandleStick[] {

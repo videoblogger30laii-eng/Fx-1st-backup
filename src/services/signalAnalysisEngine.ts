@@ -34,7 +34,9 @@ export function getSignalDetailedAnalysis(signal: ForexSignal): SignalAnalysis {
 
   // Strategy Classification
   let strategyModel = 'Smart Money Concepts (SMC) • Order Block & Liquidity Sweep';
-  if (signal.type.includes('LIMIT')) {
+  if (signal.strategy === 'OPENING_RANGE_BOX_PIVOT' || signal.rationale.toLowerCase().includes('opening range') || signal.rationale.toLowerCase().includes('box pivot')) {
+    strategyModel = 'Opening Range Box Pivot • ORR + ARC + Sneaky Pivot + Box Theory (Precision 1.85R)';
+  } else if (signal.type.includes('LIMIT')) {
     strategyModel = isBuy 
       ? 'SMC Discount Zone Mitigation & Institutional Limit Pullback'
       : 'SMC Premium Zone Mitigation & Institutional Limit Pullback';

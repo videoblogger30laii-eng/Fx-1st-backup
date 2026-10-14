@@ -97,7 +97,7 @@ export const BacktestingLabScreen: React.FC<Props> = ({
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   // Master Engine View Mode: Candle-Based vs Time-Based vs Side-by-Side Dual View
-  const [primaryMode, setPrimaryMode] = useState<BacktestPrimaryMode>('SIDE_BY_SIDE');
+  const [primaryMode, setPrimaryMode] = useState<BacktestPrimaryMode>('CANDLE_BASED');
 
   // Time Horizon Local State
   const [selectedHorizon, setSelectedHorizon] = useState<BacktestTimeHorizon>(filter.timeHorizon || 'ALL');
@@ -368,6 +368,30 @@ export const BacktestingLabScreen: React.FC<Props> = ({
     return list.slice(0, tradeLimit);
   }, [currentSummary.filteredTrades, ledgerPairFilter, tradeSearchQuery, tradeLimit]);
 
+  // Live-computed core comparison across all 9 institutional strategies
+  const [showStrategyMatrix, setShowStrategyMatrix] = useState<boolean>(true);
+
+  const allStrategiesComparison = useMemo(() => {
+    return BacktestEngine.compareAllStrategies(
+      {
+        ...filter,
+        timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon
+      },
+      liveSignals
+    );
+  }, [filter, selectedHorizon, liveSignals]);
+
+  const activeStrategyDetail = useMemo(() => {
+    return (
+      allStrategiesComparison.find(s => s.strategy === filter.strategy) ||
+      allStrategiesComparison[0]
+    );
+  }, [allStrategiesComparison, filter.strategy]);
+
+  const activeSpec = useMemo(() => {
+    return StrategyBacktester.getStrategySpec(filter.strategy);
+  }, [filter.strategy]);
+
   // Multi-Period Time Horizon comparison stats
   const horizonComparison = useMemo(() => {
     return BACKTEST_TIME_HORIZONS.map(h => {
@@ -389,129 +413,444 @@ export const BacktestingLabScreen: React.FC<Props> = ({
   }, [filter, liveSignals, currentSummary]);
 
   return (
-    <div className="space-y-4 max-w-4xl mx-auto pb-16 text-left">
-      {/* 1. Header & Live Action Bar */}
-      <div className="bg-[#101522] border border-[#222F47] rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-lg">
-        <div>
-          <div className="flex items-center gap-2">
-            <FlaskConical className="w-5 h-5 text-[#FFD700]" />
-            <h2 className="text-lg font-black text-[#F1F5F9] uppercase tracking-wider">
-              Quant Backtesting Lab
-            </h2>
-            <span className="text-[10px] font-black text-[#00E676] bg-[#00E676]/15 border border-[#00E676]/30 px-2 py-0.5 rounded-full flex items-center gap-1">
-              <Radio className="w-3 h-3 text-[#00E676] animate-pulse" />
-              <span>Candles + Time Dual Engine</span>
-            </span>
+    <div className="space-y-3 max-w-4xl mx-auto pb-16 text-left">
+      {/* 1. Compact Institutional Header & Action Bar */}
+      <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 shadow-sm terminal-card">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-[#FFD700]/15 border border-[#FFD700]/40 flex items-center justify-center text-[#FFD700] shrink-0">
+            <FlaskConical className="w-4 h-4" />
           </div>
-          <p className="text-xs text-[#94A3B8] mt-1">
-            Seamlessly toggle between <strong>Candle-Based Scans (5,000+ Real Candles)</strong> and <strong>Time-Based Horizons (24h to 1yr)</strong> side by side.
-          </p>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-sm font-black text-[#F1F5F9] uppercase tracking-wider">
+                Quant Backtesting Lab
+              </h2>
+              <span className="text-[9.5px] font-bold text-[#00E676] flex items-center gap-1">
+                <Radio className="w-2.5 h-2.5 text-[#00E676] animate-pulse" />
+                <span>{totalCandlesScanned.toLocaleString()} Real Candles · Zero-Lookahead</span>
+              </span>
+            </div>
+            <p className="text-[10.5px] text-[#94A3B8]">
+              1R Risk = $100 · Strategy-Calibrated ATR Stop/Target · Live Deriv WebSocket Candle Verification
+            </p>
+          </div>
         </div>
 
         {/* Action Controls */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            onClick={() => setShowStrategyMatrix(!showStrategyMatrix)}
+            className="flex items-center gap-1 px-2.5 py-1 text-[10.5px] font-bold text-[#00E676] hover:text-white bg-[#182033] hover:bg-[#00E676]/20 border border-[#00E676]/40 rounded-lg transition-colors cursor-pointer"
+            title="Toggle 9-Strategy Quantitative Blueprint & Comparison Matrix"
+          >
+            <Layers className="w-3 h-3 text-[#00E676]" />
+            <span>{showStrategyMatrix ? 'Hide Strategy Specs' : 'Compare 9 Strategies'}</span>
+          </button>
+
           <button
             onClick={() => setIsMonteCarloOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#FFD700] hover:text-white bg-[#182033] hover:bg-[#FFD700]/20 border border-[#FFD700]/40 rounded-lg transition-colors cursor-pointer shadow-xs"
+            className="flex items-center gap-1 px-2.5 py-1 text-[10.5px] font-bold text-[#FFD700] hover:text-white bg-[#182033] hover:bg-[#FFD700]/20 border border-[#FFD700]/40 rounded-lg transition-colors cursor-pointer"
             title="Run 1,000 Monte Carlo Stress Simulations & Prop Firm Rule Check"
           >
-            <Dice5 className="w-3.5 h-3.5 text-[#FFD700]" />
+            <Dice5 className="w-3 h-3 text-[#FFD700]" />
             <span>Monte Carlo</span>
           </button>
 
           <button
             onClick={() => setIsApiSettingsOpen(!isApiSettingsOpen)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#94A3B8] hover:text-[#F1F5F9] bg-[#182033] hover:bg-[#222F47] border border-[#222F47] rounded-lg transition-colors cursor-pointer"
+            className="flex items-center gap-1 px-2.5 py-1 text-[10.5px] font-bold text-[#94A3B8] hover:text-[#F1F5F9] bg-[#182033] hover:bg-[#222F47] border border-[#222F47] rounded-lg transition-colors cursor-pointer"
             title="Configure User Deriv App ID and API Token"
           >
-            <Key className="w-3.5 h-3.5 text-[#FFD700]" />
+            <Key className="w-3 h-3 text-[#FFD700]" />
             <span>Deriv Keys</span>
-            {isApiSettingsOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            {isApiSettingsOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           </button>
 
           <button
             onClick={handleRunAccurateBacktest}
             disabled={isFetchingLive}
-            className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-black text-[#080B11] bg-[#00E676] hover:bg-[#00E676]/90 disabled:opacity-50 rounded-lg shadow-[0_0_12px_rgba(0,230,118,0.25)] transition-all cursor-pointer"
+            className="flex items-center gap-1 px-3 py-1 text-[10.5px] font-black text-[#080B11] bg-[#00E676] hover:bg-[#00E676]/90 disabled:opacity-50 rounded-lg shadow-xs transition-all cursor-pointer"
           >
             {isFetchingLive ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <Loader2 className="w-3 h-3 animate-spin" />
             ) : (
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw className="w-3 h-3" />
             )}
-            <span>{isFetchingLive ? `Scanning ${candleScanCount} Candles...` : 'Run Candle & Time Sync'}</span>
+            <span>{isFetchingLive ? `Scanning ${candleScanCount}...` : 'Sync Live Candles'}</span>
           </button>
         </div>
       </div>
 
-      {/* 2. DUAL ENGINE MASTER SWITCHER (Candle-Based vs Time-Based vs Side-by-Side Dual View) */}
-      <div className="bg-[#101522] p-1.5 rounded-2xl border border-[#222F47] flex items-center gap-1.5 shadow-md">
-        <button
-          onClick={() => setPrimaryMode('SIDE_BY_SIDE')}
-          className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all ${
-            primaryMode === 'SIDE_BY_SIDE'
-              ? 'bg-[#2979FF] text-white shadow-lg shadow-[#2979FF]/30'
-              : 'text-[#94A3B8] hover:text-[#F1F5F9] hover:bg-[#182033]'
-          }`}
-        >
-          <Columns className="w-4 h-4" />
-          <span>⚡ Side-by-Side (Both Engines)</span>
-        </button>
+      {/* 2. Top-Level 9-Strategy Selector + Live Leaderboard Metrics + Engine Mode Switcher */}
+      <div className="bg-[#101522] border border-[#222F47] rounded-xl p-2.5 space-y-2 shadow-sm terminal-card">
+        <div className="flex items-center justify-between gap-2 px-0.5">
+          <span className="text-[10px] font-black text-[#F1F5F9] uppercase tracking-wider flex items-center gap-1.5">
+            <Award className="w-3.5 h-3.5 text-[#FFD700]" />
+            <span>9-Strategy Institutional Suite (Live Core-Calculated Metrics)</span>
+          </span>
+          <span className="text-[9.5px] font-mono text-[#00E676]">
+            Active: {STRATEGY_CONFIGS[filter.strategy]?.title} · {activeSpec.targetRR} Target (+{activeSpec.realizedWinR}R Win)
+          </span>
+        </div>
 
-        <button
-          onClick={() => setPrimaryMode('CANDLE_BASED')}
-          className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all ${
-            primaryMode === 'CANDLE_BASED'
-              ? 'bg-[#00E676] text-[#080B11] shadow-lg shadow-[#00E676]/30'
-              : 'text-[#94A3B8] hover:text-[#F1F5F9] hover:bg-[#182033]'
-          }`}
-        >
-          <FlaskConical className="w-4 h-4" />
-          <span>🔬 1. Candle-Based Engine</span>
-        </button>
+        {/* 9-Strategy Model Segmented Grid with Real Computed Metrics */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+          {allStrategiesComparison.map((comp) => {
+            const isSelected = filter.strategy === comp.strategy;
+            const isEnsemble = comp.tierTag === 'ENSEMBLE';
+            const isNew = comp.tierTag === 'NEW';
+            return (
+              <button
+                key={comp.strategy}
+                onClick={() => onStrategySelect(comp.strategy)}
+                className={`text-left px-2.5 py-2 rounded-lg border transition-all cursor-pointer ${
+                  isSelected
+                    ? 'bg-[#182033] border-[#FFD700] shadow-xs'
+                    : isEnsemble
+                    ? 'bg-[#0D1424] border-[#FFD700]/40 hover:border-[#FFD700]'
+                    : 'bg-[#080B11] border-[#222F47] hover:border-[#2979FF]/50'
+                }`}
+                title={comp.description}
+              >
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[10px] font-black text-[#F1F5F9] truncate">
+                    {comp.shortBadge}
+                  </span>
+                  <span className="text-[8px] font-mono text-[#94A3B8] shrink-0">
+                    {isEnsemble ? 'ENSEMBLE' : isNew ? 'NEW' : 'UPGRADED'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-1 mt-1 font-mono">
+                  <span className="text-[10px] font-black text-[#FFD700]">
+                    {comp.winRate.toFixed(1)}% WR
+                  </span>
+                  <span className="text-[9px] font-bold text-[#00E676]">
+                    +{comp.netRoiPercent}% ROI
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-1 mt-0.5 font-mono text-[8.5px] text-[#64748B]">
+                  <span>{comp.winTrades}W-{comp.lossTrades}L ({comp.totalTrades}T)</span>
+                  <span className="text-[#2979FF]">PF {comp.profitFactor.toFixed(2)} · +{comp.spec.realizedWinR}R</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
 
-        <button
-          onClick={() => setPrimaryMode('TIME_BASED')}
-          className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all ${
-            primaryMode === 'TIME_BASED'
-              ? 'bg-[#FFD700] text-[#080B11] shadow-lg shadow-[#FFD700]/30'
-              : 'text-[#94A3B8] hover:text-[#F1F5F9] hover:bg-[#182033]'
-          }`}
-        >
-          <Clock className="w-4 h-4" />
-          <span>⏱️ 2. Time-Based Engine</span>
-        </button>
+        {/* Dual Engine Master Switcher */}
+        <div className="flex items-center gap-1 pt-1.5 border-t border-[#222F47]/60">
+          <button
+            onClick={() => setPrimaryMode('CANDLE_BASED')}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-[10.5px] font-black transition-all cursor-pointer ${
+              primaryMode === 'CANDLE_BASED'
+                ? 'bg-[#00E676] text-[#080B11]'
+                : 'bg-[#080B11] text-[#94A3B8] hover:text-[#F1F5F9]'
+            }`}
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            <span>1. Candle-Based Engine</span>
+          </button>
+
+          <button
+            onClick={() => setPrimaryMode('TIME_BASED')}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-[10.5px] font-black transition-all cursor-pointer ${
+              primaryMode === 'TIME_BASED'
+                ? 'bg-[#FFD700] text-[#080B11]'
+                : 'bg-[#080B11] text-[#94A3B8] hover:text-[#F1F5F9]'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span>2. Time-Based Horizons</span>
+          </button>
+
+          <button
+            onClick={() => setPrimaryMode('SIDE_BY_SIDE')}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-[10.5px] font-black transition-all cursor-pointer ${
+              primaryMode === 'SIDE_BY_SIDE'
+                ? 'bg-[#2979FF] text-white'
+                : 'bg-[#080B11] text-[#94A3B8] hover:text-[#F1F5F9]'
+            }`}
+          >
+            <Columns className="w-3.5 h-3.5" />
+            <span>Both Engines</span>
+          </button>
+        </div>
       </div>
 
-      {/* 3. SECTION 1: CANDLE-BASED BACKTESTING CONTROLS & ENGINE */}
-      {(primaryMode === 'CANDLE_BASED' || primaryMode === 'SIDE_BY_SIDE') && (
-        <div className="bg-[#101522] border border-[#00E676]/40 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xl relative overflow-hidden">
-          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-[#222F47]">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-[#00E676]/15 border border-[#00E676]/40 flex items-center justify-center text-[#00E676]">
-                <FlaskConical className="w-5 h-5" />
-              </div>
+      {/* 3. Unified 6-Column Performance KPI Ledger (Right below strategy suite grid) */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-y sm:divide-y-0 divide-[#222F47]/60 bg-[#101522] border border-[#222F47] rounded-xl overflow-hidden shadow-sm terminal-card">
+        <div className="p-2.5">
+          <span className="text-[9px] text-[#94A3B8] uppercase font-bold block">Win Rate</span>
+          <div className="text-base font-black font-mono text-[#FFD700] tabular-nums mt-0.5">
+            {currentSummary.winRate.toFixed(1)}%
+          </div>
+          <span className="text-[9px] text-[#64748B] font-mono">
+            {currentSummary.totalTrades} Setups
+          </span>
+        </div>
+
+        <div className="p-2.5">
+          <span className="text-[9px] text-[#94A3B8] uppercase font-bold block">Profit Factor</span>
+          <div className="text-base font-black font-mono text-[#00E676] tabular-nums mt-0.5">
+            {currentSummary.profitFactor.toFixed(2)}
+          </div>
+          <span className="text-[9px] text-[#64748B] font-mono">
+            +${(currentSummary.grossProfitDollars || 0).toLocaleString()}
+          </span>
+        </div>
+
+        <div className="p-2.5">
+          <span className="text-[9px] text-[#94A3B8] uppercase font-bold block">Net ROI ($10k)</span>
+          <div className={`text-base font-black font-mono tabular-nums mt-0.5 ${
+            currentSummary.netRoiPercent >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'
+          }`}>
+            {currentSummary.netRoiPercent >= 0 ? `+${currentSummary.netRoiPercent}%` : `${currentSummary.netRoiPercent}%`}
+          </div>
+          <span className="text-[9px] text-[#64748B] font-mono">
+            {currentSummary.totalPips >= 0 ? `+${currentSummary.totalPips}p` : `${currentSummary.totalPips}p`}
+          </span>
+        </div>
+
+        <div className="p-2.5">
+          <span className="text-[9px] text-[#94A3B8] uppercase font-bold block">Max Drawdown</span>
+          <div className="text-base font-black font-mono text-[#FF3366] tabular-nums mt-0.5">
+            -{currentSummary.maxDrawdownPercent}%
+          </div>
+          <span className="text-[9px] text-[#64748B] font-mono">Peak Pullback</span>
+        </div>
+
+        <div className="p-2.5">
+          <span className="text-[9px] text-[#00E676] uppercase font-bold block">Clean TP Wins</span>
+          <div className="text-base font-black font-mono text-[#00E676] tabular-nums mt-0.5">
+            {currentSummary.winTrades}
+          </div>
+          <span className="text-[9px] text-[#00E676]/80 font-mono">
+            +{activeSpec.realizedWinR.toFixed(2)}R (+${activeSpec.winDollarPer1R})
+          </span>
+        </div>
+
+        <div className="p-2.5">
+          <span className="text-[9px] text-[#FF3366] uppercase font-bold block">SL Hit First</span>
+          <div className="text-base font-black font-mono text-[#FF3366] tabular-nums mt-0.5">
+            {currentSummary.lossTrades}
+          </div>
+          <span className="text-[9px] text-[#FF3366]/80 font-mono">-1.00R (-$100)</span>
+        </div>
+      </div>
+
+      {/* 2B. ACTIVE STRATEGY CORE SPECIFICATION & 9-STRATEGY QUANTITATIVE COMPARISON MATRIX */}
+      {showStrategyMatrix && activeStrategyDetail && (
+        <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3 space-y-3 shadow-sm terminal-card">
+          {/* Active Strategy Deep-Dive Blueprint */}
+          <div className="bg-[#080B11] border border-[#222F47] rounded-lg p-3 space-y-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-[#222F47]/70">
               <div>
-                <h3 className="text-sm font-bold text-[#F1F5F9] flex items-center gap-2">
-                  <span>🔬 1. Candle-Based Backtesting Engine</span>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40">
-                    {totalCandlesScanned.toLocaleString()} Scanned Candles
-                  </span>
+                <div className="flex items-center gap-2 text-xs text-[#94A3B8] font-mono">
+                  <span className="text-[#FFD700] font-bold">{activeStrategyDetail.tierTag} STRATEGY</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{activeStrategyDetail.spec.primaryTimeframes}</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-[#00E676]">Target {activeStrategyDetail.spec.targetRR} (+{activeStrategyDetail.spec.realizedWinR.toFixed(2)}R / +${activeStrategyDetail.spec.winDollarPer1R} per Win)</span>
+                </div>
+                <h3 className="text-sm font-black text-[#F1F5F9] mt-0.5">
+                  {activeStrategyDetail.title} — Core Execution & Accuracy Specification
                 </h3>
-                <p className="text-[11px] text-[#94A3B8]">
-                  Zero-lookahead execution on real OHLC candles across M15, H1, H4, and D1 with broker spread deductions
-                </p>
+              </div>
+
+              <div className="flex items-center gap-3 font-mono text-xs bg-[#101522] border border-[#222F47] rounded-lg px-3 py-1.5 shrink-0">
+                <div>
+                  <span className="text-[8.5px] text-[#64748B] uppercase block">Expectancy / Trade</span>
+                  <span className="font-black text-[#00E676]">
+                    +${activeStrategyDetail.expectancyDollars.toFixed(1)} (+{activeStrategyDetail.expectancyR.toFixed(2)}R)
+                  </span>
+                </div>
+                <div className="h-5 w-px bg-[#222F47]" />
+                <div>
+                  <span className="text-[8.5px] text-[#64748B] uppercase block">Avg Win / Loss</span>
+                  <span className="font-bold text-[#F1F5F9]">
+                    <span className="text-[#00E676]">+{activeStrategyDetail.avgWinPips}p</span>
+                    {' / '}
+                    <span className="text-[#FF3366]">-{activeStrategyDetail.avgLossPips}p</span>
+                  </span>
+                </div>
+                <div className="h-5 w-px bg-[#222F47]" />
+                <div>
+                  <span className="text-[8.5px] text-[#64748B] uppercase block">Top Asset</span>
+                  <span className="font-bold text-[#FFD700]">
+                    {activeStrategyDetail.bestPairSymbol} ({activeStrategyDetail.bestPairWinRate}% WR)
+                  </span>
+                </div>
               </div>
             </div>
 
+            <p className="text-[11px] text-[#94A3B8] leading-relaxed">
+              {activeStrategyDetail.description}
+            </p>
+
+            {/* 6-Point Core Institutional Accuracy Rules Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 text-[10.5px] font-mono">
+              <div className="bg-[#101522] border border-[#222F47]/80 rounded-lg p-2">
+                <span className="text-[8.5px] text-[#64748B] uppercase font-bold block">1. Primary Entry Trigger</span>
+                <span className="text-[#F1F5F9] font-sans text-[10.5px] leading-snug block mt-0.5">
+                  {activeStrategyDetail.spec.entryTriggerRule}
+                </span>
+              </div>
+
+              <div className="bg-[#101522] border border-[#222F47]/80 rounded-lg p-2">
+                <span className="text-[8.5px] text-[#64748B] uppercase font-bold block">2. Structural Stop & Invalidation</span>
+                <span className="text-[#F1F5F9] font-sans text-[10.5px] leading-snug block mt-0.5">
+                  {activeStrategyDetail.spec.invalidationRule} ({activeStrategyDetail.spec.atrSlMultiplier})
+                </span>
+              </div>
+
+              <div className="bg-[#101522] border border-[#222F47]/80 rounded-lg p-2">
+                <span className="text-[8.5px] text-[#64748B] uppercase font-bold block">3. ATR Displacement & Volume Gate</span>
+                <span className="text-[#00E676] block mt-0.5">
+                  {activeStrategyDetail.spec.minDisplacementAtr}
+                </span>
+                <span className="text-[#94A3B8] text-[9.5px] block">
+                  {activeStrategyDetail.spec.sessionVolumeFilter}
+                </span>
+              </div>
+
+              <div className="bg-[#101522] border border-[#222F47]/80 rounded-lg p-2">
+                <span className="text-[8.5px] text-[#64748B] uppercase font-bold block">4. 50% Equilibrium Zone Rule</span>
+                <span className="text-[#FFD700] block mt-0.5">
+                  {activeStrategyDetail.spec.equilibriumRule}
+                </span>
+              </div>
+
+              <div className="bg-[#101522] border border-[#222F47]/80 rounded-lg p-2">
+                <span className="text-[8.5px] text-[#64748B] uppercase font-bold block">5. RSI Momentum & Exhaustion Gate</span>
+                <span className="text-[#2979FF] block mt-0.5">
+                  {activeStrategyDetail.spec.rsiFilterRule}
+                </span>
+              </div>
+
+              <div className="bg-[#101522] border border-[#222F47]/80 rounded-lg p-2">
+                <span className="text-[8.5px] text-[#64748B] uppercase font-bold block">6. Streak & Selectivity Profile</span>
+                <span className="text-[#F1F5F9] block mt-0.5">
+                  Max Win Streak: <span className="text-[#00E676] font-bold">{activeStrategyDetail.consecutiveWins}W</span> · Max Loss: <span className="text-[#FF3366] font-bold">{activeStrategyDetail.consecutiveLosses}L</span> · Selectivity: {Math.round(activeStrategyDetail.spec.selectivityFactor * 100)}%
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* All 9 Strategies Quantitative Comparison Table */}
+          <div className="bg-[#080B11] border border-[#222F47] rounded-lg overflow-x-auto">
+            <div className="px-3 py-2 border-b border-[#222F47] flex items-center justify-between gap-2">
+              <span className="text-[10.5px] font-black text-[#F1F5F9] uppercase tracking-wider">
+                All 9 Strategies — Core Quantitative Comparison Matrix (Click Any Row to Inspect)
+              </span>
+              <span className="text-[9.5px] font-mono text-[#94A3B8]">
+                Filter Synced: {filter.timeframe || 'All TFs'} · ≥{filter.minConfluence}% Conf · {selectedHorizon}
+              </span>
+            </div>
+            <table className="w-full text-left text-[11px] font-mono">
+              <thead>
+                <tr className="border-b border-[#222F47] text-[#64748B] bg-[#0D121F]">
+                  <th className="py-2 px-2.5">Strategy Model</th>
+                  <th className="py-2 px-2">Tier</th>
+                  <th className="py-2 px-2">Setups (W-L)</th>
+                  <th className="py-2 px-2">Win Rate</th>
+                  <th className="py-2 px-2">Payout / Target</th>
+                  <th className="py-2 px-2">Profit Factor</th>
+                  <th className="py-2 px-2">Expectancy</th>
+                  <th className="py-2 px-2">Avg W / L</th>
+                  <th className="py-2 px-2">Max DD</th>
+                  <th className="py-2 px-2">Net ROI ($10k)</th>
+                  <th className="py-2 px-2.5 text-right">Top Pair</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#222F47]/60 text-[#F1F5F9]">
+                {allStrategiesComparison.map((row) => {
+                  const isCurrent = row.strategy === filter.strategy;
+                  return (
+                    <tr
+                      key={row.strategy}
+                      onClick={() => onStrategySelect(row.strategy)}
+                      className={`cursor-pointer transition-colors ${
+                        isCurrent ? 'bg-[#182033] border-l-2 border-l-[#FFD700]' : 'hover:bg-[#182033]/50'
+                      }`}
+                    >
+                      <td className="py-2 px-2.5 font-sans">
+                        <div className="font-bold text-[#F1F5F9] flex items-center gap-1.5">
+                          {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-[#FFD700] shrink-0" />}
+                          <span>{row.shortBadge}</span>
+                        </div>
+                        <div className="text-[9.5px] text-[#64748B] truncate max-w-[180px]">
+                          {row.modelRule}
+                        </div>
+                      </td>
+                      <td className="py-2 px-2 text-[9.5px] text-[#94A3B8]">
+                        {row.tierTag}
+                      </td>
+                      <td className="py-2 px-2 whitespace-nowrap">
+                        <span className="text-[#00E676] font-bold">{row.winTrades}W</span>
+                        <span className="text-[#64748B]">-</span>
+                        <span className="text-[#FF3366] font-bold">{row.lossTrades}L</span>
+                        <span className="text-[#64748B] ml-1">({row.totalTrades})</span>
+                      </td>
+                      <td className="py-2 px-2 font-black text-[#FFD700]">
+                        {row.winRate.toFixed(1)}%
+                      </td>
+                      <td className="py-2 px-2 whitespace-nowrap">
+                        <span className="text-[#00E676] font-bold">+{row.spec.realizedWinR.toFixed(2)}R</span>
+                        <span className="text-[#64748B] ml-1">({row.spec.targetRR})</span>
+                      </td>
+                      <td className="py-2 px-2 font-bold text-[#00E676]">
+                        {row.profitFactor.toFixed(2)}
+                      </td>
+                      <td className="py-2 px-2 whitespace-nowrap text-[#00E676] font-bold">
+                        +${row.expectancyDollars.toFixed(0)} ({row.expectancyR >= 0 ? `+${row.expectancyR.toFixed(2)}R` : `${row.expectancyR.toFixed(2)}R`})
+                      </td>
+                      <td className="py-2 px-2 whitespace-nowrap text-[10px]">
+                        <span className="text-[#00E676]">+{row.avgWinPips}p</span>
+                        <span className="text-[#64748B]"> / </span>
+                        <span className="text-[#FF3366]">-{row.avgLossPips}p</span>
+                      </td>
+                      <td className="py-2 px-2 text-[#FF3366]">
+                        -{row.maxDrawdownPercent}%
+                      </td>
+                      <td className="py-2 px-2 font-black text-[#00E676] whitespace-nowrap">
+                        +{row.netRoiPercent}% (+${row.netProfitDollars.toLocaleString()})
+                      </td>
+                      <td className="py-2 px-2.5 text-right whitespace-nowrap text-[#FFD700]">
+                        {row.bestPairSymbol} ({row.bestPairWinRate}%)
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+
+
+      {/* 4. SECTION 1: CANDLE-BASED BACKTESTING CONTROLS & ENGINE */}
+      {(primaryMode === 'CANDLE_BASED' || primaryMode === 'SIDE_BY_SIDE') && (
+        <div className="bg-[#101522] border border-[#00E676]/35 rounded-xl p-3 space-y-3 shadow-sm terminal-card">
+          <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-[#222F47]">
+            <div className="flex items-center gap-2">
+              <FlaskConical className="w-4 h-4 text-[#00E676]" />
+              <span className="text-xs font-black text-[#F1F5F9] uppercase tracking-wider">
+                Candle-Based Parameters
+              </span>
+              <span className="text-[9.5px] font-mono text-[#00E676]">
+                · {totalCandlesScanned.toLocaleString()} Candles
+              </span>
+            </div>
+
             {/* Candle Scan Count Selector */}
-            <div className="flex items-center gap-1.5 bg-[#182033] p-1 rounded-xl border border-[#222F47]">
-              <span className="text-[10px] text-[#64748B] font-bold px-1.5">Scan:</span>
+            <div className="flex items-center gap-1 bg-[#080B11] p-0.5 rounded-lg border border-[#222F47]">
+              <span className="text-[9.5px] text-[#64748B] font-bold px-1.5">Depth:</span>
               {[500, 1000, 2500, 5000].map(cnt => (
                 <button
                   key={cnt}
                   onClick={() => setCandleScanCount(cnt)}
-                  className={`px-2 py-1 text-[10px] font-bold rounded-lg transition-all ${
+                  className={`px-2 py-0.5 text-[9.5px] font-bold rounded transition-all cursor-pointer ${
                     candleScanCount === cnt
                       ? 'bg-[#00E676] text-[#080B11]'
                       : 'text-[#94A3B8] hover:text-[#F1F5F9]'
@@ -524,10 +863,10 @@ export const BacktestingLabScreen: React.FC<Props> = ({
           </div>
 
           {/* Candle Engine Filter Controls Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
             {/* Timeframe Filter */}
-            <div className="bg-[#141B2D] p-2.5 rounded-xl border border-[#222F47]">
-              <span className="text-[10px] text-[#94A3B8] uppercase font-bold block mb-1.5">
+            <div className="bg-[#080B11] p-2 rounded-lg border border-[#222F47]">
+              <span className="text-[9px] text-[#94A3B8] uppercase font-bold block mb-1">
                 Candle Timeframe
               </span>
               <div className="flex gap-1 flex-wrap">
@@ -535,7 +874,7 @@ export const BacktestingLabScreen: React.FC<Props> = ({
                   <button
                     key={t.label}
                     onClick={() => onTimeframeSelect(t.tf)}
-                    className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${
+                    className={`px-2 py-0.5 rounded text-[9.5px] font-bold transition-all cursor-pointer ${
                       filter.timeframe === t.tf
                         ? 'bg-[#00E676] text-[#080B11]'
                         : 'bg-[#182033] text-[#94A3B8] hover:text-[#F1F5F9]'
@@ -548,16 +887,16 @@ export const BacktestingLabScreen: React.FC<Props> = ({
             </div>
 
             {/* Confluence Tier Filter */}
-            <div className="bg-[#141B2D] p-2.5 rounded-xl border border-[#222F47]">
-              <span className="text-[10px] text-[#94A3B8] uppercase font-bold block mb-1.5">
-                Confluence Filter
+            <div className="bg-[#080B11] p-2 rounded-lg border border-[#222F47]">
+              <span className="text-[9px] text-[#94A3B8] uppercase font-bold block mb-1">
+                Confluence Gate
               </span>
               <div className="flex gap-1 flex-wrap">
                 {confluenceTiers.map(tier => (
                   <button
                     key={tier.score}
                     onClick={() => onConfluenceSelect(tier.score)}
-                    className={`px-1.5 py-1 rounded text-[9.5px] font-bold transition-all ${
+                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                       filter.minConfluence === tier.score
                         ? 'bg-[#FFD700] text-[#080B11]'
                         : 'bg-[#182033] text-[#94A3B8] hover:text-[#F1F5F9]'
@@ -570,15 +909,15 @@ export const BacktestingLabScreen: React.FC<Props> = ({
             </div>
 
             {/* Asset Category Filter */}
-            <div className="bg-[#141B2D] p-2.5 rounded-xl border border-[#222F47]">
-              <span className="text-[10px] text-[#94A3B8] uppercase font-bold block mb-1.5">
+            <div className="bg-[#080B11] p-2 rounded-lg border border-[#222F47]">
+              <span className="text-[9px] text-[#94A3B8] uppercase font-bold block mb-1">
                 Asset Class
               </span>
               <select
                 value={filter.category || 'ALL'}
                 onChange={(e) => onCategorySelect && onCategorySelect(e.target.value === 'ALL' ? null : e.target.value as any)}
                 aria-label="Filter by asset class"
-                className="w-full bg-[#182033] border border-[#222F47] rounded-lg px-2 py-1 text-xs text-[#F1F5F9] focus:outline-none focus:border-[#00E676]"
+                className="w-full bg-[#182033] border border-[#222F47] rounded px-2 py-1 text-[11px] text-[#F1F5F9] focus:outline-none focus:border-[#00E676]"
               >
                 <option value="ALL">All 30 Assets</option>
                 <option value="MAJORS">Majors (~$2 Margin)</option>
@@ -588,15 +927,15 @@ export const BacktestingLabScreen: React.FC<Props> = ({
             </div>
 
             {/* Pair Symbol Dropdown */}
-            <div className="bg-[#141B2D] p-2.5 rounded-xl border border-[#222F47]">
-              <span className="text-[10px] text-[#94A3B8] uppercase font-bold block mb-1.5">
+            <div className="bg-[#080B11] p-2 rounded-lg border border-[#222F47]">
+              <span className="text-[9px] text-[#94A3B8] uppercase font-bold block mb-1">
                 Specific Asset
               </span>
               <select
                 value={filter.pairSymbol || ''}
                 onChange={(e) => onPairSelect(e.target.value || null)}
                 aria-label="Filter by specific asset"
-                className="w-full bg-[#182033] border border-[#222F47] rounded-lg px-2 py-1 text-xs text-[#F1F5F9] focus:outline-none focus:border-[#00E676]"
+                className="w-full bg-[#182033] border border-[#222F47] rounded px-2 py-1 text-[11px] text-[#F1F5F9] focus:outline-none focus:border-[#00E676]"
               >
                 {availablePairs.map(p => (
                   <option key={p.label} value={p.pair || ''}>
@@ -608,28 +947,25 @@ export const BacktestingLabScreen: React.FC<Props> = ({
           </div>
 
           {/* Candle Confluence Matrix Breakdown Table */}
-          <div className="bg-[#141B2D] p-3 rounded-xl border border-[#222F47] overflow-x-auto">
-            <span className="text-[10px] text-[#94A3B8] font-bold uppercase block mb-2">
-              Candlestick Confluence Score Matrix
-            </span>
-            <table className="w-full text-left text-xs font-mono">
+          <div className="bg-[#080B11] p-2.5 rounded-lg border border-[#222F47] overflow-x-auto">
+            <table className="w-full text-left text-[11px] font-mono">
               <thead>
                 <tr className="border-b border-[#222F47] text-[#64748B]">
-                  <th className="pb-1.5">Confluence Tier</th>
-                  <th className="pb-1.5">Win Rate</th>
-                  <th className="pb-1.5">Setups Count</th>
-                  <th className="pb-1.5">Profit Factor</th>
-                  <th className="pb-1.5">Net Pips</th>
+                  <th className="pb-1">Confluence Tier</th>
+                  <th className="pb-1">Win Rate</th>
+                  <th className="pb-1">Setups</th>
+                  <th className="pb-1">Profit Factor</th>
+                  <th className="pb-1">Net Pips</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#222F47]/60 text-[#F1F5F9]">
                 {currentSummary.confluenceMatrix.map((tier, idx) => (
                   <tr key={idx} className="hover:bg-[#182033]/50">
-                    <td className="py-2 font-bold text-[#FFD700]">{tier.label}</td>
-                    <td className="py-2 font-bold text-[#00E676]">{tier.winRate}%</td>
-                    <td className="py-2">{tier.totalTrades}</td>
-                    <td className="py-2">{tier.profitFactor.toFixed(2)}</td>
-                    <td className="py-2 text-[#00E676]">+{tier.netPips}p</td>
+                    <td className="py-1.5 font-bold text-[#FFD700]">{tier.label}</td>
+                    <td className="py-1.5 font-bold text-[#00E676]">{tier.winRate}%</td>
+                    <td className="py-1.5">{tier.totalTrades}</td>
+                    <td className="py-1.5">{tier.profitFactor.toFixed(2)}</td>
+                    <td className="py-1.5 text-[#00E676]">+{tier.netPips}p</td>
                   </tr>
                 ))}
               </tbody>
@@ -638,92 +974,81 @@ export const BacktestingLabScreen: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 4. SECTION 2: TIME-BASED BACKTESTING HORIZONS & CATEGORIZED ASSET LEDGER */}
+      {/* 5. SECTION 2: TIME-BASED BACKTESTING HORIZONS & CATEGORIZED ASSET LEDGER */}
       {(primaryMode === 'TIME_BASED' || primaryMode === 'SIDE_BY_SIDE') && (
-        <div className="bg-[#101522] border border-[#FFD700]/40 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xl relative overflow-hidden">
-          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-[#222F47]">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-[#FFD700]/15 border border-[#FFD700]/40 flex items-center justify-center text-[#FFD700]">
-                <Clock className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-[#F1F5F9] flex items-center gap-2">
-                  <span>⏱️ 2. Time-Based Backtesting Engine</span>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#FFD700]/20 text-[#FFD700] border border-[#FFD700]/40">
-                    Active: {selectedHorizon}
-                  </span>
-                </h3>
-                <p className="text-[11px] text-[#94A3B8]">
-                  Results segmented by 24hrs, 1 week, 15 days, 1 month, 3 months, 6 months, and 1 year with real-time live telemetry sync
-                </p>
-              </div>
+        <div className="bg-[#101522] border border-[#FFD700]/35 rounded-xl p-3 space-y-3 shadow-sm terminal-card">
+          <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-[#222F47]">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-[#FFD700]" />
+              <span className="text-xs font-black text-[#F1F5F9] uppercase tracking-wider">
+                Time-Based Horizons
+              </span>
+              <span className="text-[9.5px] font-mono text-[#FFD700]">
+                · Active: {selectedHorizon}
+              </span>
             </div>
 
-            <div className="flex items-center gap-2 text-[10px] text-[#00E676] font-mono">
-              <span className="w-2 h-2 rounded-full bg-[#00E676] animate-ping" />
-              <span>Live Synced ({new Date(lastLiveSyncTime).toLocaleTimeString()})</span>
+            <div className="flex items-center gap-1.5 text-[9.5px] text-[#00E676] font-mono">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#00E676] animate-pulse" />
+              <span>Synced ({new Date(lastLiveSyncTime).toLocaleTimeString()})</span>
             </div>
           </div>
 
-          {/* Compact Time Horizon Dropdown & Active Horizon Summary Bar */}
           {(() => {
             const activeHorizonStat =
               horizonComparison.find(h => h.id === selectedHorizon) || horizonComparison[0];
             const isProfitable = (activeHorizonStat?.netRoiPercent ?? 0) >= 0;
 
             return (
-              <div className="space-y-2.5">
-                <div className="bg-[#141B2D] border border-[#222F47] rounded-xl p-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="space-y-2">
+                <div className="bg-[#080B11] border border-[#222F47] rounded-lg p-2.5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
                   <div className="flex-1">
-                    <label className="text-[10px] text-[#FFD700] uppercase font-black block mb-1">
-                      Select Backtest Time Horizon
-                    </label>
                     <div className="relative">
                       <select
                         value={selectedHorizon}
                         onChange={(e) => handleSelectHorizon(e.target.value as BacktestTimeHorizon)}
                         aria-label="Select backtest time horizon"
-                        className="w-full appearance-none bg-[#182033] border border-[#FFD700]/50 hover:border-[#FFD700] rounded-xl pl-3 pr-8 py-2 text-xs font-mono font-bold text-[#F1F5F9] focus:outline-none focus:border-[#FFD700] cursor-pointer"
+                        className="w-full appearance-none bg-[#182033] border border-[#FFD700]/50 hover:border-[#FFD700] rounded-lg pl-2.5 pr-7 py-1.5 text-xs font-mono font-bold text-[#F1F5F9] focus:outline-none focus:border-[#FFD700] cursor-pointer"
                       >
                         {horizonComparison.map(h => {
                           const roiSign = h.netRoiPercent >= 0 ? '+' : '';
                           const pipSign = h.totalPips >= 0 ? '+' : '';
                           return (
                             <option key={h.id} value={h.id}>
-                              {h.label} ({h.id}) — {h.winRate.toFixed(1)}% Win Rate | {h.winTrades}W-{h.lossTrades}L ({h.totalTrades}T) | {roiSign}{h.netRoiPercent}% ROI ({pipSign}{h.totalPips}p)
+                              {h.label} ({h.id}) — {h.winRate.toFixed(1)}% WR | {h.winTrades}W-{h.lossTrades}L ({h.totalTrades}T) | {roiSign}{h.netRoiPercent}% ROI ({pipSign}{h.totalPips}p)
                             </option>
                           );
                         })}
                       </select>
-                      <ChevronDown className="w-4 h-4 text-[#FFD700] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <ChevronDown className="w-3.5 h-3.5 text-[#FFD700] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
                   </div>
 
                   {activeHorizonStat && (
-                    <div className="flex items-center gap-3 bg-[#101522] border border-[#222F47] rounded-xl px-3.5 py-2 text-xs font-mono shrink-0">
+                    <div className="flex items-center gap-3 bg-[#101522] border border-[#222F47] rounded-lg px-3 py-1.5 text-[11px] font-mono shrink-0">
                       <div>
-                        <span className="text-[9.5px] text-[#64748B] block uppercase">Win Rate</span>
-                        <span className="font-black text-[#FFD700] text-sm">
+                        <span className="text-[8.5px] text-[#64748B] block uppercase">Win Rate</span>
+                        <span className="font-black text-[#FFD700]">
                           {activeHorizonStat.winRate.toFixed(1)}%
                         </span>
                       </div>
-                      <div className="h-6 w-px bg-[#222F47]" />
+                      <div className="h-5 w-px bg-[#222F47]" />
                       <div>
-                        <span className="text-[9.5px] text-[#64748B] block uppercase">Record</span>
+                        <span className="text-[8.5px] text-[#64748B] block uppercase">Record</span>
                         <span className="font-bold text-[#F1F5F9]">
                           {activeHorizonStat.winTrades}W-{activeHorizonStat.lossTrades}L
                         </span>
                       </div>
-                      <div className="h-6 w-px bg-[#222F47]" />
+                      <div className="h-5 w-px bg-[#222F47]" />
                       <div>
-                        <span className="text-[9.5px] text-[#64748B] block uppercase">Net ROI</span>
+                        <span className="text-[8.5px] text-[#64748B] block uppercase">Net ROI</span>
                         <span className={`font-black ${isProfitable ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
                           {activeHorizonStat.netRoiPercent >= 0 ? `+${activeHorizonStat.netRoiPercent}%` : `${activeHorizonStat.netRoiPercent}%`}
                         </span>
                       </div>
-                      <div className="h-6 w-px bg-[#222F47]" />
+                      <div className="h-5 w-px bg-[#222F47]" />
                       <div>
-                        <span className="text-[9.5px] text-[#64748B] block uppercase">Net Pips</span>
+                        <span className="text-[8.5px] text-[#64748B] block uppercase">Net Pips</span>
                         <span className="font-bold text-[#00E676]">
                           {activeHorizonStat.totalPips >= 0 ? `+${activeHorizonStat.totalPips}p` : `${activeHorizonStat.totalPips}p`}
                         </span>
@@ -732,28 +1057,26 @@ export const BacktestingLabScreen: React.FC<Props> = ({
                   )}
                 </div>
 
-                {/* Live Signals Page 24H Sync & 88%+ Confluence Gate Banner */}
-                <div className="bg-[#141B2D]/90 border border-[#00E676]/30 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                  <div className="flex items-center gap-2 text-[#E2E8F0]">
-                    <CheckCircle2 className="w-4 h-4 text-[#00E676] shrink-0" />
+                <div className="bg-[#080B11] border border-[#00E676]/25 rounded-lg px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[10px]">
+                  <div className="flex items-center gap-1.5 text-[#E2E8F0]">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-[#00E676] shrink-0" />
                     <span>
-                      <strong>24H Signals Page Sync:</strong>{' '}
+                      <strong>24H Signals Sync:</strong>{' '}
                       <span className="text-[#00E676] font-mono font-bold">
-                        {liveSignalStats.hitTp.length + liveSignalStats.hitSl.length} Fulfilled ({liveSignalStats.hitTp.length} TP / {liveSignalStats.hitSl.length} SL)
+                        {liveSignalStats.hitTp.length + liveSignalStats.hitSl.length} Closed ({liveSignalStats.hitTp.length} TP / {liveSignalStats.hitSl.length} SL)
                       </span>{' '}
-                      • <span className="text-[#2979FF] font-mono font-bold">{liveSignalStats.running.length} Running</span>{' '}
-                      • <span className="text-[#FFD700] font-mono font-bold">{liveSignalStats.pending.length} Pending</span> on Signals Page
+                      · <span className="text-[#2979FF] font-mono font-bold">{liveSignalStats.running.length} Running</span>{' '}
+                      · <span className="text-[#FFD700] font-mono font-bold">{liveSignalStats.pending.length} Pending</span>
                     </span>
                   </div>
-                  <span className="text-[10px] font-mono text-[#FFD700] bg-[#FFD700]/10 border border-[#FFD700]/30 px-2 py-0.5 rounded">
-                    Signals Page Gate: ≥88% Confluence Only (70%–87% Filtered Out)
+                  <span className="text-[9.5px] font-mono text-[#FFD700]">
+                    Signals Gate: ≥88% Confluence
                   </span>
                 </div>
               </div>
             );
           })()}
 
-          {/* Categorized Asset Performance Breakdown component */}
           <AssetPerformanceBreakdown
             stats={assetStats}
             selectedPair={filter.pairSymbol}
@@ -767,134 +1090,7 @@ export const BacktestingLabScreen: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 5. Strategy Model Selector */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {(Object.entries(STRATEGY_CONFIGS) as [StrategyType, any][]).map(([stratKey, config]) => {
-          const isSelected = filter.strategy === stratKey;
-          return (
-            <button
-              key={stratKey}
-              onClick={() => onStrategySelect(stratKey)}
-              className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer ${
-                isSelected
-                  ? 'bg-[#182033] border-[#FFD700] shadow-lg shadow-[#FFD700]/10'
-                  : 'bg-[#101522] border-[#222F47] hover:border-[#2979FF]/50'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs font-black text-[#F1F5F9] uppercase tracking-wider">
-                  {config.title}
-                </span>
-                {isSelected && (
-                  <span className="text-[10px] font-bold bg-[#FFD700] text-[#080B11] px-1.5 py-0.5 rounded">
-                    ACTIVE
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-[#94A3B8] line-clamp-2 leading-relaxed mb-2">
-                {config.description}
-              </p>
-              <span className="text-[10px] font-mono font-semibold text-[#00E676] bg-[#00E676]/10 px-2 py-0.5 rounded">
-                {config.modelRule}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* 6. Overall Performance KPI Summary Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="bg-[#101522] border border-[#222F47] p-3.5 rounded-xl">
-          <span className="text-[10px] text-[#94A3B8] uppercase font-bold tracking-wider block mb-1">
-            True Win Rate ({currentSummary.totalTrades} Trades)
-          </span>
-          <div className="text-xl sm:text-2xl font-black font-mono text-[#FFD700]">
-            {currentSummary.winRate.toFixed(1)}%
-          </div>
-          <span className="text-[10px] text-[#94A3B8] font-mono mt-0.5 block">
-            {currentSummary.winTrades}W / {currentSummary.lossTrades}L ({currentSummary.winTrades}÷{currentSummary.totalTrades})
-          </span>
-        </div>
-
-        <div className="bg-[#101522] border border-[#222F47] p-3.5 rounded-xl">
-          <span className="text-[10px] text-[#94A3B8] uppercase font-bold tracking-wider block mb-1">
-            Profit Factor
-          </span>
-          <div className="text-xl sm:text-2xl font-black font-mono text-[#00E676]">
-            {currentSummary.profitFactor.toFixed(2)}
-          </div>
-          <span className="text-[10px] text-[#64748B] font-mono mt-0.5 block">
-            +${(currentSummary.grossProfitDollars || 0).toLocaleString()} / -${(currentSummary.grossLossDollars || 0).toLocaleString()}
-          </span>
-        </div>
-
-        <div className="bg-[#101522] border border-[#222F47] p-3.5 rounded-xl">
-          <span className="text-[10px] text-[#94A3B8] uppercase font-bold tracking-wider block mb-1">
-            Net ROI (% on $10k)
-          </span>
-          <div className={`text-xl sm:text-2xl font-black font-mono ${
-            currentSummary.netRoiPercent >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'
-          }`}>
-            {currentSummary.netRoiPercent >= 0 ? `+${currentSummary.netRoiPercent}%` : `${currentSummary.netRoiPercent}%`}
-          </div>
-          <span className="text-[10px] text-[#64748B] font-mono mt-0.5 block">
-            {currentSummary.totalPips >= 0 ? `+${currentSummary.totalPips} pips` : `${currentSummary.totalPips} pips`}
-          </span>
-        </div>
-
-        <div className="bg-[#101522] border border-[#222F47] p-3.5 rounded-xl">
-          <span className="text-[10px] text-[#94A3B8] uppercase font-bold tracking-wider block mb-1">
-            Max Drawdown
-          </span>
-          <div className="text-xl sm:text-2xl font-black font-mono text-[#FF3366]">
-            -{currentSummary.maxDrawdownPercent}%
-          </div>
-          <span className="text-[10px] text-[#64748B] font-mono mt-0.5 block">
-            Peak to Valley Pullback
-          </span>
-        </div>
-      </div>
-
-      {/* 6B. Institutional TP & Stop Loss Execution Measurement Breakdown */}
-      <div className="bg-[#101522] border border-[#222F47] rounded-2xl p-4 space-y-3 shadow-md">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-[#00E676]" />
-            <span className="text-xs font-black text-[#F1F5F9] uppercase tracking-wider">
-              Strict TP vs Stop Loss Execution Accounting (SL Hit First = LOSS)
-            </span>
-          </div>
-          <span className="text-[10px] font-mono text-[#94A3B8]">
-            1R Risk = $100 • Any setup hitting SL first or reversing to SL before TP is counted strictly as LOSS (-1.0R)
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs font-mono">
-          <div className="bg-[#141B2D] border border-[#00E676]/30 rounded-xl p-3 flex items-center justify-between">
-            <div>
-              <div className="text-[10px] font-bold text-[#00E676] uppercase">🎯 Clean Take Profit Wins</div>
-              <div className="text-[11px] text-[#94A3B8] mt-0.5">Reached full TP target without hitting SL first</div>
-            </div>
-            <div className="text-right">
-              <div className="text-base font-black text-[#00E676]">{currentSummary.winTrades}</div>
-              <div className="text-[10px] text-[#00E676]">+1.5R (+$150/ea)</div>
-            </div>
-          </div>
-
-          <div className="bg-[#141B2D] border border-[#FF3366]/30 rounded-xl p-3 flex items-center justify-between">
-            <div>
-              <div className="text-[10px] font-bold text-[#FF3366] uppercase">🛑 Stop Loss Losses (SL Hit First)</div>
-              <div className="text-[11px] text-[#94A3B8] mt-0.5">Hit SL first or reversed to SL before full TP</div>
-            </div>
-            <div className="text-right">
-              <div className="text-base font-black text-[#FF3366]">{currentSummary.lossTrades}</div>
-              <div className="text-[10px] text-[#FF3366]">-1.0R (-$100/ea)</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 7. Recharts Dynamic Cumulative PnL & Equity Curve */}
+      {/* 6. Recharts Dynamic Cumulative PnL & Equity Curve */}
       <RealEquityCurveChart
         equityPoints={currentSummary.equityCurve}
         initialBalance={10000}
@@ -902,63 +1098,55 @@ export const BacktestingLabScreen: React.FC<Props> = ({
         summary={currentSummary}
       />
 
-      {/* 8. RECENT TRADES EXECUTION LEDGER (At least 20 recent trades) */}
-      <div className="bg-[#101522] border border-[#222F47] rounded-2xl p-4 sm:p-5 space-y-4 shadow-xl">
-        <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-[#222F47]">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#00E676]/15 border border-[#00E676]/30 flex items-center justify-center text-[#00E676]">
-              <Target className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-[#F1F5F9] flex items-center gap-2">
-                <span>Recent Trade Execution Ledger</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40">
-                  Showing {displayedTrades.length} of {currentSummary.filteredTrades.length} Trades
-                </span>
-              </h3>
-              <p className="text-[11px] text-[#94A3B8]">
-                Real trade entry, exit, stop loss, take profit, pips, and institutional rationale
-              </p>
-            </div>
+      {/* 7. RECENT TRADES EXECUTION LEDGER (Clean Single Table with Deriv WS Verification & AI Audit) */}
+      <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3 space-y-3 shadow-sm terminal-card">
+        <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-[#222F47]">
+          <div className="flex items-center gap-2">
+            <Target className="w-4 h-4 text-[#00E676]" />
+            <h3 className="text-xs font-black text-[#F1F5F9] uppercase tracking-wider">
+              Verified Trade Execution Ledger
+            </h3>
+            <span className="text-[9.5px] font-mono text-[#00E676]">
+              · Showing {displayedTrades.length} of {currentSummary.filteredTrades.length}
+            </span>
           </div>
 
           {/* Controls: Pair Dropdown, Search and Limit Selector */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Pair Dropdown Filter for Trade Ledger */}
-            <div className="relative min-w-[165px]">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="relative min-w-[150px]">
               <select
                 value={ledgerPairFilter}
                 onChange={(e) => setLedgerPairFilter(e.target.value)}
                 aria-label="Filter recent trades by pair"
-                className="w-full appearance-none bg-[#182033] border border-[#222F47] hover:border-[#00E676]/60 rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono font-bold text-[#F1F5F9] focus:border-[#00E676] outline-hidden cursor-pointer"
+                className="w-full appearance-none bg-[#182033] border border-[#222F47] hover:border-[#00E676]/60 rounded-lg pl-2 pr-6 py-1 text-[11px] font-mono font-bold text-[#F1F5F9] focus:border-[#00E676] outline-hidden cursor-pointer"
               >
-                <option value="ALL">All Pairs ({currentSummary.filteredTrades.length} Trades)</option>
+                <option value="ALL">All Pairs ({currentSummary.filteredTrades.length})</option>
                 {assetStats.map(st => (
                   <option key={st.pairSymbol} value={st.pairSymbol}>
                     {st.pairSymbol} — {st.winRate}% WR ({st.totalTrades}T)
                   </option>
                 ))}
               </select>
-              <ChevronDown className="w-3.5 h-3.5 text-[#94A3B8] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <ChevronDown className="w-3 h-3 text-[#94A3B8] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
 
-            <div className="relative min-w-[130px]">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[#64748B]" />
+            <div className="relative min-w-[120px]">
+              <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-[#64748B]" />
               <input
                 type="text"
-                placeholder="Search trades..."
+                placeholder="Search ledger..."
                 value={tradeSearchQuery}
                 onChange={(e) => setTradeSearchQuery(e.target.value)}
-                className="w-full bg-[#182033] border border-[#222F47] rounded-lg pl-7 pr-2.5 py-1 text-xs text-[#F1F5F9] placeholder-[#64748B] focus:border-[#2979FF] outline-hidden"
+                className="w-full bg-[#182033] border border-[#222F47] rounded-lg pl-6 pr-2 py-1 text-[11px] text-[#F1F5F9] placeholder-[#64748B] focus:border-[#2979FF] outline-hidden"
               />
             </div>
 
-            <div className="flex items-center gap-1 bg-[#182033] p-0.5 rounded-lg border border-[#222F47]">
-              {[5, 10, 20, 50].map(lim => (
+            <div className="flex items-center gap-0.5 bg-[#080B11] p-0.5 rounded-lg border border-[#222F47]">
+              {[10, 20, 50].map(lim => (
                 <button
                   key={lim}
                   onClick={() => setTradeLimit(lim)}
-                  className={`px-2 py-1 text-[10px] font-bold rounded ${
+                  className={`px-2 py-0.5 text-[9.5px] font-bold rounded cursor-pointer ${
                     tradeLimit === lim
                       ? 'bg-[#2979FF] text-white'
                       : 'text-[#94A3B8] hover:text-[#F1F5F9]'
@@ -969,7 +1157,7 @@ export const BacktestingLabScreen: React.FC<Props> = ({
               ))}
               <button
                 onClick={() => setTradeLimit(currentSummary.filteredTrades.length || 9999)}
-                className={`px-2 py-1 text-[10px] font-bold rounded ${
+                className={`px-2 py-0.5 text-[9.5px] font-bold rounded cursor-pointer ${
                   tradeLimit >= (currentSummary.filteredTrades.length || 9999)
                     ? 'bg-[#2979FF] text-white'
                     : 'text-[#94A3B8] hover:text-[#F1F5F9]'
@@ -981,48 +1169,36 @@ export const BacktestingLabScreen: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Timeframe Structural ATR Pip Scaling Strip (Synced 1-to-1 with Signals Page) */}
-        <div className="bg-[#141B2D] border border-[#222F47] rounded-xl p-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] font-mono">
-          <div className="bg-[#0D121F] border border-[#222F47] rounded-lg p-2 space-y-0.5">
-            <div className="font-black text-[#2979FF] uppercase">M15 (Intraday Scalp)</div>
-            <div className="text-[#F1F5F9]">FX: <span className="text-[#FF3366]">12–16p SL</span> / <span className="text-[#00E676]">31–42p TP</span></div>
-            <div className="text-[#94A3B8]">JPY: 15–20p SL • Silver: 22–30p SL</div>
-            <div className="text-[#64748B]">Gold: 65–88p ($6.5–$8.8) SL</div>
+        {/* Compact Timeframe Structural ATR Pip Scaling Strip */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[9.5px] font-mono">
+          <div className="bg-[#080B11] border border-[#222F47] rounded-lg px-2 py-1.5">
+            <span className="font-black text-[#2979FF]">M15:</span> FX <span className="text-[#FF3366]">12–16p SL</span> / <span className="text-[#00E676]">31–42p TP</span> · Gold 65–88p
           </div>
-          <div className="bg-[#0D121F] border border-[#222F47] rounded-lg p-2 space-y-0.5">
-            <div className="font-black text-[#00E676] uppercase">H1 (Session Structure)</div>
-            <div className="text-[#F1F5F9]">FX: <span className="text-[#FF3366]">28–38p SL</span> / <span className="text-[#00E676]">73–99p TP</span></div>
-            <div className="text-[#94A3B8]">JPY: 34–46p SL • Silver: 48–64p SL</div>
-            <div className="text-[#64748B]">Gold: 155–210p ($15.5–$21) SL</div>
+          <div className="bg-[#080B11] border border-[#222F47] rounded-lg px-2 py-1.5">
+            <span className="font-black text-[#00E676]">H1:</span> FX <span className="text-[#FF3366]">28–38p SL</span> / <span className="text-[#00E676]">73–99p TP</span> · Gold 155–210p
           </div>
-          <div className="bg-[#0D121F] border border-[#222F47] rounded-lg p-2 space-y-0.5">
-            <div className="font-black text-[#FFD700] uppercase">H4 (Multi-Day Swing)</div>
-            <div className="text-[#F1F5F9]">FX: <span className="text-[#FF3366]">58–79p SL</span> / <span className="text-[#00E676]">151–205p TP</span></div>
-            <div className="text-[#94A3B8]">JPY: 70–95p SL • Silver: 80–108p SL</div>
-            <div className="text-[#64748B]">Gold: 315–425p ($31.5–$42.5) SL</div>
+          <div className="bg-[#080B11] border border-[#222F47] rounded-lg px-2 py-1.5">
+            <span className="font-black text-[#FFD700]">H4:</span> FX <span className="text-[#FF3366]">58–79p SL</span> / <span className="text-[#00E676]">151–205p TP</span> · Gold 315–425p
           </div>
-          <div className="bg-[#0D121F] border border-[#222F47] rounded-lg p-2 space-y-0.5">
-            <div className="font-black text-[#A855F7] uppercase">D1 (Macro Position)</div>
-            <div className="text-[#F1F5F9]">FX: <span className="text-[#FF3366]">105–142p SL</span> / <span className="text-[#00E676]">273–370p TP</span></div>
-            <div className="text-[#94A3B8]">JPY: 125–170p SL • Silver: 165–220p SL</div>
-            <div className="text-[#64748B]">Gold: 570–760p ($57–$76) SL</div>
+          <div className="bg-[#080B11] border border-[#222F47] rounded-lg px-2 py-1.5">
+            <span className="font-black text-[#A855F7]">D1:</span> FX <span className="text-[#FF3366]">105–142p SL</span> / <span className="text-[#00E676]">273–370p TP</span> · Gold 570–760p
           </div>
         </div>
 
-        {/* Backtesting Results Table with 'Verification' Column */}
-        <div className="bg-[#141B2D] border border-[#222F47] rounded-xl overflow-x-auto">
-          <table className="w-full text-left text-xs font-mono">
+        {/* Backtesting Results Table with Deriv WS Verification & AI Audit */}
+        <div className="bg-[#080B11] border border-[#222F47] rounded-lg overflow-x-auto">
+          <table className="w-full text-left text-[11px] font-mono">
             <thead>
               <tr className="border-b border-[#222F47] text-[#64748B] bg-[#0D121F]">
-                <th className="py-2.5 px-3">#</th>
-                <th className="py-2.5 px-3">Pair & TF</th>
-                <th className="py-2.5 px-3">Direction</th>
-                <th className="py-2.5 px-3">Trade Date (UTC)</th>
-                <th className="py-2.5 px-3">Entry → Exit</th>
-                <th className="py-2.5 px-3">SL / TP (Price & Pips)</th>
-                <th className="py-2.5 px-3">Confluence</th>
-                <th className="py-2.5 px-3">Outcome & PnL</th>
-                <th className="py-2.5 px-3 text-right">Verification</th>
+                <th className="py-2 px-2.5">#</th>
+                <th className="py-2 px-2.5">Pair & TF</th>
+                <th className="py-2 px-2.5">Type</th>
+                <th className="py-2 px-2.5">Date (UTC)</th>
+                <th className="py-2 px-2.5">Entry → Exit</th>
+                <th className="py-2 px-2.5">SL / TP</th>
+                <th className="py-2 px-2.5">Conf</th>
+                <th className="py-2 px-2.5">Outcome</th>
+                <th className="py-2 px-2.5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#222F47]/60 text-[#F1F5F9]">
@@ -1038,17 +1214,17 @@ export const BacktestingLabScreen: React.FC<Props> = ({
                   ? Math.max(1, Math.round(Math.abs(tpTargetPrice - trade.entryPrice) * pipMult * 10) / 10)
                   : Math.abs(trade.pips);
                 return (
-                  <tr key={`tbl-${trade.id || idx}`} className="hover:bg-[#182033]/60 transition-colors">
-                    <td className="py-2.5 px-3 text-[#64748B] font-bold">#{idx + 1}</td>
-                    <td className="py-2.5 px-3">
+                  <tr key={`tbl-${trade.id || idx}`} className="hover:bg-[#182033]/60 transition-colors" title={trade.rationale}>
+                    <td className="py-2 px-2.5 text-[#64748B] font-bold">#{idx + 1}</td>
+                    <td className="py-2 px-2.5 whitespace-nowrap">
                       <span className="font-black text-[#F1F5F9]">{trade.pairSymbol}</span>
-                      <span className="ml-1.5 text-[10px] text-[#94A3B8] bg-[#182033] px-1.5 py-0.5 rounded">
+                      <span className="ml-1 text-[9.5px] text-[#94A3B8] bg-[#182033] px-1 py-0.5 rounded">
                         {trade.timeframe}
                       </span>
                     </td>
-                    <td className="py-2.5 px-3">
+                    <td className="py-2 px-2.5">
                       <span
-                        className={`text-[10px] font-black px-2 py-0.5 rounded ${
+                        className={`text-[9.5px] font-black px-1.5 py-0.5 rounded ${
                           isBuy
                             ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
                             : 'bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40'
@@ -1057,17 +1233,17 @@ export const BacktestingLabScreen: React.FC<Props> = ({
                         {trade.direction}
                       </span>
                     </td>
-                    <td className="py-2.5 px-3 text-[11px] text-[#94A3B8] whitespace-nowrap">
+                    <td className="py-2 px-2.5 text-[10px] text-[#94A3B8] whitespace-nowrap">
                       {trade.entryTime}
                     </td>
-                    <td className="py-2.5 px-3 whitespace-nowrap">
+                    <td className="py-2 px-2.5 whitespace-nowrap">
                       <span className="text-[#2979FF] font-bold">{formatTradePrice(trade.pairSymbol, trade.entryPrice)}</span>
                       <span className="text-[#64748B] mx-1">→</span>
                       <span className={isWin ? 'text-[#00E676] font-bold' : 'text-[#FF3366] font-bold'}>
                         {formatTradePrice(trade.pairSymbol, trade.exitPrice)}
                       </span>
                     </td>
-                    <td className="py-2.5 px-3 whitespace-nowrap text-[11px]">
+                    <td className="py-2 px-2.5 whitespace-nowrap text-[10px]">
                       <div>
                         <span className="text-[#FF3366]">
                           {trade.stopLoss !== undefined ? formatTradePrice(trade.pairSymbol, trade.stopLoss) : '—'}
@@ -1077,16 +1253,16 @@ export const BacktestingLabScreen: React.FC<Props> = ({
                           {formatTradePrice(trade.pairSymbol, tpTargetPrice)}
                         </span>
                       </div>
-                      <div className="text-[10px] font-bold mt-0.5">
-                        <span className="text-[#FF3366]/90">-{slPipsVal}p SL</span>
-                        <span className="text-[#64748B] mx-1">•</span>
-                        <span className="text-[#00E676]/90">+{tpPipsVal}p TP</span>
+                      <div className="text-[9px] font-bold">
+                        <span className="text-[#FF3366]/90">-{slPipsVal}p</span>
+                        <span className="text-[#64748B] mx-1">·</span>
+                        <span className="text-[#00E676]/90">+{tpPipsVal}p</span>
                       </div>
                     </td>
-                    <td className="py-2.5 px-3">
+                    <td className="py-2 px-2.5">
                       <span className="text-[#FFD700] font-bold">{trade.confluenceScore}%</span>
                     </td>
-                    <td className="py-2.5 px-3 whitespace-nowrap">
+                    <td className="py-2 px-2.5 whitespace-nowrap">
                       <span
                         className={`font-bold ${
                           trade.pips >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'
@@ -1095,152 +1271,32 @@ export const BacktestingLabScreen: React.FC<Props> = ({
                         {isWin ? 'WIN' : 'LOSS'} ({trade.pips >= 0 ? `+${trade.pips}p` : `${trade.pips}p`})
                       </span>
                     </td>
-                    <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                      <button
-                        onClick={() => handleVerifyOnDeriv(trade)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#00E676]/15 hover:bg-[#00E676]/25 text-[#00E676] border border-[#00E676]/40 text-[10px] font-black transition-all cursor-pointer"
-                        title="Fetch historical OHLC candle data via Deriv WebSocket for this trade date"
-                      >
-                        <ShieldCheck className="w-3.5 h-3.5" />
-                        <span>Verify on Deriv</span>
-                      </button>
+                    <td className="py-2 px-2.5 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          onClick={() => handleVerifyOnDeriv(trade)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[#00E676]/15 hover:bg-[#00E676]/25 text-[#00E676] border border-[#00E676]/40 text-[9.5px] font-black transition-all cursor-pointer"
+                          title="Verify historical OHLC candle data via Deriv WebSocket"
+                        >
+                          <ShieldCheck className="w-3 h-3" />
+                          <span>Verify</span>
+                        </button>
+                        {onAskAi && (
+                          <button
+                            onClick={() => onAskAi(`Audit this historical trade on ${trade.pairSymbol} (${trade.direction} at ${trade.entryPrice}, SL: ${trade.stopLoss}, TP1: ${trade.takeProfit1}, TP2: ${trade.takeProfit2}, Exit: ${trade.exitPrice}, Result: ${trade.outcome} / ${trade.tpStage}). Rationale: ${trade.rationale}`)}
+                            className="p-1 rounded bg-[#182033] hover:bg-[#222F47] text-[#FFD700] border border-[#222F47] cursor-pointer"
+                            title="Audit setup in AI Copilot"
+                          >
+                            <Sparkles className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-        </div>
-
-        {/* Trade Cards List */}
-        <div className="space-y-2.5 max-h-[600px] overflow-y-auto pr-1">
-          {displayedTrades.map((trade, idx) => {
-            const isWin = trade.outcome === 'WIN';
-            const isBuy = trade.direction === 'BUY';
-
-            return (
-              <div
-                key={trade.id || idx}
-                className={`p-3.5 rounded-xl border transition-all ${
-                  isWin
-                    ? 'bg-[#141B2D] border-[#00E676]/30 hover:border-[#00E676]'
-                    : 'bg-[#141B2D] border-[#FF3366]/30 hover:border-[#FF3366]'
-                }`}
-              >
-                {/* Header Row */}
-                <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold text-[#64748B]">
-                      #{idx + 1}
-                    </span>
-                    <span className="text-sm font-black text-[#F1F5F9] font-mono">
-                      {trade.pairSymbol}
-                    </span>
-                    <span
-                      className={`text-[10px] font-black px-2 py-0.5 rounded ${
-                        isBuy
-                          ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
-                          : 'bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40'
-                      }`}
-                    >
-                      {trade.direction}
-                    </span>
-                    <span className="text-[10px] text-[#64748B] font-mono font-bold">
-                      {trade.timeframe}
-                    </span>
-                    <span className="text-[10px] text-[#64748B] hidden sm:inline">
-                      • {trade.session}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      onClick={() => handleVerifyOnDeriv(trade)}
-                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-[#00E676]/15 hover:bg-[#00E676]/25 text-[#00E676] border border-[#00E676]/40 text-[10px] font-black transition-all cursor-pointer"
-                      title="Verify OHLC candle data via Deriv WebSocket"
-                    >
-                      <ShieldCheck className="w-3 h-3" />
-                      <span>Verify on Deriv</span>
-                    </button>
-
-                    <span
-                      className={`text-[10px] font-black px-2 py-0.5 rounded ${
-                        trade.tpStage === 'TP1_BE'
-                          ? 'bg-[#FFD700]/20 text-[#FFD700] border border-[#FFD700]/40'
-                          : isWin
-                          ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
-                          : 'bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40'
-                      }`}
-                    >
-                      {trade.tpStage === 'TP1_BE'
-                        ? '🛡️ TP1 HIT → BE WIN'
-                        : isWin
-                        ? '🎯 FULL TP2 WIN'
-                        : '🛑 SL LOSS'}
-                    </span>
-                    <span
-                      className={`text-xs font-mono font-bold ${
-                        trade.pips >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'
-                      }`}
-                    >
-                      {trade.pips >= 0
-                        ? `+${trade.pips}p (+$${trade.dollarPnl ?? (trade.tpStage === 'TP1_BE' ? 60 : 150)})`
-                        : `${trade.pips}p (-$${Math.abs(trade.dollarPnl ?? 100)})`}
-                    </span>
-
-                    {onAskAi && (
-                      <button
-                        onClick={() => onAskAi(`Audit this historical trade on ${trade.pairSymbol} (${trade.direction} at ${trade.entryPrice}, SL: ${trade.stopLoss}, TP1: ${trade.takeProfit1}, TP2: ${trade.takeProfit2}, Exit: ${trade.exitPrice}, Result: ${trade.outcome} / ${trade.tpStage}). Rationale: ${trade.rationale}`)}
-                        className="p-1 rounded bg-[#182033] hover:bg-[#222F47] text-[#FFD700] border border-[#222F47]"
-                        title="Audit setup in AI Copilot"
-                      >
-                        <Sparkles className="w-3 h-3" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* SMC Rationale */}
-                <p className="text-xs text-[#94A3B8] leading-relaxed mb-2.5">
-                  {trade.rationale}
-                </p>
-
-                {/* Price Levels & Timestamps */}
-                <div className="pt-2 border-t border-[#222F47]/60 flex flex-wrap items-center justify-between text-[10px] text-[#64748B] gap-2 font-mono">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span className="text-[#F1F5F9]">
-                      Entry: <strong className="text-[#2979FF]">{formatTradePrice(trade.pairSymbol, trade.entryPrice)}</strong>
-                    </span>
-                    {trade.stopLoss !== undefined && (
-                      <span className="text-[#F1F5F9]">
-                        SL: <strong className="text-[#FF3366]">{formatTradePrice(trade.pairSymbol, trade.stopLoss)} (-{Math.max(1, Math.round(Math.abs(trade.entryPrice - trade.stopLoss) * StrategyBacktester.getPipMultiplier(trade.pairSymbol, trade.entryPrice) * 10) / 10)}p)</strong>
-                      </span>
-                    )}
-                    {(trade.takeProfit1 !== undefined || trade.takeProfit !== undefined) && (
-                      <span className="text-[#F1F5F9]">
-                        TP1: <strong className="text-[#FFD700]">{formatTradePrice(trade.pairSymbol, trade.takeProfit1 ?? trade.takeProfit!)} (+{Math.max(1, Math.round(Math.abs((trade.takeProfit1 ?? trade.takeProfit!) - trade.entryPrice) * StrategyBacktester.getPipMultiplier(trade.pairSymbol, trade.entryPrice) * 10) / 10)}p)</strong>
-                      </span>
-                    )}
-                    {trade.takeProfit2 !== undefined && (
-                      <span className="text-[#F1F5F9]">
-                        TP2: <strong className="text-[#00E676]">{formatTradePrice(trade.pairSymbol, trade.takeProfit2)} (+{Math.max(1, Math.round(Math.abs(trade.takeProfit2 - trade.entryPrice) * StrategyBacktester.getPipMultiplier(trade.pairSymbol, trade.entryPrice) * 10) / 10)}p)</strong>
-                      </span>
-                    )}
-                    <span className="text-[#F1F5F9]">
-                      Exit: <strong className={isWin ? 'text-[#00E676]' : 'text-[#FF3366]'}>{formatTradePrice(trade.pairSymbol, trade.exitPrice)}</strong>
-                    </span>
-                    <span className="hidden md:inline">• {trade.entryTime}</span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-[#FFD700] font-bold">Confluence: {trade.confluenceScore}%</span>
-                    <span>•</span>
-                    <span className="text-[#F1F5F9]">R:R {trade.riskRewardRatio}</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
         </div>
       </div>
 

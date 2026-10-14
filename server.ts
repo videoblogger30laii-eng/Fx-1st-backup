@@ -19,7 +19,7 @@ process.on('uncaughtException', (err) => {
 
 // Pure-ASCII Base64 templates for dynamic v1+v2 signed Android APK generation in memory (zero binary files on disk)
 const ANDROID_MANIFEST_B64 =
-  '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OAAAAAcAAAD//////////xoAAAAUABQAAQAAAAAAAAAPAAAABgAAABsAAAAIAAADGwAAAAMBEAAYAAAABwAAAP//////////GgAAAAIBEAA4AAAACAAAAP//////////GgAAABQAFAABAAAAAAAAAA8AAAAGAAAAHAAAAAgAAAMcAAAAAwEQABgAAAAIAAAA//////////8aAAAAAgEQAHQAAAAJAAAA//////////8dAAAAFAAUAAQAAAAAAAAADwAAAAcAAAAeAAAACAAAAx4AAAAPAAAACAAAAP////8IAAABAAACfw8AAAAKAAAA/////wgAABL/////DwAAAAkAAAD/////CAAAEv////8CARAAiAAAAA4AAAD//////////x8AAAAUABQABQAAAAAAAAAPAAAADQAAAP////8IAAABBgADAQ8AAAAHAAAAHgAAAAgAAAMeAAAADwAAAAYAAAAgAAAACAAAAyAAAAAPAAAACwAAAP////8IAAAS/////w8AAAAMAAAA/////wgAABGgBAAAAgEQACQAAAAUAAAA//////////8hAAAAFAAUAAAAAAAAAAAAAgEQADgAAAAVAAAA//////////8iAAAAFAAUAAEAAAAAAAAADwAAAAYAAAAjAAAACAAAAyMAAAADARAAGAAAABUAAAD//////////yIAAAACARAAOAAAABYAAAD//////////yQAAAAUABQAAQAAAAAAAAAPAAAABgAAACUAAAAIAAADJQAAAAMBEAAYAAAAFgAAAP//////////JAAAAAMBEAAYAAAAFwAAAP//////////IQAAAAMBEAAYAAAAGAAAAP//////////HwAAAAMBEAAYAAAAGQAAAP//////////HQAAAAMBEAAYAAAAGgAAAP//////////FAAAAAEBEAAYAAAAGgAAAP////8OAAAADwAAAA==';
+  'AwAIANwJAAABABwAkAUAACYAAAAAAAAAAAAAALQAAAAAAAAAAAAAABoAAAA0AAAAWgAAAJAAAACuAAAA0gAAAN4AAADsAAAA+AAAACQBAABOAQAAYgEAAIABAACOAQAAoAEAAPgBAAD8AQAADgIAAEICAAB2AgAAigIAALACAAC+AgAAxgIAAM4CAADiAgAABAMAAD4DAACQAwAAqgMAAMoDAADeAwAAHgQAADwEAABMBAAAhAQAAJgEAAALAHYAZQByAHMAaQBvAG4AQwBvAGQAZQAAAAsAdgBlAHIAcwBpAG8AbgBOAGEAbQBlAAAAEQBjAG8AbQBwAGkAbABlAFMAZABrAFYAZQByAHMAaQBvAG4AAAAZAGMAbwBtAHAAaQBsAGUAUwBkAGsAVgBlAHIAcwBpAG8AbgBDAG8AZABlAG4AYQBtAGUAAAANAG0AaQBuAFMAZABrAFYAZQByAHMAaQBvAG4AAAAQAHQAYQByAGcAZQB0AFMAZABrAFYAZQByAHMAaQBvAG4AAAAEAG4AYQBtAGUAAAAFAGwAYQBiAGUAbAAAAAQAaQBjAG8AbgAAABQAdQBzAGUAcwBDAGwAZQBhAHIAdABlAHgAdABUAHIAYQBmAGYAaQBjAAAAEwBoAGEAcgBkAHcAYQByAGUAQQBjAGMAZQBsAGUAcgBhAHQAZQBkAAAACABlAHgAcABvAHIAdABlAGQAAAANAGMAbwBuAGYAaQBnAEMAaABhAG4AZwBlAHMAAAAFAHQAaABlAG0AZQAAAAcAYQBuAGQAcgBvAGkAZAAAACoAaAB0AHQAcAA6AC8ALwBzAGMAaABlAG0AYQBzAC4AYQBuAGQAcgBvAGkAZAAuAGMAbwBtAC8AYQBwAGsALwByAGUAcwAvAGEAbgBkAHIAbwBpAGQAAAAAAAAABwBwAGEAYwBrAGEAZwBlAAAAGABwAGwAYQB0AGYAbwByAG0AQgB1AGkAbABkAFYAZQByAHMAaQBvAG4AQwBvAGQAZQAAABgAcABsAGEAdABmAG8AcgBtAEIAdQBpAGwAZABWAGUAcgBzAGkAbwBuAE4AYQBtAGUAAAAIAG0AYQBuAGkAZgBlAHMAdAAAABEAYwBvAG0ALgBmAHgAcwBpAGcAbgBhAGwAcwAuAHAAcgBvAAAABQAxAC4ANAAuADAAAAACADEANAAAAAIAMgA5AAAACAB1AHMAZQBzAC0AcwBkAGsAAAAPAHUAcwBlAHMALQBwAGUAcgBtAGkAcwBzAGkAbwBuAAAAGwBhAG4AZAByAG8AaQBkAC4AcABlAHIAbQBpAHMAcwBpAG8AbgAuAEkATgBUAEUAUgBOAEUAVAAAACcAYQBuAGQAcgBvAGkAZAAuAHAAZQByAG0AaQBzAHMAaQBvAG4ALgBBAEMAQwBFAFMAUwBfAE4ARQBUAFcATwBSAEsAXwBTAFQAQQBUAEUAAAALAGEAcABwAGwAaQBjAGEAdABpAG8AbgAAAA4ARgBYACAAUwBpAGcAbgBhAGwAcwAgAFAAcgBvAAAACABhAGMAdABpAHYAaQB0AHkAAAAeAGMAbwBtAC4AZgB4AHMAaQBnAG4AYQBsAHMALgBwAHIAbwAuAE0AYQBpAG4AQQBjAHQAaQB2AGkAdAB5AAAADQBpAG4AdABlAG4AdAAtAGYAaQBsAHQAZQByAAAABgBhAGMAdABpAG8AbgAAABoAYQBuAGQAcgBvAGkAZAAuAGkAbgB0AGUAbgB0AC4AYQBjAHQAaQBvAG4ALgBNAEEASQBOAAAACABjAGEAdABlAGcAbwByAHkAAAAgAGEAbgBkAHIAbwBpAGQALgBpAG4AdABlAG4AdAAuAGMAYQB0AGUAZwBvAHIAeQAuAEwAQQBVAE4AQwBIAEUAUgAAAIABCABAAAAAGwIBARwCAQFyBQEBcwUBAQwCAQFwAgEBAwABAQEAAQECAAEB7AQBAdMCAQEQAAEBHwABAQAAAQEAARAAGAAAAAIAAAD/////DgAAAA8AAAACARAAsAAAAAIAAAD//////////xQAAAAUABQABwAAAAAAAAAPAAAAAAAAAP////8IAAAQAgAAAA8AAAABAAAAFgAAAAgAAAMWAAAADwAAAAIAAAD/////CAAAEB0AAAAPAAAAAwAAABcAAAAIAAADFwAAAP////8RAAAAFQAAAAgAAAMVAAAA/////xIAAAAYAAAACAAAEB0AAAD/////EwAAABcAAAAIAAAQCgAAAAIBEABMAAAABgAAAP//////////GQAAABQAFAACAAAAAAAAAA8AAAAEAAAA/////wgAABAVAAAADwAAAAUAAAD/////CAAAEB0AAAADARAAGAAAAAYAAAD//////////xkAAAACARAAOAAAAAcAAAD//////////xoAAAAUABQAAQAAAAAAAAAPAAAABgAAABsAAAAIAAADGwAAAAMBEAAYAAAABwAAAP//////////GgAAAAIBEAA4AAAACAAAAP//////////GgAAABQAFAABAAAAAAAAAA8AAAAGAAAAHAAAAAgAAAMcAAAAAwEQABgAAAAIAAAA//////////8aAAAAAgEQAHQAAAAJAAAA//////////8dAAAAFAAUAAQAAAAAAAAADwAAAAcAAAAeAAAACAAAAx4AAAAPAAAACAAAAP////8IAAABAAACfw8AAAAKAAAA/////wgAABL/////DwAAAAkAAAD/////CAAAEv////8CARAAiAAAAA4AAAD//////////x8AAAAUABQABQAAAAAAAAAPAAAADQAAAP////8IAAABBgADAQ8AAAAHAAAAHgAAAAgAAAMeAAAADwAAAAYAAAAgAAAACAAAAyAAAAAPAAAACwAAAP////8IAAAS/////w8AAAAMAAAA/////wgAABGgBAAAAgEQACQAAAAUAAAA//////////8hAAAAFAAUAAAAAAAAAAAAAgEQADgAAAAVAAAA//////////8iAAAAFAAUAAEAAAAAAAAADwAAAAYAAAAjAAAACAAAAyMAAAADARAAGAAAABUAAAD//////////yIAAAACARAAOAAAABYAAAD//////////yQAAAAUABQAAQAAAAAAAAAPAAAABgAAACUAAAAIAAADJQAAAAMBEAAYAAAAFgAAAP//////////JAAAAAMBEAAYAAAAFwAAAP//////////IQAAAAMBEAAYAAAAGAAAAP//////////HwAAAAMBEAAYAAAAGQAAAP//////////HQAAAAMBEAAYAAAAGgAAAP//////////FAAAAAEBEAAYAAAAGgAAAP////8OAAAADwAAAA==';
 
 const RESOURCES_ARSC_B64 =
   'AgAMAFACAAABAAAAAQAcADgAAAABAAAAAAAAAAABAAAgAAAAAAAAAAAAAAAVFXJlcy9kcmF3YWJsZS9pY29uLnBuZwAAAiABDAIAAH8AAABjAG8AbQAuAGYAeABzAGkAZwBuAGEAbABzAC4AcAByAG8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAEAAAIAAABYAQAAAQAAAAAAAAABABwAOAAAAAIAAAAAAAAAAAEAACQAAAAAAAAAAAAAAAcAAAAEBGF0dHIACAhkcmF3YWJsZQAAAAEAHAAoAAAAAQAAAAAAAAAAAQAAIAAAAAAAAAAAAAAABARpY29uAAACAhAAEAAAAAEAAAAAAAAAAgIQABQAAAACAAAAAQAAAAAAAAABAlQAaAAAAAIAAAABAAAAWAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAIAAADAAAAAA==';
@@ -250,18 +250,43 @@ function buildSignedAndroidApk(indexHtmlContent) {
 
 let cachedStandaloneHtml = null;
 let cachedApkBuffer = null;
+let lastDistSignature = '';
 
-async function getOrBuildStandaloneHtml() {
-  if (cachedStandaloneHtml) return cachedStandaloneHtml;
+function getDistSignature(distAssetsDir) {
+  try {
+    if (!fs.existsSync(distAssetsDir)) return '';
+    const files = fs.readdirSync(distAssetsDir).sort();
+    return files
+      .map((f) => {
+        const st = fs.statSync(path.join(distAssetsDir, f));
+        return `${f}:${st.size}:${Math.floor(st.mtimeMs)}`;
+      })
+      .join('|');
+  } catch {
+    return '';
+  }
+}
 
+async function getOrBuildStandaloneHtml(forceRebuild = false) {
   const distAssetsDir = path.join(__dirname, 'dist', 'assets');
-  if (!fs.existsSync(distAssetsDir)) {
+  if (!fs.existsSync(distAssetsDir) || forceRebuild) {
     try {
       const { build } = await import('vite');
-      await build();
+      await build({
+        build: {
+          outDir: 'dist',
+          emptyOutDir: false,
+          sourcemap: false,
+        },
+      });
     } catch (e) {
-      console.warn('On-demand Vite build warning:', e?.message);
+      console.warn('Vite build error during bundle export:', e);
     }
+  }
+
+  const currentSig = getDistSignature(distAssetsDir);
+  if (cachedStandaloneHtml && currentSig && currentSig === lastDistSignature && !forceRebuild) {
+    return cachedStandaloneHtml;
   }
 
   const iconPath = path.join(__dirname, 'public', 'icon.svg');
@@ -302,7 +327,7 @@ async function getOrBuildStandaloneHtml() {
     <link rel="icon" type="image/svg+xml" href="${iconDataUri}" />
     <link rel="apple-touch-icon" href="${iconDataUri}" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>FX Signals Pro — Institutional Mobile App</title>
+    <title>FX Signals Pro v1.4.0 — Institutional Mobile App</title>
     <meta name="theme-color" content="#080B11" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -314,6 +339,30 @@ async function getOrBuildStandaloneHtml() {
           var __t = '__fx_storage_ok__';
           window.localStorage.setItem(__t, __t);
           window.localStorage.removeItem(__t);
+          // Clear legacy uncalibrated signal state on upgrade to v1.4.0
+          var __verKey = 'fx_app_bundle_version';
+          if (window.localStorage.getItem(__verKey) !== '1.4.0') {
+            window.localStorage.removeItem('fx_terminal_v2_signals_state');
+            window.localStorage.removeItem('fx_signal_session_store_anchors_v3');
+            window.localStorage.removeItem('fx_signals_state_v5');
+            try {
+              var s6 = window.localStorage.getItem('fx_signals_state_v6');
+              if (s6) {
+                var parsed = JSON.parse(s6);
+                var modified = false;
+                Object.keys(parsed).forEach(function(k) {
+                  if (k.indexOf('USDCHF') !== -1 && k.indexOf('NEWS') !== -1) {
+                    delete parsed[k];
+                    modified = true;
+                  }
+                });
+                if (modified) {
+                  window.localStorage.setItem('fx_signals_state_v6', JSON.stringify(parsed));
+                }
+              }
+            } catch (_) {}
+            window.localStorage.setItem(__verKey, '1.4.0');
+          }
         } catch (e) {
           var __mem = {};
           var mockStorage = {
@@ -352,12 +401,14 @@ async function getOrBuildStandaloneHtml() {
   </body>
 </html>`;
 
+  lastDistSignature = currentSig;
+  cachedApkBuffer = null;
   return cachedStandaloneHtml;
 }
 
-async function getOrBuildApkBuffer() {
-  if (cachedApkBuffer) return cachedApkBuffer;
-  const html = await getOrBuildStandaloneHtml();
+async function getOrBuildApkBuffer(forceRebuild = false) {
+  const html = await getOrBuildStandaloneHtml(forceRebuild);
+  if (cachedApkBuffer && !forceRebuild) return cachedApkBuffer;
   const fallbackHtml =
     html ||
     '<!doctype html><html><body style="background:#080B11;color:#fff;font-family:sans-serif;padding:24px"><h2>FX Signals Pro</h2><p>Loading terminal...</p></body></html>';
@@ -367,7 +418,9 @@ async function getOrBuildApkBuffer() {
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const portArgIndex = process.argv.indexOf('--port');
+  const portFromArg = portArgIndex !== -1 ? Number(process.argv[portArgIndex + 1]) : null;
+  const PORT = portFromArg || Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '15mb' }));
 
@@ -682,7 +735,7 @@ ${strengthSummary}
       }
 
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.setHeader('Content-Disposition', 'attachment; filename="FX-Signals-Pro-Mobile-App.html"');
+      res.setHeader('Content-Disposition', 'attachment; filename="FX-Signals-Pro-Mobile-App-v1.4.0.html"');
       res.send(standaloneHtml);
     } catch (err) {
       res.status(500).json({ error: err?.message || 'Failed to generate standalone mobile app' });
@@ -692,9 +745,10 @@ ${strengthSummary}
   // Native Android APK Download Endpoint (4-byte zipaligned, v1+v2 signed, full self-contained bundle)
   const serveAndroidApk = async (_req, res) => {
     try {
-      const apkBuf = await getOrBuildApkBuffer();
+      const forceRebuild = Boolean(_req.query.v);
+      const apkBuf = await getOrBuildApkBuffer(forceRebuild);
       res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-      res.setHeader('Content-Disposition', 'attachment; filename="FX-Signals-Pro.apk"');
+      res.setHeader('Content-Disposition', 'attachment; filename="FX-Signals-Pro-v1.4.0.apk"');
       res.setHeader('Content-Length', String(apkBuf.length));
       res.setHeader('Accept-Ranges', 'bytes');
       res.setHeader('Cache-Control', 'no-cache');
@@ -708,8 +762,7 @@ ${strengthSummary}
   app.get('/api/download/apk', serveAndroidApk);
 
   const distPath = path.join(__dirname, 'dist');
-  const isCloudRun = Boolean(process.env.K_SERVICE || process.env.K_REVISION);
-  const isProduction = process.env.NODE_ENV === 'production' || isCloudRun;
+  const isProduction = process.env.NODE_ENV === 'production';
 
   let viteMounted = false;
   if (!isProduction) {
@@ -722,13 +775,19 @@ ${strengthSummary}
       app.use(vite.middlewares);
       viteMounted = true;
     } catch (err) {
-      console.warn('Vite dev middleware unavailable, falling back to static dist:', err?.message);
+      console.warn('Vite dev middleware unavailable, falling back to static dist:', err);
     }
   }
 
   if (!viteMounted) {
     app.use(express.static(distPath));
-    app.use(async (_req, res) => {
+    app.use(async (req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return next();
+      }
+      if (req.originalUrl.startsWith('/api') || req.originalUrl.startsWith('/FX-Signals-Pro.apk')) {
+        return next();
+      }
       const indexFile = path.join(distPath, 'index.html');
       if (fs.existsSync(indexFile)) {
         res.sendFile(indexFile);
@@ -741,17 +800,13 @@ ${strengthSummary}
             return;
           }
         } catch {}
-        res.status(200).send('<!doctype html><html lang="en" class="dark"><head><meta charset="UTF-8"/><title>FX Signals Pro</title></head><body style="background:#080B11;color:#fff;font-family:sans-serif;padding:32px"><h2>FX Signals Pro Terminal</h2><p>Loading application bundle...</p><script>window.location.reload();</script></body></html>');
+        res.status(500).send('Application bundle is currently building. Please refresh in a moment.');
       }
     });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
-    // Pre-warm the standalone HTML and APK buffer in background
-    setTimeout(() => {
-      getOrBuildApkBuffer().catch(() => {});
-    }, 500);
   });
 }
 

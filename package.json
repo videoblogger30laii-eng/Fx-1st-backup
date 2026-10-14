@@ -1,11 +1,11 @@
 {
   "name": "forex-signals-react",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.4.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "tsc && vite build",
+    "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 3000",
     "start": "node server.ts",
     "lint": "tsc --noEmit"

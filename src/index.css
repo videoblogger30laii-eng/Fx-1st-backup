@@ -1,18 +1,106 @@
 @import "tailwindcss";
 
+:root {
+  --canvas-bg: #05070B;
+  --app-bg: #080B11;
+  --card-bg: #101522;
+  --inset-bg: #080B11;
+  --border-color: #222F47;
+  --card-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  --card-radius: 12px;
+  --btn-bg: #182033;
+  --btn-border: #222F47;
+  --btn-shadow: none;
+  --accent-color: #00E676;
+}
+
+html[data-theme="claymorphism_white"] {
+  --canvas-bg: #EEF2F9;
+  --app-bg: #EEF2F9;
+  --card-bg: linear-gradient(145deg, #FFFFFF 0%, #F5F8FF 100%);
+  --inset-bg: #E7EDF8;
+  --border-color: rgba(148, 163, 184, 0.35);
+  --card-shadow: 0 14px 28px rgba(148, 163, 184, 0.28), inset 4px 4px 8px #FFFFFF, inset -6px -6px 14px rgba(186, 198, 218, 0.58);
+  --card-radius: 24px;
+  --btn-bg: linear-gradient(145deg, #FFFFFF 0%, #E9EFFA 100%);
+  --btn-border: rgba(255, 255, 255, 0.92);
+  --btn-shadow: 0 6px 12px rgba(148, 163, 184, 0.25), inset 2px 2px 5px #FFFFFF, inset -3px -3px 7px rgba(176, 190, 212, 0.52);
+  --accent-color: #2563EB;
+}
+
+html[data-theme="neumorphism"] {
+  --canvas-bg: #21293A;
+  --app-bg: #21293A;
+  --card-bg: linear-gradient(145deg, #263044, #1e2535);
+  --inset-bg: #181F2D;
+  --border-color: rgba(255, 255, 255, 0.08);
+  --card-shadow: 9px 9px 18px #111620, -7px -7px 16px rgba(255, 255, 255, 0.08);
+  --card-radius: 20px;
+  --btn-bg: linear-gradient(145deg, #283248, #1e2536);
+  --btn-border: rgba(255, 255, 255, 0.08);
+  --btn-shadow: 5px 5px 10px #111620, -4px -4px 9px rgba(255, 255, 255, 0.07);
+  --accent-color: #38BDF8;
+}
+
+html[data-theme="skeuomorphic"] {
+  --canvas-bg: #181B20;
+  --app-bg: #181B20;
+  --card-bg: linear-gradient(180deg, #313846 0%, #20252F 50%, #171B22 100%);
+  --inset-bg: #07120C;
+  --border-color: #4A5264;
+  --card-shadow: 0 10px 24px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.32), inset 0 -2px 4px rgba(0, 0, 0, 0.75);
+  --card-radius: 10px;
+  --btn-bg: linear-gradient(180deg, #424B5E 0%, #272D39 85%, #1D222B 100%);
+  --btn-border: rgba(255, 255, 255, 0.35);
+  --btn-shadow: 0 4px 7px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  --accent-color: #F59E0B;
+}
+
+html[data-theme="cyberpunk"] {
+  --canvas-bg: #080212;
+  --app-bg: #080212;
+  --card-bg: linear-gradient(135deg, rgba(22, 8, 48, 0.92) 0%, rgba(6, 18, 38, 0.94) 100%);
+  --inset-bg: #05020C;
+  --border-color: #00F0FF;
+  --card-shadow: 0 0 20px rgba(0, 240, 255, 0.25), inset 0 0 16px rgba(255, 0, 127, 0.14);
+  --card-radius: 4px;
+  --btn-bg: linear-gradient(90deg, rgba(0, 240, 255, 0.2) 0%, rgba(255, 0, 127, 0.2) 100%);
+  --btn-border: #00F0FF;
+  --btn-shadow: 0 0 12px rgba(0, 240, 255, 0.35);
+  --accent-color: #00F0FF;
+}
+
+html[data-theme="dark_pro"] {
+  --canvas-bg: #05070B;
+  --app-bg: #080B11;
+  --card-bg: #101522;
+  --inset-bg: #080B11;
+  --border-color: #222F47;
+  --card-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  --card-radius: 12px;
+  --btn-bg: #182033;
+  --btn-border: #222F47;
+  --btn-shadow: none;
+  --accent-color: #00E676;
+}
+
 @layer base {
   * {
-    border-color: #222F47;
+    border-color: var(--border-color);
     box-sizing: border-box;
+    transition-property: background-color, border-color, box-shadow, color;
+    transition-duration: 200ms;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   body {
-    background-color: #05070B;
+    background-color: var(--canvas-bg);
     color: #F1F5F9;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overscroll-behavior-y: none;
+    min-height: 100vh;
   }
 
   /* Custom scrollbar for trading terminal aesthetic */
@@ -21,15 +109,38 @@
     height: 4px;
   }
   ::-webkit-scrollbar-track {
-    background: #080B11;
+    background: var(--inset-bg);
   }
   ::-webkit-scrollbar-thumb {
-    background: #222F47;
+    background: var(--border-color);
     border-radius: 4px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #2D3C59;
+    background: var(--accent-color);
   }
+}
+
+/* Terminal Theme Utility Classes */
+.terminal-canvas {
+  background-color: var(--canvas-bg) !important;
+}
+.terminal-app-bg {
+  background-color: var(--app-bg) !important;
+}
+.terminal-card {
+  background: var(--card-bg) !important;
+  border-color: var(--border-color) !important;
+  border-radius: var(--card-radius) !important;
+  box-shadow: var(--card-shadow) !important;
+}
+.terminal-inset {
+  background-color: var(--inset-bg) !important;
+  border-color: var(--border-color) !important;
+}
+.terminal-btn {
+  background: var(--btn-bg) !important;
+  border-color: var(--btn-border) !important;
+  box-shadow: var(--btn-shadow) !important;
 }
 
 /* Hide scrollbars on horizontal pill/tab strips */

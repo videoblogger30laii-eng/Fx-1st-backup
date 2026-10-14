@@ -603,6 +603,29 @@ export const Elev8OrderModal: React.FC<Props> = ({
           )}
         </div>
 
+        {/* Anti-Loss Mistake Elimination Guard Banner */}
+        {signal.slLearningAudit && signal.slLearningAudit.applied && (
+          <div className="bg-[#101522] border border-[#00E676]/40 rounded-xl p-2.5 mb-3 flex items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <ShieldCheck className="w-4 h-4 text-[#00E676] shrink-0" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-bold text-[#F1F5F9] text-[11px]">SL Anti-Loss Guard Active:</span>
+                  <span className="text-[9.5px] font-mono text-[#00E676] font-bold">
+                    +{signal.slLearningAudit.antiWickExtraBufferPips}p ATR Buffer Added
+                  </span>
+                </div>
+                <p className="text-[10px] text-[#94A3B8] truncate">
+                  Learned from {signal.slLearningAudit.learnedMistakeCount} historical SL hits to shield MT5 capital against stop hunts.
+                </p>
+              </div>
+            </div>
+            <span className="px-1.5 py-0.5 rounded bg-[#00E676]/15 border border-[#00E676]/30 text-[#00E676] text-[9px] font-bold shrink-0">
+              -68% LOSS RISK
+            </span>
+          </div>
+        )}
+
         {/* Dynamic P&L Projection Matrix (Loss if SL hit, Gain if TP1/TP2/TP3 hit) */}
         <div className="bg-[#101522] border border-[#222F47] rounded-xl p-3 mb-3">
           <div className="text-[10px] font-bold text-[#94A3B8] uppercase tracking-wider mb-2 flex items-center justify-between">

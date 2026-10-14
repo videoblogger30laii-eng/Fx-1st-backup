@@ -2,6 +2,7 @@ import { EconomicEvent, ForexPair, ForexSignal, SignalType } from '../types';
 import { PersistenceManager } from './persistence';
 
 const CALENDAR_ANCHOR_KEY = 'forex_calendar_anchor_ts_v3';
+const CALENDAR_APPLIED_RELEASES_KEY = 'forex_calendar_applied_releases_v3';
 
 class EconomicCalendarService {
   private events: EconomicEvent[] = [];
@@ -10,8 +11,36 @@ class EconomicCalendarService {
   private liveFetchAttempted: boolean = false;
 
   constructor() {
+    this.loadAppliedReleaseKeys();
     this.initAnchorAndEvents();
     this.fetchLiveFairEconomyCalendar();
+  }
+
+  private loadAppliedReleaseKeys(): void {
+    try {
+      const raw = localStorage.getItem(CALENDAR_APPLIED_RELEASES_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(k => {
+            if (typeof k === 'string') this.appliedReleaseKeys.add(k);
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  private saveAppliedReleaseKeys(): void {
+    try {
+      localStorage.setItem(
+        CALENDAR_APPLIED_RELEASES_KEY,
+        JSON.stringify(Array.from(this.appliedReleaseKeys).slice(-100))
+      );
+    } catch {
+      // ignore
+    }
   }
 
   /**
@@ -335,10 +364,11 @@ class EconomicCalendarService {
     this.events = this.events.map(evt => {
       if (evt.id === eventId) {
         const nextOutcome = outcomeOverride || evt.surpriseOutcome || 'BEAT_BULLISH';
-        // Allow re-running synchronization if outcome changed
+        // Allow re-running synchronization if outcome changed manually
         this.appliedReleaseKeys.delete(`${evt.id}:BEAT_BULLISH`);
         this.appliedReleaseKeys.delete(`${evt.id}:MISSED_BEARISH`);
         this.appliedReleaseKeys.delete(`${evt.id}:INLINE_NEUTRAL`);
+        this.saveAppliedReleaseKeys();
 
         // Compute realistic Actual value & summary matching the simulated outcome
         let simActual = evt.releasedActualValue || evt.forecast || 'Released';
@@ -395,8 +425,10 @@ class EconomicCalendarService {
     updatedExistingPairs: string[];
   } {
     const now = Date.now();
+    // Only process recently released events (within 60 minutes) to prevent spawning stale ghost trades
+    const MAX_NEWS_FRESHNESS_MS = 60 * 60 * 1000;
     const releasedEvents = this.getAllEvents().filter(
-      evt => now >= evt.timestamp && evt.pairImpacts && evt.pairImpacts.length > 0
+      evt => now >= evt.timestamp && (now - evt.timestamp) <= MAX_NEWS_FRESHNESS_MS && evt.pairImpacts && evt.pairImpacts.length > 0
     );
 
     let nextSignals = [...currentSignals];
@@ -412,6 +444,7 @@ class EconomicCalendarService {
       }
 
       this.appliedReleaseKeys.add(releaseKey);
+      this.saveAppliedReleaseKeys();
 
       for (const impact of evt.pairImpacts || []) {
         const pairObj = allPairs.find(p => p.symbol === impact.pair);
@@ -423,11 +456,15 @@ class EconomicCalendarService {
         const newType: SignalType = shouldBeBuy ? 'BUY_MARKET' : 'SELL_MARKET';
 
         const livePrice = pairObj.currentPrice > 0 ? pairObj.currentPrice : pairObj.basePrice;
+        const hasRealLiveQuote =
+          pairObj.currentPrice > 0 && Math.abs(pairObj.currentPrice - pairObj.basePrice) > 1e-7;
 
-        // Only match active (non-closed) signals so HIT_SL and HIT_TP signals stay permanently in Closed History
-        const existingIndex = nextSignals.findIndex(
+        // Check if there is already an active (non-closed) signal running on this pair
+        const activeIndex = nextSignals.findIndex(
           s => s.pair.symbol === impact.pair && s.status !== 'HIT_SL' && s.status !== 'HIT_TP'
         );
+
+        const existingIndex = activeIndex;
         const targetTf = existingIndex !== -1 ? nextSignals[existingIndex].timeframe : 'M15';
         const tfScale =
           targetTf === 'M5' ? 0.65 :
@@ -477,8 +514,6 @@ class EconomicCalendarService {
 
         const actualLabel = evt.actual || evt.releasedActualValue || evt.forecast;
         const newsSigId = `SIG-NEWS-${evt.id}-${impact.pair.replace('/', '')}`;
-        const hasRealLiveQuote =
-          pairObj.currentPrice > 0 && Math.abs(pairObj.currentPrice - pairObj.basePrice) > 1e-7;
 
         // If this exact post-news signal was already created, ensure its SL/TP distance is calibrated to its timeframe
         const existingNewsIdx = nextSignals.findIndex(s => s.id === newsSigId);
@@ -600,8 +635,8 @@ class EconomicCalendarService {
               updatedExistingPairs.push(label);
             }
             hasChanges = true;
-          } else {
-            // News opposes existing signal direction -> Flip/Update signal to match the Post-News Institutional Direction!
+          } else if (hasRealLiveQuote && (existingSig.createdAtMs || 0) < evt.timestamp) {
+            // Only flip if we have a real live quote AND the signal was created prior to the news release
             nextSignals[existingIndex] = {
               ...existingSig,
               pair: { ...pairObj, currentPrice: newCurrent },
@@ -623,7 +658,7 @@ class EconomicCalendarService {
               validityTimeLeft: `Active (+${activePips} pips)`,
               validityExpiresAt: `Targeting ${targetTf} TP1 ${newTp1} (+${tp1PipsCount}p)`,
               invalidationTrigger: `${targetTf} SL at ${newSl} (-${slPipsCount}p)`,
-              isLiveSynced: Boolean(existingSig.isLiveSynced || hasRealLiveQuote),
+              isLiveSynced: true,
               economicRisk: `🔄 FLIPPED BY NEWS: ${evt.title} (${actualLabel} vs ${evt.forecast})`,
               rationale: `🔄 SIGNAL UPDATED BY NEWS (${evt.title}: Actual ${actualLabel} vs Forecast ${evt.forecast}): ${impact.explanation} Pre-news bias invalidated; flipped to ${shouldBeBuy ? 'BUY' : 'SELL'} at ${newEntry} (${slPipsCount}p SL / +${tp1PipsCount}p TP1).`,
               checklist: [
@@ -642,9 +677,25 @@ class EconomicCalendarService {
       }
     }
 
+    // Deduplication:
+    // 1. All closed trades (HIT_TP, HIT_SL) stay permanently in the Closed ledger.
+    // 2. Only 1 active trade (RUNNING or PENDING) is allowed per pair at a time.
+    const seenActivePairs = new Set<string>();
+    const dedupedSignals = nextSignals.filter(s => {
+      if (s.status === 'HIT_TP' || s.status === 'HIT_SL') {
+        return true;
+      }
+      const symbol = s.pair.symbol;
+      if (seenActivePairs.has(symbol)) {
+        return false;
+      }
+      seenActivePairs.add(symbol);
+      return true;
+    });
+
     return {
-      updatedSignals: nextSignals,
-      hasChanges,
+      updatedSignals: dedupedSignals,
+      hasChanges: hasChanges || dedupedSignals.length !== nextSignals.length,
       newlyAddedPairs,
       updatedExistingPairs
     };

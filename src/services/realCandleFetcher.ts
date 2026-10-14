@@ -1,5 +1,5 @@
 import { CandleStick, Timeframe } from '../types';
-import { ALL_PAIRS } from './marketData';
+import { ALL_PAIRS, isMarketOpenTimestamp } from './marketData';
 import { realPriceService } from './RealPriceService';
 import { DERIV_PAIR_MAP } from './derivHistoricalService';
 
@@ -399,7 +399,7 @@ export const RealCandleFetcherService = {
       currentClose = open;
     }
 
-    const candles = reverseCandles.reverse();
+    const candles = reverseCandles.reverse().filter(c => isMarketOpenTimestamp(c.timestamp));
 
     return {
       symbol: cleanSymbol,

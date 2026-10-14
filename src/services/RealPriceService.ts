@@ -1,5 +1,5 @@
 import { derivService, DerivTick } from './derivStream';
-import { ALL_PAIRS } from './marketData';
+import { ALL_PAIRS, isForexMarketOpen } from './marketData';
 
 export interface PairOHLC {
   open: number;
@@ -156,23 +156,34 @@ class RealPriceService {
     if (this.isStarted) return;
     this.isStarted = true;
 
-    // 1. Primary Provider: TradingView Real-Time Interbank Feed
+    // 1. Primary Provider: TradingView Real-Time Interbank Feed (also fetches Friday settlement on weekend)
     this.pollTradingViewQuotes();
     this.pollTradingViewCfdAndIndices();
+
+    // During weekend market closure, freeze after fetching the Friday settlement snapshot
+    if (!isForexMarketOpen(new Date())) {
+      return;
+    }
+
     this.tvIntervalId = setInterval(() => {
-      this.pollTradingViewQuotes();
+      if (isForexMarketOpen(new Date())) {
+        this.pollTradingViewQuotes();
+      }
     }, 3000);
 
     // 2. Physical Gold & Silver Spot: every 5s
     this.goldIntervalId = setInterval(() => {
-      this.pollTradingViewCfdAndIndices();
-      this.pollGoldPrice();
+      if (isForexMarketOpen(new Date())) {
+        this.pollTradingViewCfdAndIndices();
+        this.pollGoldPrice();
+      }
     }, 5000);
 
     // 3. Secondary: Connect Deriv WebSocket Live Stream
     try {
       derivService.startLiveStream();
       this.unsubscribeDeriv = derivService.onTick((tick: DerivTick) => {
+        if (!isForexMarketOpen(new Date())) return;
         if (tick.pairSymbol && tick.quote > 0) {
           // Only update if not already fed by TradingView in the last 12s
           const now = Date.now();
@@ -443,6 +454,9 @@ class RealPriceService {
    * Real Gold Spot Price from https://api.gold-api.com/price/XAU
    */
   public async pollGoldPrice(): Promise<number | null> {
+    if (!isForexMarketOpen(new Date())) {
+      return this.latestPrices['XAU/USD'] || null;
+    }
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);

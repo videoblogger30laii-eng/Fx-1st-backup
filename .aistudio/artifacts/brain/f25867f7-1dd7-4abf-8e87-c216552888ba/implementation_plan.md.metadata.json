@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan for fixing weekend/closed market date trades (e.g. Oct 11) and synchronizing closed trades between backtesting and live scanner.",
+  "updatedAt":  "2026-10-11T06:15:14.293469466Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}
