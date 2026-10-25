@@ -1,6 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { ForexSignal, getSignalStrategy, STRATEGY_CONFIGS } from '../types';
-import { formatPrice, calculatePips, getFormattedCountdown, getValidityProgress, isForexMarketOpen, getWeekendMarketState } from '../services/marketData';
+import {
+  formatPrice,
+  calculatePips,
+  getFormattedCountdown,
+  getValidityProgress,
+  isForexMarketOpen,
+  getWeekendMarketState,
+  formatSignalDateTime,
+  getFormattedTimeElapsed
+} from '../services/marketData';
 import { realPriceService } from '../services/RealPriceService';
 import {
   Sparkles,
@@ -233,6 +242,21 @@ export const BestTradeHeroCard: React.FC<Props> = ({
           >
             {isPending ? countdown : `${isProfit ? `+${livePips}` : livePips}p`}
           </div>
+        </div>
+      </div>
+
+      {/* Real Generated Time & Elapsed Age Strip */}
+      <div className="flex items-center justify-between text-[9.5px] font-mono text-[#94A3B8] px-1 my-1.5 flex-wrap gap-1">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Clock className="w-2.5 h-2.5 text-[#2979FF]" />
+          <span className="text-[#F1F5F9] font-bold">
+            {formatSignalDateTime(signal.createdAtMs)}
+          </span>
+          <span className="text-[#64748B]">·</span>
+          <span>{getFormattedTimeElapsed(signal, nowClockMs)}</span>
+        </div>
+        <div className="flex items-center gap-1 text-[9px] text-[#FFD700] font-bold">
+          <span>🎯 TP1: {formatPrice(signal.pair, signal.takeProfit1)}</span>
         </div>
       </div>
 

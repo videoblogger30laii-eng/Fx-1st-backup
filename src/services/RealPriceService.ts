@@ -61,7 +61,7 @@ class RealPriceService {
     'AUD/CHF': 0.5760,
     'AUD/NZD': 1.2380,
     'CAD/JPY': 110.65,
-    'CAD/CHF': 0.5812,
+    'CAD/CHF': 0.5898,
     'CHF/JPY': 190.36,
     'NZD/JPY': 88.56,
     'NZD/CAD': 0.7995,
@@ -106,7 +106,12 @@ class RealPriceService {
     });
   }
 
-  private recalculateOHLC(symbol: string, currentPrice: number): PairOHLC {
+  private recalculateOHLC(
+    symbol: string,
+    currentPrice: number,
+    explicitHigh?: number,
+    explicitLow?: number
+  ): PairOHLC {
     const prev = this.ohlcStore[symbol] || {
       open: currentPrice,
       high: currentPrice,
@@ -122,8 +127,10 @@ class RealPriceService {
     const isJpy = symbol.includes('JPY');
     const digits = isGold || isSilver || isJpy || symbol.includes('OIL') ? 2 : 5;
 
-    const high = Math.max(prev.high, currentPrice);
-    const low = Math.min(prev.low, currentPrice);
+    const baseHigh = Math.max(prev.high, currentPrice);
+    const high = explicitHigh && explicitHigh > 0 ? Math.max(baseHigh, explicitHigh) : baseHigh;
+    const baseLow = Math.min(prev.low, currentPrice);
+    const low = explicitLow && explicitLow > 0 ? Math.min(baseLow, explicitLow) : baseLow;
     const change = currentPrice - prev.open;
     const changePercent = prev.open > 0 ? (change / prev.open) * 100 : 0;
 
@@ -328,12 +335,16 @@ class RealPriceService {
           json.data.forEach((item: any) => {
             const sym = mapping[item.s];
             const close = Number(item.d?.[0]);
+            const high = Number(item.d?.[2]);
+            const low = Number(item.d?.[3]);
             if (sym && !isNaN(close) && close > 0) {
               const digits = sym.includes('JPY') || sym.includes('XAU') || sym.includes('XAG') ? 2 : 5;
               const formattedPrice = Number(close.toFixed(digits));
+              const validHigh = !isNaN(high) && high > 0 ? Number(high.toFixed(digits)) : undefined;
+              const validLow = !isNaN(low) && low > 0 ? Number(low.toFixed(digits)) : undefined;
               this.lastLiveTickTime[sym] = Date.now();
               this.activeSource = 'TRADINGVIEW_FEED';
-              this.updatePrice(sym, formattedPrice, 'TradingView Real Feed');
+              this.updatePrice(sym, formattedPrice, 'TradingView Real Feed', validHigh, validLow);
             }
           });
 
@@ -599,14 +610,14 @@ class RealPriceService {
     return this.latestPrices[symbol] || 0;
   }
 
-  public updatePrice(symbol: string, price: number, source?: string) {
+  public updatePrice(symbol: string, price: number, source?: string, high?: number, low?: number) {
     if (price <= 0) return;
     this.latestPrices[symbol] = price;
     const foundPair = ALL_PAIRS.find(p => p.symbol === symbol);
     if (foundPair) {
       foundPair.currentPrice = price;
     }
-    const ohlc = this.recalculateOHLC(symbol, price);
+    const ohlc = this.recalculateOHLC(symbol, price, high, low);
 
     const tick: RealPriceTick = {
       symbol,

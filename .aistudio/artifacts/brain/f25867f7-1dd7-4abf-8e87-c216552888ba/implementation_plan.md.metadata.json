@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for fixing weekend/closed market date trades (e.g. Oct 11) and synchronizing closed trades between backtesting and live scanner.",
-  "updatedAt":  "2026-10-11T06:15:14.293469466Z",
+  "summary":  "Fixed entry price calculation, market execution consistency, and stale base price calibration across all trade signals.",
+  "updatedAt":  "2026-10-24T07:44:33.036956781Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

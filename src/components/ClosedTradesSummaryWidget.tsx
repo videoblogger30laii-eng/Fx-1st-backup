@@ -510,7 +510,7 @@ export const ClosedTradesSummaryWidget: React.FC<Props> = ({
 
                 return (
                   <div
-                    key={sig.id || idx}
+                    key={`${sig.id}-${sig.closedAtMs || idx}`}
                     className={`flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-mono font-bold transition-all ${
                       isWin
                         ? 'bg-[#00E676]/10 border-[#00E676]/30 text-[#00E676]'

@@ -43,7 +43,8 @@ import {
   ChevronDown,
   Palette,
   ShieldCheck,
-  ShieldAlert
+  ShieldAlert,
+  AlertTriangle
 } from 'lucide-react';
 import { adaptiveSlLearningService } from '../services/adaptiveSlLearningService';
 
@@ -93,6 +94,8 @@ interface Props {
   onClearClosedHistory?: () => void;
   onScanAndFormSignals?: (targetPairSymbol?: string) => void;
   onOpenThemeModal?: () => void;
+  activeStrategy?: StrategyType;
+  onStrategySelect?: (strat: StrategyType) => void;
   enabledStrategies?: string[];
   onToggleStrategyEnabled?: (strat: StrategyType) => void;
   onSelectAllStrategies?: () => void;
@@ -145,17 +148,9 @@ export const SignalsScreen: React.FC<Props> = ({
   onClearClosedHistory,
   onScanAndFormSignals,
   onOpenThemeModal,
-  enabledStrategies = [
-    'MASTER_OMNI_CONFLUENCE',
-    'OPENING_RANGE_BOX_PIVOT',
-    'BEST_TRADE_NOW',
-    'ICT_SMART_MONEY',
-    'ICT_SILVER_BULLET',
-    'MTF_FRACTAL_ALIGNMENT',
-    'TREND_EMA_CONFLUENCE',
-    'VOLATILITY_SQUEEZE_BREAKOUT',
-    'LIQUIDITY_SWEEP'
-  ],
+  activeStrategy = 'ALL_STRATEGIES',
+  onStrategySelect,
+  enabledStrategies = ['ALL_STRATEGIES', 'GOLD_HUNTER', 'LONDON_KILLER', 'TREND_RIDER'],
   onToggleStrategyEnabled = () => {},
   onSelectAllStrategies = () => {},
   onDeselectAllStrategies = () => {}
@@ -211,14 +206,14 @@ export const SignalsScreen: React.FC<Props> = ({
     PersistenceManager.saveClosedTradesRetention(val);
   };
 
-  // All closed, hit TP, hit SL, or completed signals from the ledger (excluding XAG/USD closed trades)
   const allClosedSignals = useMemo(() => {
+    const seen = new Set<string>();
     return signals.filter(s => {
-      const sym = String(s.pair?.symbol || '').toUpperCase();
-      if (sym.includes('XAG') || sym.includes('SILVER')) {
-        return false;
-      }
-      return !isSignalValidAndActive(s, nowClockMs);
+      if (isSignalValidAndActive(s, nowClockMs)) return false;
+      const key = `${s.id}-${s.closedAtMs || s.createdAtMs || ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
     });
   }, [signals, nowClockMs]);
 
@@ -334,14 +329,15 @@ export const SignalsScreen: React.FC<Props> = ({
   // Asset Class Category Tabs for Signals Feed (Micro-Account Focused: 0.01 Lot Friendly)
   const assetCategoryTabs = [
     { key: 'ALL', label: 'All Assets', count: activeSignals.length, icon: '🌐' },
-    { key: 'MAJORS', label: 'Majors', count: activeSignals.filter(s => getAssetCategory(s.pair.symbol) === 'MAJORS').length, icon: '🏛️' },
-    { key: 'MINORS', label: 'Crosses', count: activeSignals.filter(s => getAssetCategory(s.pair.symbol) === 'MINORS').length, icon: '🔀' },
-    { key: 'METALS', label: 'Metals', count: activeSignals.filter(s => getAssetCategory(s.pair.symbol) === 'METALS').length, icon: '🥇' },
+    { key: 'MAJORS', label: 'Majors', count: signals.filter(s => isSignalValidAndActive(s, nowClockMs) && getAssetCategory(s.pair.symbol) === 'MAJORS').length, icon: '🏛️' },
+    { key: 'MINORS', label: 'Crosses', count: signals.filter(s => isSignalValidAndActive(s, nowClockMs) && getAssetCategory(s.pair.symbol) === 'MINORS').length, icon: '🔀' },
+    { key: 'METALS', label: 'Metals', count: signals.filter(s => isSignalValidAndActive(s, nowClockMs) && getAssetCategory(s.pair.symbol) === 'METALS').length, icon: '🥇' },
   ];
 
   // Execution & Strategy Tabs
   const strategyFilterTabs = [
     { key: 'ALL', label: `All (${activeSignals.length})` },
+    { key: 'ALL_ACTIVE', label: `All Trade (${activeSignals.filter(s => s.status === 'RUNNING' || s.status === 'PENDING').length})` },
     { key: 'VIP', label: `🔥 A+ VIP (${activeSignals.filter(s => s.confluenceScore >= 90).length})` },
     { key: 'RUNNING', label: `Running (${activeSignals.filter(s => s.status === 'RUNNING').length})` },
     { key: 'PENDING', label: `Pending (${activeSignals.filter(s => s.status === 'PENDING').length})` },
@@ -349,8 +345,50 @@ export const SignalsScreen: React.FC<Props> = ({
     { key: 'HISTORY', label: `Closed (${displayedClosedSignals.length}${displayedClosedSignals.length !== allClosedSignals.length ? `/${allClosedSignals.length}` : ''})` },
   ];
 
+  // Portfolio Currency Correlation Guard: detect when 3+ signals share identical directional currency exposure
+  const correlationRisk = useMemo(() => {
+    const currencyExposure: Record<string, { long: string[]; short: string[] }> = {};
+    const relevantSignals = activeSignals.filter(s => s.status === 'RUNNING' || s.status === 'PENDING');
+
+    relevantSignals.forEach(sig => {
+      const sym = sig.pair.symbol;
+      const isBuy = sig.type.includes('BUY');
+      let base = '';
+      let quote = '';
+      if (sym.includes('/')) {
+        const parts = sym.split('/');
+        base = parts[0];
+        quote = parts[1];
+      } else if (sym.startsWith('XAU') || sym.startsWith('XAG')) {
+        base = sym.slice(0, 3);
+        quote = 'USD';
+      }
+
+      if (base) {
+        if (!currencyExposure[base]) currencyExposure[base] = { long: [], short: [] };
+        if (isBuy) currencyExposure[base].long.push(sym);
+        else currencyExposure[base].short.push(sym);
+      }
+      if (quote) {
+        if (!currencyExposure[quote]) currencyExposure[quote] = { long: [], short: [] };
+        if (isBuy) currencyExposure[quote].short.push(sym); // Long Base/USD = Short USD
+        else currencyExposure[quote].long.push(sym); // Short Base/USD = Long USD
+      }
+    });
+
+    for (const [ccy, exp] of Object.entries(currencyExposure)) {
+      if (exp.long.length >= 3) {
+        return { currency: ccy, direction: 'LONG' as const, count: exp.long.length, pairs: exp.long };
+      }
+      if (exp.short.length >= 3) {
+        return { currency: ccy, direction: 'SHORT' as const, count: exp.short.length, pairs: exp.short };
+      }
+    }
+    return null;
+  }, [activeSignals]);
+
   return (
-    <div className="space-y-2.5 max-w-4xl mx-auto pb-16">
+    <div className="space-y-2.5 max-w-md mx-auto pb-16 px-4">
       {/* 1. Unified Institutional Command & Telemetry Bar (Compact 2-Row Header) */}
       <div className="bg-[#101522] border border-[#222F47] rounded-xl p-2 space-y-1.5 shadow-sm terminal-card">
         {/* Top Row: View Mode Switcher + Quick Institutional Actions */}
@@ -544,71 +582,88 @@ export const SignalsScreen: React.FC<Props> = ({
           <div className="flex items-center gap-2">
             <SlidersHorizontal className="w-4 h-4 text-[#2979FF]" />
             <span className="text-xs font-bold text-[#F1F5F9]">
-              Strategy Filters & Toggles ({enabledStrategies.length}/{Object.keys(STRATEGY_CONFIGS).length} Active)
+              Institutional Strategy Suite ({STRATEGY_CONFIGS[activeStrategy || 'GOLD_HUNTER']?.shortBadge} Active)
             </span>
           </div>
           <button
             onClick={() => setIsStrategyTogglesOpen(prev => !prev)}
             className="text-[11px] font-bold text-[#2979FF] hover:underline cursor-pointer flex items-center gap-1"
           >
-            <span>{isStrategyTogglesOpen ? 'Hide Toggles' : `Configure ${Object.keys(STRATEGY_CONFIGS).length} Strategies`}</span>
+            <span>{isStrategyTogglesOpen ? 'Hide Suite' : 'Select Strategy (1 of 3)'}</span>
             <span>{isStrategyTogglesOpen ? '▲' : '▼'}</span>
           </button>
         </div>
 
         {isStrategyTogglesOpen && (
-          <div className="pt-2 border-t border-[#222F47]/60 space-y-2.5">
-            <div className="flex items-center justify-between flex-wrap gap-1">
-              <span className="text-[10.5px] text-[#94A3B8]">
-                Checked strategies produce signals & show signal cards. Unchecked strategies are suppressed.
-              </span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={onSelectAllStrategies}
-                  className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#2979FF]/20 text-[#2979FF] hover:bg-[#2979FF]/30 cursor-pointer"
-                >
-                  Select All ({Object.keys(STRATEGY_CONFIGS).length})
-                </button>
-                <button
-                  onClick={onDeselectAllStrategies}
-                  className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#FF3366]/20 text-[#FF3366] hover:bg-[#FF3366]/30 cursor-pointer"
-                >
-                  Deselect All (0)
-                </button>
-              </div>
+          <div className="pt-2 border-t border-[#222F47]/60 space-y-2">
+            <div className="text-[10.5px] text-[#94A3B8]">
+              Select <strong className="text-[#F1F5F9]">only ONE strategy</strong> at a time. The scanner runs M15, H1, and H4 in background and shows the winning timeframe per pair (Best TF Wins).
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {Object.entries(STRATEGY_CONFIGS).map(([key, config]) => {
-                const stratKey = key as StrategyType;
-                const isChecked = enabledStrategies.includes(stratKey);
+            {/* All Trades Master Stream Card */}
+            <button
+              onClick={() => {
+                if (onStrategySelect) onStrategySelect('ALL_STRATEGIES');
+                if (onToggleStrategyEnabled) onToggleStrategyEnabled('ALL_STRATEGIES');
+              }}
+              className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                activeStrategy === 'ALL_STRATEGIES'
+                  ? 'bg-[#182033] border-[#FFD700] shadow-[0_0_12px_rgba(255,215,0,0.12)] text-[#F1F5F9]'
+                  : 'bg-[#080B11]/70 border-[#222F47] text-[#94A3B8] hover:border-[#2979FF]/50'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-xs font-black text-[#FFD700]">🌐 ALL TRADES (Master Stream — All Strategies & Timeframes)</span>
+                <span className={`text-[8.5px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                  activeStrategy === 'ALL_STRATEGIES' ? 'bg-[#FFD700]/20 text-[#FFD700]' : 'bg-[#182033] text-[#64748B]'
+                }`}>
+                  {activeStrategy === 'ALL_STRATEGIES' ? 'ACTIVE' : 'SELECT ALL'}
+                </span>
+              </div>
+              <p className="text-[9.5px] text-[#94A3B8] mt-1">
+                Display all valid active trades across all timeframes (M5, M15, H1, H4, D1), metals, majors, and minors generated by all 3 institutional strategies.
+              </p>
+            </button>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {(Object.keys(STRATEGY_CONFIGS) as StrategyType[]).filter(k => k !== 'ALL_STRATEGIES').map((stratKey) => {
+                const config = STRATEGY_CONFIGS[stratKey];
+                const isSelected = (activeStrategy || 'GOLD_HUNTER') === stratKey;
                 return (
-                  <label
+                  <button
                     key={stratKey}
-                    className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${
-                      isChecked
-                        ? 'bg-[#182033] border-[#2979FF]/50 text-[#F1F5F9]'
-                        : 'bg-[#080B11]/50 border-[#222F47] text-[#64748B] opacity-70'
+                    onClick={() => {
+                      if (onStrategySelect) {
+                        onStrategySelect(stratKey);
+                      }
+                      if (onToggleStrategyEnabled) {
+                        onToggleStrategyEnabled(stratKey);
+                      }
+                    }}
+                    className={`text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#182033] border-[#FFD700] shadow-[0_0_12px_rgba(255,215,0,0.12)] text-[#F1F5F9]'
+                        : 'bg-[#080B11]/70 border-[#222F47] text-[#94A3B8] hover:border-[#2979FF]/50'
                     }`}
                   >
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={() => onToggleStrategyEnabled(stratKey)}
-                      className="mt-0.5 accent-[#2979FF] cursor-pointer"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="text-xs font-bold truncate">{config.shortBadge || config.title}</span>
-                        {config.defaultWinRate && (
-                          <span className="text-[10px] font-mono text-[#00E676] bg-[#00E676]/10 px-1.5 py-0.2 rounded shrink-0">
-                            {config.defaultWinRate}% Win
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-[#94A3B8] line-clamp-1 mt-0.5">{config.description}</p>
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-xs font-black text-[#F1F5F9]">{config.shortBadge}</span>
+                      <span className={`text-[8.5px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                        isSelected ? 'bg-[#FFD700]/20 text-[#FFD700]' : 'bg-[#182033] text-[#64748B]'
+                      }`}>
+                        {isSelected ? 'ACTIVE' : 'SELECT'}
+                      </span>
                     </div>
-                  </label>
+                    <div className="text-[10px] font-mono text-[#00E676] mt-1 font-bold">
+                      {config.modelRule}
+                    </div>
+                    <p className="text-[9.5px] text-[#94A3B8] line-clamp-2 mt-1">
+                      {config.description}
+                    </p>
+                    <div className="text-[9px] font-mono text-[#60A5FA] mt-1.5">
+                      Pairs: {config.allowedPairs.join(', ')}
+                    </div>
+                  </button>
                 );
               })}
             </div>
@@ -925,22 +980,47 @@ export const SignalsScreen: React.FC<Props> = ({
               )}
             </div>
 
+            {/* Portfolio Currency Correlation Guard Advisory */}
+            {correlationRisk && selectedFilter !== 'HISTORY' && (
+              <div className="bg-[#FF9100]/10 border border-[#FF9100]/35 rounded-lg px-2.5 py-1.5 flex items-center justify-between text-[10px] text-[#FF9100] font-mono shadow-xs">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <AlertTriangle className="w-3.5 h-3.5 text-[#FF9100] shrink-0" />
+                  <span className="font-black text-[#FFD700] uppercase tracking-wider shrink-0">CORRELATION GUARD:</span>
+                  <span className="text-[#F1F5F9] truncate">
+                    {correlationRisk.count}x {correlationRisk.currency} {correlationRisk.direction} ({correlationRisk.pairs.join(', ')})
+                  </span>
+                </div>
+                <span className="text-[8.5px] text-[#FFD700] font-sans font-bold shrink-0 ml-1">
+                  Scale to 0.5% lot risk
+                </span>
+              </div>
+            )}
+
             {/* Row 2: Strategy Model Select (Left) + Asset Category Pills (Right) - Only for Active Signals */}
             {selectedFilter !== 'HISTORY' && (
               <div className="flex items-center justify-between gap-1.5">
+                {/* Single-Strategy Dropdown: Only ONE strategy at a time */}
                 <select
-                  value={selectedFilter in STRATEGY_CONFIGS ? selectedFilter : 'ALL'}
-                  onChange={(e) => onFilterSelect(e.target.value)}
-                  aria-label="Filter by Institutional Strategy Model"
+                  value={activeStrategy}
+                  onChange={(e) => {
+                    const chosen = e.target.value as StrategyType;
+                    if (onStrategySelect) onStrategySelect(chosen);
+                    if (onToggleStrategyEnabled) onToggleStrategyEnabled(chosen);
+                  }}
+                  aria-label="Select Institutional Strategy (Only 1 Active at a Time)"
                   className="flex-1 min-w-0 bg-[#182033] border border-[#222F47] hover:border-[#FFD700]/50 rounded-lg px-2 py-1.5 text-[10.5px] font-bold text-[#FFD700] focus:outline-hidden cursor-pointer truncate"
                 >
-                  <option value="ALL">🌐 All {Object.keys(STRATEGY_CONFIGS).length} Institutional Strategies ({activeSignals.length})</option>
-                  {(Object.keys(STRATEGY_CONFIGS) as StrategyType[]).map(stratKey => {
-                    const cfg = STRATEGY_CONFIGS[stratKey];
-                    const tagPrefix = cfg.tierTag === 'ENSEMBLE' ? '👑 ' : cfg.tierTag === 'NEW' ? '✨ ' : '⚡ ';
+                  {['ALL_STRATEGIES', ...((selectedFilter === 'METALS' || selectedFilter === 'GOLD')
+                    ? (['GOLD_HUNTER', 'TREND_RIDER'] as StrategyType[])
+                    : (selectedFilter === 'MAJORS' || selectedFilter === 'MINORS')
+                    ? (['LONDON_KILLER', 'TREND_RIDER'] as StrategyType[])
+                    : (['GOLD_HUNTER', 'LONDON_KILLER', 'TREND_RIDER'] as StrategyType[])
+                  )].map(stratKey => {
+                    const cfg = STRATEGY_CONFIGS[stratKey as StrategyType];
+                    const tagIcon = stratKey === 'ALL_STRATEGIES' ? '🌐' : stratKey === 'GOLD_HUNTER' ? '🥇' : stratKey === 'LONDON_KILLER' ? '🇬🇧' : '🚀';
                     return (
                       <option key={stratKey} value={stratKey}>
-                        {tagPrefix}{cfg.title} ({activeSignals.filter(s => getSignalStrategy(s) === stratKey).length})
+                        {tagIcon} {cfg.shortBadge} — {cfg.title} ({cfg.targetRR})
                       </option>
                     );
                   })}
@@ -952,7 +1032,20 @@ export const SignalsScreen: React.FC<Props> = ({
                     return (
                       <button
                         key={cat.key}
-                        onClick={() => onFilterSelect(isSelected ? 'ALL' : cat.key)}
+                        onClick={() => {
+                          const nextFilter = isSelected ? 'ALL' : cat.key;
+                          onFilterSelect(nextFilter);
+                          // Section auto-filter: Metals defaults to GOLD HUNTER, Forex defaults to LONDON KILLER
+                          if (nextFilter === 'METALS' && onStrategySelect) {
+                            if (activeStrategy === 'LONDON_KILLER') {
+                              onStrategySelect('GOLD_HUNTER');
+                            }
+                          } else if ((nextFilter === 'MAJORS' || nextFilter === 'MINORS') && onStrategySelect) {
+                            if (activeStrategy === 'GOLD_HUNTER') {
+                              onStrategySelect('ALL_STRATEGIES');
+                            }
+                          }
+                        }}
                         className={`flex items-center gap-1 text-[9.5px] font-bold px-2 py-1 rounded-lg border whitespace-nowrap transition-all cursor-pointer ${
                           isSelected
                             ? 'bg-[#2979FF] border-[#2979FF] text-white'
@@ -1035,9 +1128,9 @@ export const SignalsScreen: React.FC<Props> = ({
 
       {/* Signal Cards */}
       <div className="space-y-2">
-        {(selectedFilter === 'HISTORY' ? displayedClosedSignals : filteredSignals).map(sig => (
+        {(selectedFilter === 'HISTORY' ? displayedClosedSignals : filteredSignals).map((sig, idx) => (
           <SignalCard
-            key={sig.id}
+            key={`${sig.id}-${sig.status}-${sig.createdAtMs || idx}`}
             signal={sig}
             onClick={() => onInspectSignal(sig)}
             onToggleFavorite={() => onToggleFavorite(sig.id)}

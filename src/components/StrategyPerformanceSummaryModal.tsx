@@ -12,15 +12,9 @@ export const StrategyPerformanceSummaryModal: React.FC<Props> = ({ isOpen, onClo
   if (!isOpen) return null;
 
   const allStrategies: StrategyType[] = [
-    'MASTER_OMNI_CONFLUENCE',
-    'OPENING_RANGE_BOX_PIVOT',
-    'BEST_TRADE_NOW',
-    'ICT_SILVER_BULLET',
-    'MTF_FRACTAL_ALIGNMENT',
-    'ICT_SMART_MONEY',
-    'VOLATILITY_SQUEEZE_BREAKOUT',
-    'TREND_EMA_CONFLUENCE',
-    'LIQUIDITY_SWEEP'
+    'GOLD_HUNTER',
+    'LONDON_KILLER',
+    'TREND_RIDER'
   ];
 
   return (
@@ -38,7 +32,7 @@ export const StrategyPerformanceSummaryModal: React.FC<Props> = ({ isOpen, onClo
                   Strategy Win/Loss Ratios & SL Hit Diagnostics
                 </h3>
                 <span className="px-1.5 py-0.5 rounded bg-[#2979FF]/20 border border-[#2979FF]/40 text-[#2979FF] text-[9.5px] font-bold">
-                  9-STRATEGY UNIFIED MATRIX
+                  3 CONSOLIDATED STRATEGIES
                 </span>
               </div>
               <p className="text-[11px] text-[#94A3B8]">
@@ -63,7 +57,7 @@ export const StrategyPerformanceSummaryModal: React.FC<Props> = ({ isOpen, onClo
               <span>Primary Causes for Stop-Loss Hits (Historical Trade Diagnostics)</span>
             </div>
             <p className="text-[11px] text-[#94A3B8]">
-              Analysis of closed losing trades across all 9 strategies reveals that stop-loss triggers are distributed across four main market dynamics:
+              Analysis of closed losing trades across the 3 consolidated strategies reveals that stop-loss triggers are distributed across four main market dynamics:
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
               <div className="p-3 bg-[#090d16] rounded-xl border border-[#222F47]">
@@ -102,7 +96,7 @@ export const StrategyPerformanceSummaryModal: React.FC<Props> = ({ isOpen, onClo
                   <span className="text-[#FF3366] font-mono">12%</span>
                 </div>
                 <p className="text-[10.5px] text-[#94A3B8]">
-                  Spread expansion during London open or NY rollover triggering tight 0.9x ATR stops.
+                  Spread expansion during London open or NY rollover triggering tight stops.
                 </p>
               </div>
 
@@ -110,7 +104,7 @@ export const StrategyPerformanceSummaryModal: React.FC<Props> = ({ isOpen, onClo
               <div className="p-3 bg-[#00E676]/10 border border-[#00E676]/40 rounded-xl space-y-1.5">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-[#00E676] uppercase">
                   <CheckCircle2 className="w-3.5 h-3.5 text-[#00E676]" />
-                  <span>Adaptive Anti-Loss Solutions (Enforced Across All 9 Strategies)</span>
+                  <span>Adaptive Anti-Loss Solutions (Enforced Across 3 Strategies)</span>
                 </div>
                 <div className="text-[10.5px] text-[#CBD5E1] leading-relaxed space-y-1">
                   <p>• <strong>Anti-Wick Expansion:</strong> Dynamic 1.25x–1.38x ATR buffer pads stops safely past retail liquidity sweep boundaries.</p>
@@ -121,11 +115,11 @@ export const StrategyPerformanceSummaryModal: React.FC<Props> = ({ isOpen, onClo
             </div>
           </div>
 
-          {/* Section 2: 8 Strategies Win/Loss Ratios & R:R Table */}
+          {/* Section 2: 3 Strategies Win/Loss Ratios & R:R Table */}
           <div className="space-y-3">
             <div className="text-xs font-black text-[#F1F5F9] uppercase tracking-wide flex items-center gap-2">
               <Award className="w-4 h-4 text-[#00E676]" />
-              <span>9 Institutional Strategies: Win/Loss Ratios & Risk-to-Reward</span>
+              <span>3 Consolidated Institutional Strategies: Win/Loss Ratios & Risk-to-Reward</span>
             </div>
 
             <div className="grid grid-cols-1 gap-2">

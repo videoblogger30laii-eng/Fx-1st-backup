@@ -97,15 +97,15 @@ export function generateTradeForensicAnalysis(
   const outcomeType: 'SL_HIT' | 'TP_HIT' = isWin ? 'TP_HIT' : 'SL_HIT';
 
   // Strategy Key & Config
-  let stratKey: StrategyType = 'ICT_SMART_MONEY';
+  let stratKey: StrategyType = 'GOLD_HUNTER';
   if (isSignal) {
     stratKey = getSignalStrategy(tradeOrSignal);
   } else if ('strategy' in tradeOrSignal && (tradeOrSignal as { strategy?: StrategyType }).strategy) {
     stratKey = (tradeOrSignal as { strategy?: StrategyType }).strategy as StrategyType;
   } else if (tradeOrSignal.signalId) {
-    stratKey = 'ICT_SMART_MONEY';
+    stratKey = 'GOLD_HUNTER';
   }
-  const stratConfig = STRATEGY_CONFIGS[stratKey] || STRATEGY_CONFIGS.ICT_SMART_MONEY;
+  const stratConfig = STRATEGY_CONFIGS[stratKey] || STRATEGY_CONFIGS.GOLD_HUNTER;
   const strategyName = stratConfig.title;
 
   const timeframe = isSignal ? tradeOrSignal.timeframe : 'M15';
@@ -141,10 +141,10 @@ export function generateTradeForensicAnalysis(
     let primaryReasonExplanation = '';
     let primaryMechanismTag = '';
 
-    if (stratKey === 'OPENING_RANGE_BOX_PIVOT') {
-      primaryMechanismTag = 'Session Opening Range Expansion vs. Fakeout Reversal';
+    if (stratKey === 'LONDON_KILLER') {
+      primaryMechanismTag = 'Session Opening Range / Asia Sweep vs. Fakeout Reversal';
       primaryReasonTitle = `Opening Range Expansion Overpowered Box Reversal Threshold`;
-      primaryReasonExplanation = `The initial session open momentum developed into a sustained range expansion rather than an intended Judas Swing / fakeout manipulation. Instead of probing outside the 24-bar Session Box and closing back inside to trigger an ARC pivot reversal, price broke clean through ${slPriceFormatted}.`;
+      primaryReasonExplanation = `The initial session open momentum developed into a sustained range expansion rather than an intended Judas Swing / fakeout manipulation. Instead of probing outside the Session Box and closing back inside to trigger an ARC pivot reversal, price broke clean through ${slPriceFormatted}.`;
     } else if (isWickStop) {
       primaryMechanismTag = 'Interbank Volatility Spike & Liquidity Sweep Wick';
       primaryReasonTitle = `Interbank Liquidity Hunt Wick Below Structural Origin`;
@@ -171,9 +171,9 @@ export function generateTradeForensicAnalysis(
     ];
 
     const whatWentWrong = [
-      ...(stratKey === 'OPENING_RANGE_BOX_PIVOT' ? [{
+      ...(stratKey === 'LONDON_KILLER' ? [{
         title: 'Opening Range Extension Exceeded Judas Manipulation Boundary',
-        detail: `The setup attempted to fade an opening probe, but volume confirmed a genuine breakout rather than a liquidity sweep. Ensure the 15-minute candle leaves an extended John-Wick shadow and closes strictly back inside the Box High/Low before engaging counter-trend limits.`
+        detail: `The setup attempted to fade an opening probe, but volume confirmed a genuine breakout rather than a liquidity sweep. Ensure the 15-minute candle leaves an extended rejection shadow and closes strictly back inside the Box High/Low before engaging counter-trend limits.`
       }] : []),
       {
         title: isWickStop ? 'Stop Loss Placed Inside Interbank Wick Tolerance' : 'Counter-Trend Exposure to Higher-Timeframe Flow',
@@ -311,16 +311,16 @@ export function generateTradeForensicAnalysis(
   let primaryReasonTitle = `Flawless Alignment with Institutional Order Flow & Liquidity Draw`;
   let primaryReasonExplanation = `Price executed a textbook institutional cycle: Smart money completed accumulation/distribution at ${entryPriceFormatted}, respected the structural discount/premium zone, and expanded impulsively straight to the resting Buy-Side/Sell-Side Liquidity pool at ${tpPriceFormatted}.`;
 
-  if (stratKey === 'OPENING_RANGE_BOX_PIVOT') {
+  if (stratKey === 'LONDON_KILLER') {
     primaryMechanismTag = 'Textbook Opening Range Reversal & Box Target Rotation';
-    primaryReasonTitle = `Flawless Session Box Sweep, John-Wick Rejection & Opposite Target Tap`;
-    primaryReasonExplanation = `Price executed a pristine institutional cycle: The opening 15-minute expansion engineered liquidity outside the Box boundary, produced a textbook John-Wick rejection shadow, reclaimed the 50% Equilibrium, and rotated with high momentum straight to the opposing Box boundary at ${tpPriceFormatted}.`;
+    primaryReasonTitle = `Flawless Session Box Sweep, Wick Rejection & Opposite Target Tap`;
+    primaryReasonExplanation = `Price executed a pristine institutional cycle: The opening 15-minute expansion engineered liquidity outside the Box boundary, produced a textbook rejection shadow, reclaimed the 50% Equilibrium, and rotated with high momentum straight to the opposing Box boundary at ${tpPriceFormatted}.`;
   }
 
   const whatWentRight = [
-    ...(stratKey === 'OPENING_RANGE_BOX_PIVOT' ? [{
+    ...(stratKey === 'LONDON_KILLER' ? [{
       title: 'Disciplined Judas Swing Fade & ARC Structural Pivot',
-      detail: `You trapped retail breakout traders who bought/sold the initial open breakout, executing precisely as price closed back inside the 24-bar Box and riding the mean-reversion wave for a full +${Math.abs(pips).toFixed(1)} pips gain.`
+      detail: `You trapped retail breakout traders who bought/sold the initial open breakout, executing precisely as price closed back inside the Box and riding the mean-reversion wave for a full +${Math.abs(pips).toFixed(1)} pips gain.`
     }] : []),
     {
       title: 'Precision Entry at Optimal Trade Location (OTL)',

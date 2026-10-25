@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ForexSignal, getAssetCategory, getSignalStrategy, STRATEGY_CONFIGS } from '../types';
+import { ForexSignal, getAssetCategory, getSignalStrategy, STRATEGY_CONFIGS, isMarketExecutionSignal } from '../types';
 import {
   formatPrice,
   calculatePips,
@@ -13,7 +13,11 @@ import {
   getTpProgressRatio,
   getTradeDurationMs,
   formatDurationCompact,
-  isForexMarketOpen
+  isForexMarketOpen,
+  formatSignalDateTime,
+  getSignalExecutedAtMs,
+  getFormattedExecutedTime,
+  getFormattedExecutionTimeDiff
 } from '../services/marketData';
 import { realPriceService } from '../services/RealPriceService';
 import { economicCalendarService } from '../services/economicCalendarService';
@@ -127,6 +131,11 @@ export const SignalCard: React.FC<Props> = ({
   const validityRatio = getValidityProgress(signal, nowClockMs);
   const isClosedOrder = signal.status === 'HIT_SL' || signal.status === 'HIT_TP' || Boolean(signal.closedAtMs);
   const isWin = signal.status === 'HIT_TP' || (signal.status !== 'HIT_SL' && (signal.pips ?? 0) > 0);
+  const isMarketExecution = isMarketExecutionSignal(signal.type);
+  const isRunning = signal.status === 'RUNNING';
+  const executedAtMs = !isMarketExecution && isRunning && !isPending && !isClosedOrder ? getSignalExecutedAtMs(signal, nowClockMs) : undefined;
+  const executedTimeText = executedAtMs ? getFormattedExecutedTime(signal, nowClockMs) : '';
+  const waitText = executedAtMs ? getFormattedExecutionTimeDiff(signal, nowClockMs) : '';
 
   return (
     <div
@@ -137,7 +146,7 @@ export const SignalCard: React.FC<Props> = ({
           : ''
       }`}
     >
-      {/* ROW 1: Systematic Identity + Strategy + Timeframe (Left) | Confluence + Utility Icons (Right) */}
+      {/* ROW 1: Systematic Identity + Strategy + Winning TF (Left) | Score + Utility Icons (Right) */}
       <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-[#222F47]/70">
         <div className="flex items-center flex-wrap gap-1.5 min-w-0">
           {/* Symbol */}
@@ -145,7 +154,7 @@ export const SignalCard: React.FC<Props> = ({
             {signal.pair.symbol}
           </span>
 
-          {/* Buy / Sell Direction */}
+          {/* Buy / Sell Direction & Order Type Badge */}
           <span
             className={`text-[9.5px] font-black px-1.5 py-0.5 rounded leading-none ${
               isBuy
@@ -153,52 +162,50 @@ export const SignalCard: React.FC<Props> = ({
                 : 'bg-[#FF3366]/15 text-[#FF3366] border border-[#FF3366]/35'
             }`}
           >
-            {signal.type}
+            {signal.type.includes('LIMIT') || signal.type.includes('STOP')
+              ? signal.type.replace('_', ' ')
+              : isBuy
+              ? 'BUY'
+              : 'SELL'}
           </span>
 
-          {/* Timeframe & Validity Window */}
-          <span className="text-[9.5px] font-mono font-bold bg-[#182033] text-[#F1F5F9] px-1.5 py-0.5 rounded border border-[#222F47] leading-none">
-            {signal.timeframe}
-            {isPending && (
-              <span className="text-[#FFD700] ml-1">({getFormattedTotalValidity(signal)})</span>
-            )}
+          {/* Winning Timeframe Badge [M15], [H1], or [H4] */}
+          <span className="text-[9.5px] font-mono font-black bg-[#2979FF]/20 text-[#60A5FA] px-1.5 py-0.5 rounded border border-[#2979FF]/40 leading-none">
+            [{signal.winningTf || signal.timeframe}]
           </span>
 
-          {/* Clean Unboxed Metadata: Category • Strategy • Institutional Flow */}
-          <div className="flex items-center gap-1 text-[9.5px] text-[#94A3B8] truncate">
-            <span className="text-[#64748B]">·</span>
-            <span
-              className={`font-bold ${
-                assetCat === 'METALS'
-                  ? 'text-[#FFD700]'
-                  : assetCat === 'MINORS'
-                  ? 'text-[#C084FC]'
-                  : 'text-[#60A5FA]'
-              }`}
-            >
-              {assetCat === 'MAJORS' ? 'MAJOR' : assetCat === 'MINORS' ? 'CROSS' : 'METAL'}
-            </span>
-            <span className="text-[#64748B]">·</span>
-            <span
-              className={`font-bold truncate ${
-                stratKey === 'BEST_TRADE_NOW'
-                  ? 'text-[#FFD700]'
-                  : stratKey === 'ICT_SMART_MONEY'
-                  ? 'text-[#00E676]'
-                  : stratKey === 'TREND_EMA_CONFLUENCE'
-                  ? 'text-[#60A5FA]'
-                  : 'text-[#C084FC]'
-              }`}
-              title={`${stratCfg.title}: ${stratCfg.description}`}
-            >
-              {stratCfg.title}
-            </span>
-            {signal.institutionalFlow && (
-              <span className="hidden sm:inline text-[#64748B] truncate max-w-[150px]">
-                · {signal.institutionalFlow}
-              </span>
-            )}
-          </div>
+          {/* Strategy Name Badge */}
+          <span
+            className="text-[9.5px] font-black px-1.5 py-0.5 rounded border leading-none bg-[#182033] text-[#FFD700] border-[#FFD700]/30 truncate max-w-[140px]"
+            title={`${stratCfg.title}: ${stratCfg.description}`}
+          >
+            {stratCfg.shortBadge}
+          </span>
+
+          {/* Best TF Wins Small Breakdown Text */}
+          <span className="text-[8.5px] font-mono text-[#00E676] bg-[#00E676]/10 px-1.5 py-0.5 rounded border border-[#00E676]/25 leading-none">
+            {signal.scoreBreakdownText || `${signal.winningTf || signal.timeframe}:${signal.confluenceScore} - ${signal.winningTf || signal.timeframe} won`}
+          </span>
+
+          {/* Daily (D1) Macro Trend Gate Badge */}
+          <span
+            className={`text-[8.5px] font-mono font-bold px-1.5 py-0.5 rounded border leading-none ${
+              signal.isD1Aligned !== false
+                ? 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/30'
+                : 'bg-[#FF9100]/15 text-[#FF9100] border-[#FF9100]/40'
+            }`}
+            title={`Daily Macro Trend: ${signal.d1MacroTrend || 'Aligned with Structure'}`}
+          >
+            D1 {signal.d1MacroTrend === 'BEARISH' ? '↘' : '↗'}
+          </span>
+
+          {/* Volume Absorption & Candle Exhaustion Badge */}
+          <span
+            className="text-[8.5px] font-mono font-bold text-[#60A5FA] bg-[#2979FF]/10 px-1 py-0.5 rounded border border-[#2979FF]/25 leading-none"
+            title="Volume & Candle Exhaustion: Institutional Sweep & Absorption Wick Verified"
+          >
+            Vol ✓
+          </span>
 
           {/* High-Impact News Guard Indicator */}
           {newsGuard && newsGuard.isWarning && (
@@ -212,14 +219,13 @@ export const SignalCard: React.FC<Props> = ({
           )}
         </div>
 
-        {/* Right Side: Confluence Score Badge + Compact Utility Controls */}
+        {/* Right Side: Confluence Score (e.g. 88/100) + Compact Utility Controls */}
         <div className="flex items-center gap-1 shrink-0">
-          {/* Confluence Score on Right Side */}
           <span
             className="text-[9.5px] font-mono font-black text-[#FFD700] bg-[#FFD700]/15 px-1.5 py-1 rounded border border-[#FFD700]/40 leading-none"
-            title={`Institutional Confluence Score: ${signal.confluenceScore}%`}
+            title={`Multi-Timeframe Evaluated Score: ${signal.confluenceScore}/100`}
           >
-            {signal.confluenceScore}% CONF
+            {signal.confluenceScore}/100
           </span>
 
           <button
@@ -399,6 +405,42 @@ export const SignalCard: React.FC<Props> = ({
         </div>
       </div>
 
+      {/* Non-Market Execution (Limit / Stop Orders) Execution Fill Telemetry Linear Badge */}
+      {!isMarketExecution && isRunning && !isPending && !isClosedOrder && executedAtMs && (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            onClick();
+          }}
+          className="my-1.5 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-[#182033] via-[#10192d] to-[#182033] border border-[#2979FF]/45 flex flex-wrap items-center justify-between gap-1 text-[9.5px] font-mono cursor-pointer hover:border-[#2979FF]/80 transition-all shadow-xs"
+          title={`Order Type: ${signal.type.replace('_', ' ')} | Posted: ${formatSignalDateTime(signal.createdAtMs)} | Executed at Entry: ${formatSignalDateTime(executedAtMs)} (${waitText} after posting)`}
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="px-1.5 py-0.5 rounded bg-[#2979FF]/20 text-[#60A5FA] border border-[#2979FF]/40 font-black text-[8.5px] uppercase tracking-wide shrink-0">
+              {signal.type.replace('_', ' ')}
+            </span>
+            <span className="font-bold text-[#FFD700] flex items-center gap-1 shrink-0">
+              <Zap className="w-2.5 h-2.5 text-[#FFD700] fill-[#FFD700]/30" />
+              <span>EXECUTED:</span>
+              <span className="text-[#00E676] font-black">{executedTimeText.replace('Executed ', '')}</span>
+            </span>
+            <span className="text-[#94A3B8] text-[8.5px] hidden sm:inline">
+              ({formatSignalDateTime(executedAtMs)})
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 text-[8.5px] text-[#94A3B8] font-mono shrink-0">
+            <span>
+              Posted: <span className="text-[#F1F5F9] font-bold">{getFormattedTimeElapsed(signal, nowClockMs).replace('Posted ', '')}</span>
+            </span>
+            <span className="text-[#64748B]">·</span>
+            <span className="text-[#60A5FA] font-bold bg-[#2979FF]/15 px-1.5 py-0.5 rounded border border-[#2979FF]/30">
+              Time to Fill: +{waitText}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* ROW 3: Unified Telemetry & Progress Strip (Elapsed Time, Countdown/Hold Duration, Progress Bar) */}
       <div className="mb-1.5 space-y-1">
         {isPending ? (
@@ -407,6 +449,8 @@ export const SignalCard: React.FC<Props> = ({
               <span className="text-[#FFD700] font-bold">PENDING</span>
               <span className="text-[#64748B]">·</span>
               <Clock className="w-2.5 h-2.5 text-[#2979FF]" />
+              <span className="text-[#F1F5F9] font-bold">{formatSignalDateTime(signal.createdAtMs)}</span>
+              <span className="text-[#64748B]">·</span>
               <span>{getFormattedTimeElapsed(signal, nowClockMs)}</span>
               <span className="sm:hidden text-[#64748B]">· {signal.institutionalFlow}</span>
             </div>
@@ -472,6 +516,9 @@ export const SignalCard: React.FC<Props> = ({
                 LIVE {isProfit ? `+${livePips}p` : `${livePips}p`}
               </span>
               <span className="text-[#64748B]">·</span>
+              <Clock className="w-2.5 h-2.5 text-[#2979FF]" />
+              <span className="text-[#F1F5F9] font-bold">{formatSignalDateTime(signal.createdAtMs)}</span>
+              <span className="text-[#64748B]">·</span>
               <span>{getFormattedTimeElapsed(signal, nowClockMs)}</span>
               {!marketOpen && (
                 <>
@@ -517,6 +564,64 @@ export const SignalCard: React.FC<Props> = ({
           )}
         </div>
       </div>
+
+      {/* Timeframe Update Notice */}
+      {signal.tfUpdateNotice && (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            onClick();
+          }}
+          className="mb-1.5 px-2 py-0.5 rounded-lg bg-[#2979FF]/10 border border-[#2979FF]/30 flex items-center justify-between text-[9px] font-mono text-[#2979FF] cursor-pointer hover:bg-[#2979FF]/15 transition-all"
+        >
+          <div className="flex items-center gap-1 min-w-0">
+            <span className="font-bold shrink-0">⚡ TIMEFRAME UPDATE:</span>
+            <span className="text-[#F1F5F9] truncate">{signal.tfUpdateNotice}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Automated Breakeven (BE) Protection Strip */}
+      {(signal.isBreakevenArmed || (signal.status === 'RUNNING' && tpRatio >= 45)) && !isClosedOrder && (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            onClick();
+          }}
+          className="mb-1.5 px-2 py-0.5 rounded-lg bg-[#00E676]/15 border border-[#00E676]/45 flex items-center justify-between text-[9px] font-mono text-[#00E676] cursor-pointer hover:bg-[#00E676]/20 transition-all shadow-xs"
+          title="1:1 Risk/Reward reached — Stop Loss automatically moved to Breakeven (+1 pip buffer). This position is 100% risk-free."
+        >
+          <div className="flex items-center gap-1 min-w-0">
+            <ShieldCheck className="w-2.5 h-2.5 text-[#00E676] shrink-0" />
+            <span className="font-black shrink-0">SL AT BREAKEVEN (+1p):</span>
+            <span className="text-[#F1F5F9] truncate">Protected at {formatPrice(signal.pair, signal.entryPrice)}</span>
+          </div>
+          <span className="text-[8.5px] text-[#00E676] font-bold shrink-0">
+            Zero Risk Active
+          </span>
+        </div>
+      )}
+
+      {/* High-Impact News Blackout Strip */}
+      {newsGuard && newsGuard.isWarning && !isClosedOrder && (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            onClick();
+          }}
+          className="mb-1.5 px-2 py-0.5 rounded-lg bg-[#FF3366]/15 border border-[#FF3366]/40 flex items-center justify-between text-[9px] font-mono text-[#FF3366] cursor-pointer hover:bg-[#FF3366]/20 transition-all shadow-xs animate-pulse"
+          title={`Tier-1 News Blackout Window: ${newsGuard.eventTitle} (${newsGuard.minutesUntil > 0 ? `in ${newsGuard.minutesUntil}m` : 'Live Now'}). Dynamic spread gate engaged.`}
+        >
+          <div className="flex items-center gap-1 min-w-0">
+            <Flame className="w-2.5 h-2.5 text-[#FF3366] shrink-0" />
+            <span className="font-black shrink-0">NEWS BLACKOUT:</span>
+            <span className="text-[#F1F5F9] truncate">{newsGuard.eventTitle} ({newsGuard.minutesUntil > 0 ? `in ${newsGuard.minutesUntil}m` : 'Live'})</span>
+          </div>
+          <span className="text-[8.5px] text-[#FF9100] font-sans font-semibold shrink-0">
+            Spread Gate Active
+          </span>
+        </div>
+      )}
 
       {/* SL Hit Mistake Learning & Anti-Loss Guard Strip */}
       {signal.slLearningAudit && signal.slLearningAudit.applied && !isClosedOrder && (

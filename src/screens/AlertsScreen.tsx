@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { PriceAlert, TriggeredAlertEvent } from '../types';
-import { WhatsAppAlertService } from '../services/WhatsAppAlertService';
 import {
   Bell,
   BellRing,
@@ -12,7 +11,8 @@ import {
   Radio,
   CheckCircle2,
   Target,
-  AlertTriangle
+  AlertTriangle,
+  Send
 } from 'lucide-react';
 
 interface Props {
@@ -22,7 +22,7 @@ interface Props {
   onDeleteAlert: (id: string) => void;
   onClearHistory: () => void;
   onOpenAddModal: () => void;
-  onOpenWhatsAppModal?: () => void;
+  onOpenTelegramModal?: () => void;
   onOpenSoundSettings?: () => void;
 }
 
@@ -33,14 +33,13 @@ export const AlertsScreen: React.FC<Props> = ({
   onDeleteAlert,
   onClearHistory,
   onOpenAddModal,
-  onOpenWhatsAppModal,
+  onOpenTelegramModal,
   onOpenSoundSettings
 }) => {
   const [selectedTab, setSelectedTab] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
   const activeCount = alerts.filter(a => a.isEnabled).length;
-
   return (
-    <div className="space-y-2.5 max-w-4xl mx-auto pb-16 text-left">
+    <div className="space-y-2.5 max-w-md mx-auto pb-16 text-left px-4">
       {/* Compact Watchdog Command Bar */}
       <div className="flex items-center justify-between flex-wrap gap-2 bg-[#101522] border border-[#222F47] rounded-xl p-3 shadow-sm terminal-card">
         <div className="flex items-center gap-2.5">
@@ -69,14 +68,14 @@ export const AlertsScreen: React.FC<Props> = ({
             </button>
           )}
 
-          {onOpenWhatsAppModal && (
+          {onOpenTelegramModal && (
             <button
-              onClick={onOpenWhatsAppModal}
-              className="flex items-center gap-1 bg-[#25D366]/15 hover:bg-[#25D366]/25 border border-[#25D366]/40 text-[#25D366] font-bold text-[10.5px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer"
-              title="Configure automated WhatsApp & Telegram trade alerts"
+              onClick={onOpenTelegramModal}
+              className="flex items-center gap-1.5 bg-[#0088cc]/15 hover:bg-[#0088cc]/25 border border-[#0088cc]/40 text-[#38bdf8] font-bold text-[10.5px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer shadow-xs"
+              title="Configure real-time Telegram Bot trade alerts"
             >
-              <span>💬</span>
-              <span>Telegram / WA</span>
+              <Send className="w-3 h-3 text-[#38bdf8]" />
+              <span>Telegram Bot</span>
             </button>
           )}
 
@@ -275,20 +274,6 @@ export const AlertsScreen: React.FC<Props> = ({
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0 ml-2">
-                  <button
-                    onClick={() => {
-                      const url = WhatsAppAlertService.getDirectChatUrl(
-                        `*${event.title}*\n\n${event.message}\n\nTime: ${new Date(event.timestamp).toLocaleTimeString()}`
-                      );
-                      window.open(url, '_blank');
-                    }}
-                    className="p-1.5 rounded-lg bg-[#25D366]/15 hover:bg-[#25D366]/25 text-[#25D366] text-[10px] font-bold flex items-center gap-1 border border-[#25D366]/30 transition-colors"
-                    title="Send alert details to WhatsApp"
-                  >
-                    <span>💬</span>
-                    <span className="hidden sm:inline">WhatsApp</span>
-                  </button>
-
                   <div className="text-right text-[10px] font-mono text-[#64748B]">
                     {new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </div>

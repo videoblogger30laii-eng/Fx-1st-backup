@@ -2,7 +2,6 @@ import React, { useState, useMemo } from 'react';
 import { Elev8AccountConfig, Elev8Trade, Elev8ExecutionMode, ForexSignal } from '../types';
 import { formatPrice, calculateDollarPnl } from '../services/marketData';
 import { realPriceService } from '../services/RealPriceService';
-import { WhatsAppAlertService } from '../services/WhatsAppAlertService';
 import {
   X,
   ShieldCheck,
@@ -955,20 +954,8 @@ void OnTimer()
                             <div className="flex items-center gap-1 mt-1 justify-end">
                               <button
                                 type="button"
-                                onClick={() => {
-                                  const msg = `📌 *MT5 Pending Order: ${trade.symbol}*\nType: *${trade.orderType.replace('_', ' ')}*\nEntry: *${trade.entryPrice}*\nSL: ${trade.stopLoss} | TP: ${trade.takeProfit1}\nStatus: Waiting for fill (${trade.pips.toFixed(1)}p to entry)`;
-                                  const url = WhatsAppAlertService.getDirectChatUrl(msg);
-                                  window.open(url, '_blank');
-                                }}
-                                className="px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-[#25D366]/20 text-[#25D366] border border-[#25D366]/40 hover:bg-[#25D366]/30 transition-colors"
-                                title="Share pending order to WhatsApp"
-                              >
-                                💬 WA
-                              </button>
-                              <button
-                                type="button"
                                 onClick={() => onCloseTrade(trade.id)}
-                                className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#FFD700]/20 text-[#FFD700] border border-[#FFD700]/40 hover:bg-[#FFD700]/30 transition-colors"
+                                className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#FFD700]/20 text-[#FFD700] border border-[#FFD700]/40 hover:bg-[#FFD700]/30 transition-colors cursor-pointer"
                               >
                                 Cancel
                               </button>
@@ -983,18 +970,6 @@ void OnTimer()
                               {isProfit ? '+' : ''}{trade.pips.toFixed(1)} pips
                             </div>
                             <div className="flex items-center gap-1 mt-1 justify-end">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const msg = `📊 *MT5 Trade Position: ${trade.symbol}*\nType: *${trade.orderType.replace('_', ' ')}*\nLots: ${trade.lots.toFixed(2)}\nEntry: *${trade.entryPrice}*\nP&L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${trade.pips >= 0 ? '+' : ''}${trade.pips.toFixed(1)} pips)\nStatus: ${trade.status}`;
-                                  const url = WhatsAppAlertService.getDirectChatUrl(msg);
-                                  window.open(url, '_blank');
-                                }}
-                                className="px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-[#25D366]/20 text-[#25D366] border border-[#25D366]/40 hover:bg-[#25D366]/30 transition-colors"
-                                title="Share trade to WhatsApp"
-                              >
-                                💬 WA
-                              </button>
                               {isOpen ? (
                                 <div className="flex items-center gap-1">
                                   {trade.stopLoss !== trade.entryPrice && (

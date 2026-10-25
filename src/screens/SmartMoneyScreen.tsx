@@ -16,7 +16,7 @@ const BADGE_COLORS: Record<SmartMoneyType, { bg: string; text: string; border: s
 
 export const SmartMoneyScreen: React.FC<Props> = ({ zones }) => {
   return (
-    <div className="space-y-4 max-w-4xl mx-auto pb-16 text-left">
+    <div className="space-y-4 w-full pb-16 text-left">
       <div>
         <div className="flex items-center gap-2">
           <Layers className="w-5 h-5 text-[#2979FF]" />

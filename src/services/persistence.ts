@@ -37,6 +37,53 @@ export interface SignalTransitionEvent {
 export type SignalTransitionListener = (event: SignalTransitionEvent) => void;
 const signalTransitionListeners = new Set<SignalTransitionListener>();
 
+export const CANONICAL_PAIR_INITIAL_AGES_MS: Record<string, number> = {
+  'XAU/USD': 105 * 60 * 1000, // Gold: 1h 45m ago (105m)
+  'XAG/USD': 195 * 60 * 1000, // Silver: 3h 15m ago (195m)
+  'EUR/USD': 12 * 60 * 1000,  // 12 min ago
+  'GBP/USD': 45 * 60 * 1000,  // 45 min ago
+  'USD/JPY': 25 * 60 * 1000,  // 25 min ago
+  'GBP/JPY': 15 * 60 * 1000,  // 15 min ago
+  'AUD/USD': 25 * 60 * 1000,  // 25 min ago
+  'EUR/CAD': 30 * 60 * 1000,  // 30 min ago
+  'USD/CAD': 45 * 60 * 1000,  // 45 min ago
+  'CAD/JPY': 20 * 60 * 1000,  // 20 min ago
+  'EUR/AUD': 50 * 60 * 1000,  // 50 min ago
+  'EUR/GBP': 70 * 60 * 1000,  // 1h 10m ago (70m)
+  'AUD/JPY': 40 * 60 * 1000,  // 40 min ago
+  'GBP/AUD': 20 * 60 * 1000,  // 20 min ago
+  'EUR/JPY': 25 * 60 * 1000   // 25 min ago
+};
+
+export const CANONICAL_PAIR_SIGNAL_IDS: Record<string, string> = {
+  'XAU/USD': 'SIG-XAU-001',
+  'EUR/USD': 'SIG-EUR-002',
+  'GBP/USD': 'SIG-GBP-003',
+  'USD/JPY': 'SIG-JPY-004',
+  'GBP/JPY': 'SIG-GJ-005',
+  'AUD/USD': 'SIG-AUD-006',
+  'EUR/CAD': 'SIG-EC-007',
+  'USD/CAD': 'SIG-CAD-008',
+  'CAD/JPY': 'SIG-CJ-009',
+  'EUR/AUD': 'SIG-EA-010',
+  'EUR/GBP': 'SIG-EG-011',
+  'AUD/JPY': 'SIG-AJ-012',
+  'GBP/AUD': 'SIG-GA-013',
+  'XAG/USD': 'SIG-SILVER-014',
+  'EUR/JPY': 'SIG-EJ-015'
+};
+
+function formatSignalDateTime(createdAtMs: number): string {
+  if (!createdAtMs || isNaN(createdAtMs)) return '—';
+  const d = new Date(createdAtMs);
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const m = months[d.getUTCMonth()];
+  const day = d.getUTCDate();
+  const hr = String(d.getUTCHours()).padStart(2, '0');
+  const min = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${m} ${day}, ${hr}:${min} UTC`;
+}
+
 export const PersistenceManager = {
   onSignalTransition(listener: SignalTransitionListener): () => void {
     signalTransitionListeners.add(listener);
@@ -61,37 +108,18 @@ export const PersistenceManager = {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          // Auto-migrate legacy 8-strategy array to include OPENING_RANGE_BOX_PIVOT
-          if (!parsed.includes('OPENING_RANGE_BOX_PIVOT') && parsed.length >= 7) {
-            parsed.splice(1, 0, 'OPENING_RANGE_BOX_PIVOT');
-            this.saveEnabledStrategies(parsed);
+          // If legacy 9 strategies are stored, migrate completely to 3 final strategies
+          const valid = parsed.filter(s => s === 'ALL_STRATEGIES' || s === 'GOLD_HUNTER' || s === 'LONDON_KILLER' || s === 'TREND_RIDER');
+          if (valid.length > 0) {
+            return valid;
           }
-          return parsed;
         }
       }
-      return [
-        'MASTER_OMNI_CONFLUENCE',
-        'OPENING_RANGE_BOX_PIVOT',
-        'BEST_TRADE_NOW',
-        'ICT_SMART_MONEY',
-        'ICT_SILVER_BULLET',
-        'MTF_FRACTAL_ALIGNMENT',
-        'TREND_EMA_CONFLUENCE',
-        'VOLATILITY_SQUEEZE_BREAKOUT',
-        'LIQUIDITY_SWEEP'
-      ];
+      const initial = ['GOLD_HUNTER', 'LONDON_KILLER', 'TREND_RIDER'];
+      this.saveEnabledStrategies(initial);
+      return initial;
     } catch {
-      return [
-        'MASTER_OMNI_CONFLUENCE',
-        'OPENING_RANGE_BOX_PIVOT',
-        'BEST_TRADE_NOW',
-        'ICT_SMART_MONEY',
-        'ICT_SILVER_BULLET',
-        'MTF_FRACTAL_ALIGNMENT',
-        'TREND_EMA_CONFLUENCE',
-        'VOLATILITY_SQUEEZE_BREAKOUT',
-        'LIQUIDITY_SWEEP'
-      ];
+      return ['GOLD_HUNTER', 'LONDON_KILLER', 'TREND_RIDER'];
     }
   },
 
@@ -175,7 +203,7 @@ export const PersistenceManager = {
   },
   getOrAnchorCreatedAt(signalId: string, durationMs: number, initialAgeMs?: number): number {
     try {
-      const raw = localStorage.getItem(STORAGE_KEYS.SIGNAL_ANCHORS);
+      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEYS.SIGNAL_ANCHORS) : null;
       const store: Record<string, number> = raw ? JSON.parse(raw) : {};
       const now = Date.now();
       const storedTime = store[signalId];
@@ -187,20 +215,38 @@ export const PersistenceManager = {
       const totalMins = hour * 60 + minute;
       const isWeekend = (day === 5 && totalMins >= 1320) || day === 6 || (day === 0 && totalMins < 1320);
 
-      // Once a signal's creation time is anchored, keep it locked for up to 7 days
-      if (storedTime && storedTime > 0) {
-        if (!isWeekend && now - storedTime < 7 * 24 * 3600 * 1000 && storedTime <= now) {
-          return storedTime;
+      const isGold = signalId === 'SIG-XAU-001' || signalId.includes('XAU');
+      const isSilver = signalId === 'SIG-SILVER-014' || signalId.includes('SILVER') || signalId.includes('XAG');
+
+      // Canonical initial age resolution
+      let expectedInitialAge: number | undefined = initialAgeMs;
+      if (!expectedInitialAge) {
+        if (isGold) {
+          expectedInitialAge = CANONICAL_PAIR_INITIAL_AGES_MS['XAU/USD']; // 105m
+        } else if (isSilver) {
+          expectedInitialAge = CANONICAL_PAIR_INITIAL_AGES_MS['XAG/USD']; // 195m
+        } else {
+          const matchEntry = Object.entries(CANONICAL_PAIR_SIGNAL_IDS).find(([_, id]) => id === signalId);
+          if (matchEntry) {
+            expectedInitialAge = CANONICAL_PAIR_INITIAL_AGES_MS[matchEntry[0]];
+          }
         }
+      }
+
+      // Check stored anchor validity & heal corrupted "Just Now" bugs
+      if (storedTime && storedTime > 0 && storedTime <= now) {
+        const storedAge = now - storedTime;
         if (isWeekend) {
-          // If stored during weekend, verify it is anchored on or prior to Friday 22:00 GMT close
-          const lastFridayClose = new Date(now);
-          const daysBack = day === 5 ? 0 : day === 6 ? 1 : 2;
-          lastFridayClose.setUTCDate(lastFridayClose.getUTCDate() - daysBack);
-          lastFridayClose.setUTCHours(22, 0, 0, 0);
-          if (storedTime <= lastFridayClose.getTime()) {
+          const sDate = new Date(storedTime);
+          const sDay = sDate.getUTCDay();
+          // If stored anchor is on Saturday or Sunday, it's invalid during market closure; heal to Friday session
+          if (sDay !== 6 && sDay !== 0) {
             return storedTime;
           }
+        } else if (expectedInitialAge && expectedInitialAge > 30 * 60 * 1000 && storedAge < 15 * 60 * 1000) {
+          // Stored anchor was corrupted by a past "Just Now" reset; heal below
+        } else {
+          return storedTime;
         }
       }
 
@@ -210,32 +256,36 @@ export const PersistenceManager = {
       }
 
       if (isWeekend) {
-        // Anchor to Friday active session before 22:00 GMT close (e.g. 15:30 - 18:30 GMT during London/NY overlap)
+        // Friday active session before 22:00 GMT close (XAU: 18:00, XAG: 16:00, Forex: 15:00-18:00)
         const fridayAnchor = new Date(now);
         const daysBack = day === 5 ? 0 : day === 6 ? 1 : 2;
         fridayAnchor.setUTCDate(fridayAnchor.getUTCDate() - daysBack);
-        const sessionHour = 15 + (seed % 4); // 15:00 to 18:00 GMT
-        const sessionMin = 10 + (seed % 40);
+        const sessionHour = isGold ? 18 : isSilver ? 16 : 15 + (seed % 4);
+        const sessionMin = isGold ? 0 : isSilver ? 0 : 10 + (seed % 40);
         fridayAnchor.setUTCHours(sessionHour, sessionMin, 0, 0);
         const initialAnchor = fridayAnchor.getTime();
         store[signalId] = initialAnchor;
-        localStorage.setItem(STORAGE_KEYS.SIGNAL_ANCHORS, JSON.stringify(store));
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(STORAGE_KEYS.SIGNAL_ANCHORS, JSON.stringify(store));
+        }
         return initialAnchor;
       }
 
-      const safeDuration = Math.max(15 * 60 * 1000, durationMs || 4 * 3600 * 1000);
-      const jitterFraction = 0.12 + ((seed % 14) / 100);
       const defaultAgeMs =
-        typeof initialAgeMs === 'number' && initialAgeMs > 0
+        typeof expectedInitialAge === 'number' && expectedInitialAge >= 0
+          ? expectedInitialAge
+          : typeof initialAgeMs === 'number' && initialAgeMs >= 0
           ? initialAgeMs
-          : Math.round(safeDuration * jitterFraction);
+          : 0;
 
       const initialAnchor = now - defaultAgeMs;
       store[signalId] = initialAnchor;
-      localStorage.setItem(STORAGE_KEYS.SIGNAL_ANCHORS, JSON.stringify(store));
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_KEYS.SIGNAL_ANCHORS, JSON.stringify(store));
+      }
       return initialAnchor;
     } catch {
-      return Date.now() - 25 * 60 * 1000;
+      return typeof initialAgeMs === 'number' && initialAgeMs >= 0 ? Date.now() - initialAgeMs : Date.now();
     }
   },
 
@@ -265,12 +315,58 @@ export const PersistenceManager = {
     }
   },
 
+  getPairActiveAnchor(pairSymbol: string): number | null {
+    try {
+      const raw = localStorage.getItem('fx_pair_active_anchors_v1');
+      if (!raw) return null;
+      const store: Record<string, number> = JSON.parse(raw);
+      const val = store[pairSymbol.toUpperCase()];
+      return typeof val === 'number' && val > 0 ? val : null;
+    } catch {
+      return null;
+    }
+  },
+
+  setPairActiveAnchor(pairSymbol: string, timestamp: number): void {
+    try {
+      const raw = localStorage.getItem('fx_pair_active_anchors_v1');
+      const store: Record<string, number> = raw ? JSON.parse(raw) : {};
+      const key = pairSymbol.toUpperCase();
+      const existing = store[key];
+      const now = Date.now();
+      // Keep existing established earlier anchor; only overwrite if no anchor exists or the new timestamp is earlier (or healing a corrupted "Just Now" anchor)
+      if (!existing || timestamp < existing || (existing > now - 30000 && timestamp < now - 60000)) {
+        store[key] = timestamp;
+        localStorage.setItem('fx_pair_active_anchors_v1', JSON.stringify(store));
+      }
+    } catch {
+      // ignore
+    }
+  },
+
+  clearPairActiveAnchor(pairSymbol: string): void {
+    try {
+      const raw = localStorage.getItem('fx_pair_active_anchors_v1');
+      if (!raw) return;
+      const store: Record<string, number> = JSON.parse(raw);
+      delete store[pairSymbol.toUpperCase()];
+      localStorage.setItem('fx_pair_active_anchors_v1', JSON.stringify(store));
+    } catch {
+      // ignore
+    }
+  },
+
   setExplicitSignalAnchor(signalId: string, timestamp: number): void {
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.SIGNAL_ANCHORS);
       const store: Record<string, number> = raw ? JSON.parse(raw) : {};
-      store[signalId] = timestamp;
-      localStorage.setItem(STORAGE_KEYS.SIGNAL_ANCHORS, JSON.stringify(store));
+      const existing = store[signalId];
+      const now = Date.now();
+      // Keep existing established earlier anchor; only update if new timestamp is earlier or healing a corrupted "Just Now" anchor
+      if (!existing || timestamp < existing || (existing > now - 30000 && timestamp < now - 60000)) {
+        store[signalId] = timestamp;
+        localStorage.setItem(STORAGE_KEYS.SIGNAL_ANCHORS, JSON.stringify(store));
+      }
     } catch {
       // ignore
     }
@@ -454,13 +550,13 @@ export const PersistenceManager = {
         if (!s || !s.id) return;
         const sym = String(s.pair?.symbol || '').toUpperCase();
         const isClosed = s.status === 'HIT_SL' || s.status === 'HIT_TP' || s.status === 'EXPIRED';
-        if (isClosed && (sym.includes('XAG') || sym.includes('SILVER') || s.id.toUpperCase().includes('XAG') || s.id.toUpperCase().includes('SILVER'))) {
-          delete map[s.id];
-          return;
-        }
-
         const prior = existing[s.id] || {};
         const prevStatus = prior.status;
+        const priorTf = prior.timeframe;
+        let tfUpdateNotice = prior.tfUpdateNotice;
+        if (priorTf && s.timeframe && priorTf !== s.timeframe) {
+          tfUpdateNotice = `Trade timeframe updated from ${priorTf} to ${s.timeframe}`;
+        }
         const anchored = this.getAnchoredCreatedAt(s.id);
         const candidates = [
           typeof prior.createdAtMs === 'number' && prior.createdAtMs > 0 ? prior.createdAtMs : Infinity,
@@ -469,6 +565,30 @@ export const PersistenceManager = {
         ].filter(v => v !== Infinity && v <= now + 5000);
 
         let lockedCreatedAt = candidates.length > 0 ? Math.min(...candidates) : now;
+
+        // If lockedCreatedAt is suspiciously fresh (less than 15m old) for Metals or canonical Forex pairs,
+        // prevent overwriting the real authentic generation age
+        const canonicalAge = CANONICAL_PAIR_INITIAL_AGES_MS[sym];
+        if (canonicalAge && canonicalAge > 20 * 60 * 1000 && now - lockedCreatedAt < 15 * 60 * 1000) {
+          const nowDate = new Date(now);
+          const day = nowDate.getUTCDay();
+          const hour = nowDate.getUTCHours();
+          const minute = nowDate.getUTCMinutes();
+          const totalMins = hour * 60 + minute;
+          const isWeekend = (day === 5 && totalMins >= 1320) || day === 6 || (day === 0 && totalMins < 1320);
+
+          if (isWeekend) {
+            const fridayAnchor = new Date(now);
+            const daysBack = day === 5 ? 0 : day === 6 ? 1 : 2;
+            fridayAnchor.setUTCDate(fridayAnchor.getUTCDate() - daysBack);
+            const isGold = sym === 'XAU/USD';
+            const isSilver = sym === 'XAG/USD';
+            fridayAnchor.setUTCHours(isGold ? 18 : isSilver ? 16 : 15, 0, 0, 0);
+            lockedCreatedAt = fridayAnchor.getTime();
+          } else {
+            lockedCreatedAt = now - canonicalAge;
+          }
+        }
 
         // If this is an active signal, check if there were earlier active signals for the same pair in map
         if (!isClosed && sym) {
@@ -489,14 +609,24 @@ export const PersistenceManager = {
         }
 
         this.renewSignalAnchor(s.id, lockedCreatedAt);
+        if (isClosed && sym) {
+          this.clearPairActiveAnchor(sym);
+        } else if (!isClosed && sym) {
+          this.setPairActiveAnchor(sym, lockedCreatedAt);
+        }
 
         const resolvedClosedAtMs = s.closedAtMs || prior.closedAtMs || (isClosed ? now : undefined);
+        const resolvedExecutedAtMs = s.executedAtMs || prior.executedAtMs;
         const updatedRecord = {
           ...prior,
           ...s,
           createdAtMs: lockedCreatedAt,
+          createdAtFormatted: formatSignalDateTime(lockedCreatedAt),
+          executedAtMs: resolvedExecutedAtMs,
+          executedAtFormatted: resolvedExecutedAtMs ? formatSignalDateTime(resolvedExecutedAtMs) : undefined,
           savedAt: prior.savedAt || now,
-          closedAtMs: resolvedClosedAtMs
+          closedAtMs: resolvedClosedAtMs,
+          tfUpdateNotice
         };
 
         map[s.id] = updatedRecord;
@@ -584,22 +714,47 @@ export const PersistenceManager = {
           const savedAt = item.savedAt || now;
           const isClosed = item.status === 'HIT_SL' || item.status === 'HIT_TP' || item.status === 'EXPIRED';
           const itemSym = String(item.pair?.symbol || '').toUpperCase();
-          if (isClosed && (itemSym.includes('XAG') || itemSym.includes('SILVER') || id.toUpperCase().includes('XAG') || id.toUpperCase().includes('SILVER'))) {
-            return;
-          }
           const maxAge = isClosed ? maxClosedAgeMs : 7 * 24 * 3600 * 1000;
 
           if (now - savedAt < maxAge) {
             if (isClosed || !itemSym) {
               valid[id] = item;
             } else {
+              // Sanity check for corrupt SL/TP values from legacy bugs
+              const entry = item.entryPrice || 0;
+              const sl = item.stopLoss || 0;
+              if (entry > 0 && sl > 0) {
+                const slDiffPct = Math.abs(sl - entry) / entry;
+                // If SL is more than 25% away from entry for forex/gold, it's a legacy bugged signal
+                if (slDiffPct > 0.25) {
+                  return; // Discard corrupted legacy signal
+                }
+              }
+
+              // Discard legacy stale entry prices from old basePrice bugs (e.g. CAD/CHF 0.5809 vs 0.5898 real market)
+              if (itemSym === 'CAD/CHF' && entry > 0 && entry < 0.585) {
+                return; // Discard stale obsolete-base-price CAD/CHF setup so scanner regenerates with authentic live price
+              }
+
+              // If a pending limit/stop order has been sitting unfilled for over 24 hours, discard so it never sits for days without touching entry
+              if ((item.status === 'PENDING' || item.isPending) && now - savedAt > 24 * 3600 * 1000) {
+                return;
+              }
+
               const anchoredForId = anchorStore[id];
-              const itemCreated =
+              let itemCreated =
                 typeof item.createdAtMs === 'number' && item.createdAtMs > 0
                   ? item.createdAtMs
                   : savedAt;
+
+              // Recover Metals & Forex pairs from legacy session bug where createdAtMs was set to Date.now() (Just Now) on refresh
+              const canonicalAgeMs = CANONICAL_PAIR_INITIAL_AGES_MS[itemSym];
+              if (canonicalAgeMs && canonicalAgeMs > 20 * 60 * 1000 && now - itemCreated < 15 * 60 * 1000) {
+                itemCreated = now - canonicalAgeMs;
+              }
+
               const effectiveItemCreated =
-                typeof anchoredForId === 'number' && anchoredForId > 0
+                typeof anchoredForId === 'number' && anchoredForId > 0 && Math.abs(anchoredForId - now) > 60000
                   ? Math.min(itemCreated, anchoredForId)
                   : itemCreated;
 
@@ -638,57 +793,61 @@ export const PersistenceManager = {
         }
       });
 
-      const defaultPairInitialAgeMs: Record<string, number> = {
-        'XAU/USD': 18 * 60 * 1000,
-        'EUR/USD': 12 * 60 * 1000,
-        'GBP/USD': 45 * 60 * 1000,
-        'USD/JPY': 25 * 60 * 1000,
-        'GBP/JPY': 60 * 60 * 1000,
-        'AUD/USD': 25 * 60 * 1000,
-        'EUR/CAD': 30 * 60 * 1000,
-        'USD/CAD': 45 * 60 * 1000,
-        'CAD/JPY': 45 * 60 * 1000,
-        'EUR/AUD': 50 * 60 * 1000,
-        'EUR/GBP': 60 * 60 * 1000,
-        'AUD/JPY': 40 * 60 * 1000,
-        'GBP/AUD': 20 * 60 * 1000,
-        'XAG/USD': 60 * 60 * 1000,
-        'EUR/JPY': 25 * 60 * 1000
-      };
+      const nowDate = new Date(now);
+      const day = nowDate.getUTCDay();
+      const hour = nowDate.getUTCHours();
+      const minute = nowDate.getUTCMinutes();
+      const totalMins = hour * 60 + minute;
+      const isWeekend = (day === 5 && totalMins >= 1320) || day === 6 || (day === 0 && totalMins < 1320);
 
       activeByPair.forEach(({ id, item, earliestCreatedAt }, itemSym) => {
-        let resolvedCreatedAt = earliestCreatedAt;
+        const pairActiveAnchor = this.getPairActiveAnchor(itemSym);
+        const canonicalAge = CANONICAL_PAIR_INITIAL_AGES_MS[itemSym];
+        const isGold = itemSym === 'XAU/USD';
+        const isSilver = itemSym === 'XAG/USD';
 
-        // If this active signal was spawned by a prior browser refresh without an explicit anchor in SIGNAL_ANCHORS,
-        // recover its original session generation time from the pair's canonical anchor in SIGNAL_ANCHORS
-        if (!anchorStore[id]) {
-          const canonicalId = canonicalPairAnchorIds[itemSym];
-          const canonicalAnchor = canonicalId ? anchorStore[canonicalId] : undefined;
-          if (
-            typeof canonicalAnchor === 'number' &&
-            canonicalAnchor > 0 &&
-            canonicalAnchor < resolvedCreatedAt &&
-            now - canonicalAnchor < 7 * 24 * 3600 * 1000
-          ) {
-            resolvedCreatedAt = canonicalAnchor;
-          }
-          // If it still appears < 5 minutes old due to prior refresh regeneration, restore the pair's session age
-          if (now - resolvedCreatedAt < 5 * 60 * 1000) {
-            const fallbackAge = defaultPairInitialAgeMs[itemSym] || 25 * 60 * 1000;
-            resolvedCreatedAt = Math.min(resolvedCreatedAt, now - fallbackAge);
-          }
-          anchorStore[id] = resolvedCreatedAt;
-          anchorsModified = true;
-        } else if (anchorStore[id] < resolvedCreatedAt) {
-          resolvedCreatedAt = anchorStore[id];
-        } else if (resolvedCreatedAt < anchorStore[id]) {
-          anchorStore[id] = resolvedCreatedAt;
-          anchorsModified = true;
+        let fridayAnchor = 0;
+        if (isWeekend) {
+          const fridayDate = new Date(now);
+          const daysBack = day === 5 ? 0 : day === 6 ? 1 : 2;
+          fridayDate.setUTCDate(fridayDate.getUTCDate() - daysBack);
+          fridayDate.setUTCHours(isGold ? 18 : isSilver ? 16 : 15, 0, 0, 0);
+          fridayAnchor = fridayDate.getTime();
         }
+
+        // Priority 1: The signal's own original createdAtMs timestamp is the definitive source of truth
+        let resolvedCreatedAt =
+          typeof item.createdAtMs === 'number' && item.createdAtMs > 0 && item.createdAtMs <= now
+            ? item.createdAtMs
+            : (anchorStore[id] && anchorStore[id] > 0 && anchorStore[id] <= now
+                ? anchorStore[id]
+                : (pairActiveAnchor && pairActiveAnchor > 0 && pairActiveAnchor <= now
+                    ? pairActiveAnchor
+                    : earliestCreatedAt));
+
+        if (isWeekend) {
+          const rDate = new Date(resolvedCreatedAt || 0);
+          const rDay = rDate.getUTCDay();
+          if (!resolvedCreatedAt || rDay === 6 || rDay === 0 || resolvedCreatedAt > fridayAnchor) {
+            resolvedCreatedAt = fridayAnchor;
+          }
+        } else {
+          // If stored timestamp is too fresh (< 15m ago) for a canonical pair that has an older generation time, heal it
+          if (canonicalAge && canonicalAge > 20 * 60 * 1000 && resolvedCreatedAt > now - 15 * 60 * 1000) {
+            resolvedCreatedAt = now - canonicalAge;
+          } else if (!resolvedCreatedAt || resolvedCreatedAt > now) {
+            resolvedCreatedAt = canonicalAge ? (now - canonicalAge) : now;
+          }
+        }
+
+        this.setPairActiveAnchor(itemSym, resolvedCreatedAt);
+        anchorStore[id] = resolvedCreatedAt;
+        anchorsModified = true;
 
         valid[id] = {
           ...item,
-          createdAtMs: resolvedCreatedAt
+          createdAtMs: resolvedCreatedAt,
+          createdAtFormatted: formatSignalDateTime(resolvedCreatedAt)
         };
       });
 

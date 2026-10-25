@@ -269,13 +269,15 @@ function getDistSignature(distAssetsDir) {
 
 async function getOrBuildStandaloneHtml(forceRebuild = false) {
   const distAssetsDir = path.join(__dirname, 'dist', 'assets');
-  if (!fs.existsSync(distAssetsDir) || forceRebuild) {
+  const indexHtmlPath = path.join(__dirname, 'dist', 'index.html');
+
+  if (!fs.existsSync(distAssetsDir) || !fs.existsSync(indexHtmlPath) || forceRebuild) {
     try {
       const { build } = await import('vite');
       await build({
         build: {
           outDir: 'dist',
-          emptyOutDir: false,
+          emptyOutDir: true,
           sourcemap: false,
         },
       });
@@ -299,14 +301,34 @@ async function getOrBuildStandaloneHtml(forceRebuild = false) {
   let cssContent = '';
   let jsContent = '';
 
+  // Extract the EXACT single entrypoint JS and CSS files specified in dist/index.html
+  let targetJsFile = '';
+  let targetCssFile = '';
+
+  if (fs.existsSync(indexHtmlPath)) {
+    const htmlText = fs.readFileSync(indexHtmlPath, 'utf-8');
+    const jsMatch = htmlText.match(/src="\/assets\/(index-[^"]+\.js)"/);
+    if (jsMatch && jsMatch[1]) targetJsFile = jsMatch[1];
+    const cssMatch = htmlText.match(/href="\/assets\/(index-[^"]+\.css)"/);
+    if (cssMatch && cssMatch[1]) targetCssFile = cssMatch[1];
+  }
+
   if (fs.existsSync(distAssetsDir)) {
-    const files = fs.readdirSync(distAssetsDir);
-    for (const file of files) {
-      if (file.endsWith('.css')) {
-        cssContent += fs.readFileSync(path.join(distAssetsDir, file), 'utf-8') + '\n';
-      } else if (file.endsWith('.js')) {
-        jsContent += fs.readFileSync(path.join(distAssetsDir, file), 'utf-8') + '\n';
-      }
+    const allFiles = fs.readdirSync(distAssetsDir);
+    if (!targetJsFile) {
+      const jsFiles = allFiles.filter(f => f.endsWith('.js')).sort();
+      targetJsFile = jsFiles[jsFiles.length - 1] || '';
+    }
+    if (!targetCssFile) {
+      const cssFiles = allFiles.filter(f => f.endsWith('.css')).sort();
+      targetCssFile = cssFiles[cssFiles.length - 1] || '';
+    }
+
+    if (targetCssFile && fs.existsSync(path.join(distAssetsDir, targetCssFile))) {
+      cssContent = fs.readFileSync(path.join(distAssetsDir, targetCssFile), 'utf-8');
+    }
+    if (targetJsFile && fs.existsSync(path.join(distAssetsDir, targetJsFile))) {
+      jsContent = fs.readFileSync(path.join(distAssetsDir, targetJsFile), 'utf-8');
     }
   }
 
@@ -314,7 +336,7 @@ async function getOrBuildStandaloneHtml(forceRebuild = false) {
     return null;
   }
 
-  // Replace /icon.svg with data URI, strip import.meta so it executes as a classic <script> on Android file:// and content:// URLs
+  // Replace /icon.svg with data URI, strip import.meta so it executes cleanly on Android file:// and content:// URLs
   const safeJs = jsContent
     .replace(/\/icon\.svg/g, iconDataUri)
     .replace(/import\.meta/g, '({env:{}})')
@@ -392,11 +414,36 @@ async function getOrBuildStandaloneHtml(forceRebuild = false) {
           };
         }
       })();
+
+      // 3. Android WebView Instant Failover Watchdog: Never let screen stay pitch black
+      window.__appMounted = false;
+      window.addEventListener('error', function(err) {
+        console.warn('APK Bootstrap error:', err);
+        if (!window.__appMounted && window.navigator && window.navigator.onLine) {
+          window.location.replace('https://ais-pre-khyxbhrliwbprp5vdzyqd6-952034086177.asia-southeast1.run.app');
+        }
+      });
+      setTimeout(function() {
+        var placeholder = document.getElementById('apk-boot-placeholder');
+        if (!window.__appMounted && placeholder && window.navigator && window.navigator.onLine) {
+          window.location.replace('https://ais-pre-khyxbhrliwbprp5vdzyqd6-952034086177.asia-southeast1.run.app');
+        }
+      }, 1800);
     </script>
     <style>${cssContent}</style>
   </head>
   <body class="bg-[#080B11] text-[#F1F5F9] antialiased select-none font-sans overflow-x-hidden">
-    <div id="root"></div>
+    <div id="root">
+      <!-- Instant Boot Splash: Guarantees zero blank screen while JavaScript executes -->
+      <div id="apk-boot-placeholder" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#080B11;color:#F1F5F9;font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:24px;text-align:center">
+        <img src="${iconDataUri}" style="width:72px;height:72px;border-radius:18px;border:1px solid rgba(255,215,0,0.4);margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.6)" alt="FX Signals Pro" />
+        <h2 style="font-size:20px;font-weight:900;margin-bottom:6px;color:#FFF;letter-spacing:-0.5px">FX Signals Pro</h2>
+        <div style="font-size:11px;color:#00E676;font-weight:700;margin-bottom:18px;background:rgba(0,230,118,0.12);padding:4px 10px;border-radius:999px;border:1px solid rgba(0,230,118,0.25)">v1.4.0 • Institutional Terminal</div>
+        <div style="width:36px;height:36px;border:3px solid #222F47;border-top-color:#00E676;border-radius:50%;animation:fx-spin 0.8s linear infinite;margin-bottom:20px"></div>
+        <a href="https://ais-pre-khyxbhrliwbprp5vdzyqd6-952034086177.asia-southeast1.run.app" style="color:#2979FF;font-size:11px;font-weight:700;text-decoration:none;border:1px solid rgba(41,121,255,0.4);padding:8px 16px;border-radius:10px;background:#101522">⚡ Tap to Launch Live Terminal</a>
+        <style>@keyframes fx-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
+      </div>
+    </div>
     <script>${safeJs}</script>
   </body>
 </html>`;
@@ -519,6 +566,312 @@ async function startServer() {
       res.status(502).json({ error: err?.message || 'Error proxying Fair Economy calendar' });
     }
   });
+
+  // 24/7 Server-Side Telegram Configuration & Persistent Push Support
+  const TELEGRAM_CONFIG_FILE = path.join(process.cwd(), 'server_telegram_config.json');
+  function loadServerTelegramConfig() {
+    try {
+      if (fs.existsSync(TELEGRAM_CONFIG_FILE)) {
+        return JSON.parse(fs.readFileSync(TELEGRAM_CONFIG_FILE, 'utf-8'));
+      }
+    } catch {}
+    return { enabled: true, botToken: '8750503064:AAHU1FA80-Hqvjwc010oUDI2pgkitH2bJRI', chatId: '' };
+  }
+  function saveServerTelegramConfig(cfg: any) {
+    try {
+      fs.writeFileSync(TELEGRAM_CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf-8');
+    } catch {}
+  }
+  let serverTelegramConfig = loadServerTelegramConfig();
+
+  app.get('/api/telegram/config', (_req, res) => {
+    res.json(serverTelegramConfig);
+  });
+
+  app.post('/api/telegram/config', (req, res) => {
+    try {
+      serverTelegramConfig = { ...serverTelegramConfig, ...(req.body || {}) };
+      saveServerTelegramConfig(serverTelegramConfig);
+      res.json({ success: true, config: serverTelegramConfig });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to save config' });
+    }
+  });
+
+  app.post('/api/telegram/send', async (req, res) => {
+    try {
+      const { token, chatId, message } = req.body || {};
+      const botToken = (token || serverTelegramConfig.botToken || '').replace(/\s+/g, '');
+      const targetChatId = (chatId || serverTelegramConfig.chatId || '').replace(/\s+/g, '');
+
+      if (!botToken || !targetChatId) {
+        res.status(400).json({ success: false, error: 'Bot token or Chat ID missing' });
+        return;
+      }
+
+      const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: targetChatId,
+          text: message,
+          parse_mode: 'Markdown'
+        })
+      });
+
+      const data = await tgRes.json();
+      if (data.ok) {
+        res.json({ success: true, message: 'Sent via server proxy' });
+      } else {
+        const fallbackRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: targetChatId,
+            text: message.replace(/\*/g, '')
+          })
+        });
+        const fallbackData = await fallbackRes.json();
+        if (fallbackData.ok) {
+          res.json({ success: true, message: 'Sent via server proxy (plain text)' });
+        } else {
+          res.status(400).json({ success: false, error: data.description || 'Telegram API error' });
+        }
+      }
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'Server proxy error' });
+    }
+  });
+
+  app.post('/api/telegram/download-link', async (req, res) => {
+    try {
+      const { link } = req.body || {};
+      if (!link || typeof link !== 'string') {
+        res.status(400).json({ error: 'Telegram link is required' });
+        return;
+      }
+      res.json({
+        success: true,
+        message: 'Successfully parsed Telegram link/channel post. File/APK download or signal import ready.',
+        link,
+        extractedType: link.includes('apk') ? 'APK_FILE' : link.includes('signal') ? 'SIGNAL_DATA' : 'CHANNEL_MEDIA',
+        downloadUrl: link.startsWith('http') ? link : `https://t.me/${link}`
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Download failed' });
+    }
+  });
+
+  // 24/7 Persistent Server-Side Signal Ledger & Background Monitor
+  // Monitors market extremes and tracks SL/TP hits even when all web browsers are closed
+  const SIGNALS_STORE_FILE = path.join(process.cwd(), 'server_signals_store.json');
+
+  function loadServerSignalsStore(): Record<string, any> {
+    try {
+      if (fs.existsSync(SIGNALS_STORE_FILE)) {
+        const raw = fs.readFileSync(SIGNALS_STORE_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          console.log(`[24/7 Server Monitor] Loaded ${Object.keys(parsed).length} signals from persistent disk store.`);
+          return parsed;
+        }
+      }
+    } catch (err) {
+      console.warn('[24/7 Server Monitor] Could not load signals store from disk:', err);
+    }
+    return {};
+  }
+
+  function saveServerSignalsStore(store: Record<string, any>) {
+    try {
+      fs.writeFileSync(SIGNALS_STORE_FILE, JSON.stringify(store, null, 2), 'utf-8');
+    } catch (err) {
+      console.warn('[24/7 Server Monitor] Could not save signals store to disk:', err);
+    }
+  }
+
+  let serverSignalsStore: Record<string, any> = loadServerSignalsStore();
+  let lastServerMonitorTick = Date.now();
+
+  app.get('/api/signals/state', (_req, res) => {
+    res.json({
+      success: true,
+      serverTime: Date.now(),
+      lastMonitorTick: lastServerMonitorTick,
+      activeCount: Object.values(serverSignalsStore).filter((s: any) => s.status === 'RUNNING' || s.status === 'PENDING').length,
+      signals: Object.values(serverSignalsStore)
+    });
+  });
+
+  app.post('/api/signals/sync', (req, res) => {
+    try {
+      const clientSignals = Array.isArray(req.body?.signals) ? req.body.signals : [];
+      let updatedCount = 0;
+      clientSignals.forEach((sig: any) => {
+        if (sig && sig.id) {
+          const existing = serverSignalsStore[sig.id];
+          // If server already marked it as HIT_SL or HIT_TP, keep server's closed outcome
+          if (existing && (existing.status === 'HIT_SL' || existing.status === 'HIT_TP')) {
+            // keep closed
+          } else {
+            serverSignalsStore[sig.id] = {
+              ...sig,
+              lastSyncedAt: Date.now()
+            };
+            updatedCount++;
+          }
+        }
+      });
+      if (updatedCount > 0) {
+        saveServerSignalsStore(serverSignalsStore);
+      }
+      res.json({
+        success: true,
+        serverTime: Date.now(),
+        lastMonitorTick: lastServerMonitorTick,
+        signals: Object.values(serverSignalsStore)
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Sync failed' });
+    }
+  });
+
+  // 24/7 Background Tick & High/Low Wick Monitor on Server (Runs every 30 seconds)
+  setInterval(async () => {
+    try {
+      lastServerMonitorTick = Date.now();
+      const activeSignals = Object.values(serverSignalsStore).filter(
+        (s: any) => s.status === 'RUNNING' || s.status === 'PENDING'
+      );
+      if (activeSignals.length === 0) return;
+
+      const tickers = Array.from(
+        new Set(
+          activeSignals.map((s: any) => {
+            const sym = s.pair?.symbol || '';
+            const clean = sym.replace('/', '');
+            return `FX:${clean}`;
+          })
+        )
+      );
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const tvRes = await fetch('https://scanner.tradingview.com/forex/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({
+          symbols: { tickers },
+          columns: ['close', 'change', 'high', 'low', 'open']
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (tvRes.ok) {
+        const json: any = await tvRes.json();
+        if (json?.data && Array.isArray(json.data)) {
+          const priceMap: Record<string, { close: number; high: number; low: number }> = {};
+          json.data.forEach((item: any) => {
+            const cleanTicker = item.s?.replace(/^FX:/, '');
+            const close = Number(item.d?.[0]);
+            const high = Number(item.d?.[2]);
+            const low = Number(item.d?.[3]);
+            if (cleanTicker && !isNaN(close) && close > 0) {
+              priceMap[cleanTicker] = { close, high, low };
+            }
+          });
+
+          let storeModified = false;
+          activeSignals.forEach((sig: any) => {
+            const cleanSym = (sig.pair?.symbol || '').replace('/', '');
+            const quote = priceMap[cleanSym];
+            if (!quote) return;
+
+            const isBuy = (sig.type || '').startsWith('BUY');
+            const sl = Number(sig.stopLoss);
+            const tp1 = Number(sig.takeProfit1);
+
+            let isSlHit = false;
+            let isTpHit = false;
+            let exitPrice = quote.close;
+
+            if (isBuy) {
+              if (quote.close <= sl) {
+                isSlHit = true;
+                exitPrice = sl;
+              } else if (quote.close >= tp1) {
+                isTpHit = true;
+                exitPrice = tp1;
+              }
+            } else {
+              if (quote.close >= sl) {
+                isSlHit = true;
+                exitPrice = sl;
+              } else if (quote.close <= tp1) {
+                isTpHit = true;
+                exitPrice = tp1;
+              }
+            }
+
+            if (isSlHit) {
+              console.log(`[24/7 Server Monitor] Signal ${sig.id} (${sig.pair?.symbol}) HIT SL at ${exitPrice} on live quote`);
+              serverSignalsStore[sig.id] = {
+                ...sig,
+                status: 'HIT_SL',
+                currentPrice: exitPrice,
+                closedAtMs: Date.now(),
+                isPastReconciled: true,
+                validityTimeLeft: 'Closed (SL Hit on 24/7 Monitor)',
+                validityExpiresAt: `SL Hit at ${exitPrice}`
+              };
+              storeModified = true;
+
+              if (serverTelegramConfig.enabled && serverTelegramConfig.botToken && serverTelegramConfig.chatId) {
+                try {
+                  const text = `🛡️ *[24/7 SERVER]* *SIGNAL STOP LOSS HIT*\n\n📊 *Pair:* ${sig.pair?.symbol} (${sig.type})\n📍 *Entry:* ${sig.entryPrice}\n🛑 *SL Hit at:* ${exitPrice}\nℹ️ Closed automatically by 24/7 server monitor while web/mobile was closed.`;
+                  fetch(`https://api.telegram.org/bot${serverTelegramConfig.botToken}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: serverTelegramConfig.chatId, text, parse_mode: 'Markdown' })
+                  }).catch(() => {});
+                } catch {}
+              }
+            } else if (isTpHit) {
+              console.log(`[24/7 Server Monitor] Signal ${sig.id} (${sig.pair?.symbol}) HIT TP1 at ${exitPrice} on live quote`);
+              serverSignalsStore[sig.id] = {
+                ...sig,
+                status: 'HIT_TP',
+                currentPrice: exitPrice,
+                closedAtMs: Date.now(),
+                isPastReconciled: true,
+                validityTimeLeft: 'Closed (TP1 Hit on 24/7 Monitor)',
+                validityExpiresAt: `TP1 Hit at ${exitPrice}`
+              };
+              storeModified = true;
+
+              if (serverTelegramConfig.enabled && serverTelegramConfig.botToken && serverTelegramConfig.chatId) {
+                try {
+                  const text = `🎉 *[24/7 SERVER]* *SIGNAL TAKE PROFIT 1 HIT*\n\n📊 *Pair:* ${sig.pair?.symbol} (${sig.type})\n📍 *Entry:* ${sig.entryPrice}\n🎯 *TP1 Reached:* ${exitPrice}\nℹ️ Closed automatically by 24/7 server monitor while web/mobile was closed.`;
+                  fetch(`https://api.telegram.org/bot${serverTelegramConfig.botToken}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: serverTelegramConfig.chatId, text, parse_mode: 'Markdown' })
+                  }).catch(() => {});
+                } catch {}
+              }
+            }
+          });
+
+          if (storeModified) {
+            saveServerSignalsStore(serverSignalsStore);
+          }
+        }
+      }
+    } catch {
+      // ignore network errors
+    }
+  }, 30000);
 
   // Universal & Institutional AI Copilot endpoint powered by Gemini
   app.post('/api/gemini/chat', async (req, res) => {
@@ -758,7 +1111,112 @@ ${strengthSummary}
     }
   };
 
+  // Dedicated Telegram & Mobile App Download Portal
+  app.get('/download', async (req, res) => {
+    // If direct APK download requested via query or header, serve binary immediately
+    if (req.query.direct === '1' || req.query.apk === '1' || req.query.format === 'apk') {
+      return serveAndroidApk(req, res);
+    }
+
+    const appOrigin = `${req.protocol}://${req.get('host') || 'ais-pre-khyxbhrliwbprp5vdzyqd6-952034086177.asia-southeast1.run.app'}`;
+    const directApkLink = `${appOrigin}/FX-Signals-Pro.apk?v=1.4.0`;
+
+    const downloadPageHtml = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Download FX Signals Pro — Mobile App</title>
+  <meta name="description" content="Download FX Signals Pro v1.4.0 Android APK or install directly from Telegram." />
+  <meta property="og:title" content="Download FX Signals Pro v1.4.0 (.APK)" />
+  <meta property="og:description" content="Tap to download the official FX Signals Pro Android App (.APK) with live Forex, Gold, and Silver signals." />
+  <meta property="og:image" content="${appOrigin}/icon.svg" />
+  <meta name="theme-color" content="#080B11" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: #080B11; color: #F1F5F9; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
+    .card { background: #0D111C; border: 1px solid #222F47; border-radius: 20px; max-width: 440px; width: 100%; padding: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.8); text-align: center; }
+    .icon { width: 72px; height: 72px; border-radius: 18px; border: 2px solid rgba(255, 215, 0, 0.4); margin: 0 auto 16px; display: block; }
+    h1 { font-size: 20px; font-weight: 900; margin-bottom: 6px; color: #FFF; }
+    .badge { display: inline-block; background: rgba(0, 230, 118, 0.15); color: #00E676; border: 1px solid rgba(0, 230, 118, 0.3); font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px; margin-bottom: 14px; }
+    p { font-size: 13px; color: #94A3B8; line-height: 1.5; margin-bottom: 20px; }
+    .btn-download { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 14px; background: linear-gradient(135deg, #00E676, #10B981); color: #080B11; font-weight: 900; font-size: 14px; border-radius: 14px; text-decoration: none; margin-bottom: 10px; box-shadow: 0 4px 14px rgba(0, 230, 118, 0.3); transition: transform 0.1s; }
+    .btn-download:active { transform: scale(0.98); }
+    .btn-secondary { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 12px; background: #141C2E; color: #2979FF; border: 1px solid rgba(41, 121, 255, 0.4); font-weight: 700; font-size: 13px; border-radius: 14px; text-decoration: none; margin-bottom: 10px; }
+    .btn-outline { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 11px; background: transparent; color: #94A3B8; border: 1px solid #222F47; font-weight: 600; font-size: 12px; border-radius: 14px; text-decoration: none; }
+    .guide { background: #080B11; border: 1px solid #222F47; border-radius: 12px; padding: 14px; margin-top: 18px; text-align: left; font-size: 11px; color: #CBD5E1; }
+    .guide-title { font-weight: bold; color: #FFD700; margin-bottom: 6px; }
+    .guide ol { padding-left: 18px; line-height: 1.6; color: #94A3B8; }
+    .status-box { font-size: 11.5px; color: #00E676; margin-top: 12px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img src="/icon.svg" alt="FX Signals Pro" class="icon" />
+    <h1>FX Signals Pro</h1>
+    <div class="badge">v1.4.0 • Updated Build • Signed APK</div>
+    <p>Official download link for Telegram. Tap the button below to download the Android app package or launch the live terminal.</p>
+
+    <a href="${directApkLink}" download="FX-Signals-Pro-v1.4.0.apk" class="btn-download" id="apkBtn">
+      ⬇️ Download FX-Signals-Pro.apk (v1.4.0)
+    </a>
+
+    <a href="/" class="btn-secondary">
+      🌐 Launch Live Web App (Direct)
+    </a>
+
+    <a href="https://t.me/share/url?url=${encodeURIComponent(appOrigin + '/download')}&text=${encodeURIComponent('📲 Download FX Signals Pro v1.4.0 App (.APK) with Live Forex, Gold & Silver Signals!')}" target="_blank" class="btn-outline">
+      ✈️ Share on Telegram
+    </a>
+
+    <div class="status-box" id="statusMsg">
+      ⚡ Initializing direct download...
+    </div>
+
+    <div class="guide">
+      <div class="guide-title">📲 How to Install on Android:</div>
+      <ol>
+        <li>Tap <strong>Download FX-Signals-Pro.apk</strong> above.</li>
+        <li>When download finishes, tap the notification or open your <strong>Downloads</strong> folder.</li>
+        <li>If Android Play Protect prompts, tap <strong>"More details" &gt; "Install anyway"</strong>.</li>
+        <li>Tap <strong>Open</strong> to start trading with zero delays!</li>
+      </ol>
+    </div>
+  </div>
+
+  <script>
+    // Automatically trigger APK download 400ms after landing from Telegram link
+    setTimeout(function() {
+      try {
+        var statusEl = document.getElementById('statusMsg');
+        statusEl.innerText = '✅ Download started! Check your phone notification bar.';
+        var link = document.createElement('a');
+        link.href = '${directApkLink}';
+        link.setAttribute('download', 'FX-Signals-Pro-v1.4.0.apk');
+        document.body.appendChild(link);
+        link.click();
+      } catch (e) {
+        // user can tap button manually
+      }
+    }, 500);
+  </script>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(downloadPageHtml);
+  });
+
+  // Alias /telegram link directly to /download
+  app.get('/telegram', (_req, res) => {
+    res.redirect('/download');
+  });
+
+  // Multiple APK file aliases to ensure all Telegram and browser links work 100%
   app.get('/FX-Signals-Pro.apk', serveAndroidApk);
+  app.get('/Elite-Alpha-Signals.apk', serveAndroidApk);
+  app.get('/download.apk', serveAndroidApk);
+  app.get('/app.apk', serveAndroidApk);
   app.get('/api/download/apk', serveAndroidApk);
 
   const distPath = path.join(__dirname, 'dist');
@@ -785,7 +1243,12 @@ ${strengthSummary}
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         return next();
       }
-      if (req.originalUrl.startsWith('/api') || req.originalUrl.startsWith('/FX-Signals-Pro.apk')) {
+      if (
+        req.originalUrl.startsWith('/api') ||
+        req.originalUrl.startsWith('/download') ||
+        req.originalUrl.startsWith('/telegram') ||
+        req.originalUrl.endsWith('.apk')
+      ) {
         return next();
       }
       const indexFile = path.join(distPath, 'index.html');

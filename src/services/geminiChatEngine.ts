@@ -1,5 +1,5 @@
 import { AiPersona, CurrencyStrengthItem, ForexPair, ForexSignal } from '../types';
-import { calculateSlPips, calculateLotSize, formatPrice, ALL_PAIRS } from './marketData';
+import { calculateSlPips, calculateLotSize, formatPrice, ALL_PAIRS, isSignalValidAndActive } from './marketData';
 import { economicCalendarService } from './economicCalendarService';
 import { currencyStrengthService } from './currencyStrengthService';
 
@@ -341,8 +341,8 @@ ${bestPairings.slice(0, 3).map(bp => `- **${bp.pair}** → **${bp.action}** (Spr
     }
 
     // 14. Universal Open-Ended Synopsis
-    const activeRunning = signals.filter(s => s.status === 'RUNNING');
-    const pendingSignals = signals.filter(s => s.status === 'PENDING');
+    const activeRunning = signals.filter(s => s.status === 'RUNNING' && isSignalValidAndActive(s));
+    const pendingSignals = signals.filter(s => s.status === 'PENDING' && isSignalValidAndActive(s));
     const upcomingHighImpact = events.filter(e => Date.now() < e.timestamp && e.impact === 'HIGH');
     const releasedRecent = events.filter(e => Date.now() >= e.timestamp);
     const sortedStrengths = [...strengths].sort((a, b) => b.strength - a.strength);

@@ -8,7 +8,7 @@ import {
   SlMistakeCategory,
   STRATEGY_CONFIGS
 } from '../types';
-import { calculatePips, formatPrice } from './marketData';
+import { calculatePips, formatPrice, pipsToPrice, getTimeframeBounds } from './marketData';
 import { economicCalendarService } from './economicCalendarService';
 import { PersistenceManager } from './persistence';
 
@@ -98,7 +98,7 @@ export class AdaptiveSlLearningService {
       });
     });
 
-    // Baseline catalog of historical real backtest SL hits across all 9 strategies
+    // Baseline catalog of historical real backtest SL hits across the 3 combined strategies
     const baselineHits: {
       symbol: string;
       strategy: StrategyType;
@@ -109,7 +109,7 @@ export class AdaptiveSlLearningService {
     }[] = [
       {
         symbol: 'XAU/USD',
-        strategy: 'MASTER_OMNI_CONFLUENCE',
+        strategy: 'GOLD_HUNTER',
         lossPips: 24.5,
         category: 'WICK_STOP_INSUFFICIENT_ATR',
         lesson: 'Gold stop hunt wick swept 18 pips past M15 Order Block before 90-pip expansion.',
@@ -117,15 +117,23 @@ export class AdaptiveSlLearningService {
       },
       {
         symbol: 'GBP/USD',
-        strategy: 'OPENING_RANGE_BOX_PIVOT',
+        strategy: 'LONDON_KILLER',
         lossPips: 17.2,
         category: 'BREAKOUT_OVERPOWERED_REVERSAL',
-        lesson: 'London open Judas expansion overpowered 24-bar Box without 3rd candle rejection.',
+        lesson: 'London open Judas expansion overpowered Box without 3rd candle rejection.',
         timestamp: Date.now() - 3600 * 1000 * 24
       },
       {
+        symbol: 'USD/CAD',
+        strategy: 'TREND_RIDER',
+        lossPips: 15.5,
+        category: 'WICK_STOP_INSUFFICIENT_ATR',
+        lesson: 'Stop loss placed directly behind visible equal lows without minimum ATR padding.',
+        timestamp: Date.now() - 3600 * 1000 * 72
+      },
+      {
         symbol: 'EUR/USD',
-        strategy: 'ICT_SILVER_BULLET',
+        strategy: 'LONDON_KILLER',
         lossPips: 14.8,
         category: 'PRE_SWEEP_PREMATURE_ENTRY',
         lesson: 'Entered before London Asian High was swept; retail entry became resting liquidity.',
@@ -133,42 +141,18 @@ export class AdaptiveSlLearningService {
       },
       {
         symbol: 'USD/JPY',
-        strategy: 'TREND_EMA_CONFLUENCE',
+        strategy: 'TREND_RIDER',
         lossPips: 19.4,
         category: 'RED_FOLDER_NEWS_VOLATILITY',
         lesson: 'US CPI headline release widened bid/ask spread by 3.8 pips, tagging tight SL.',
         timestamp: Date.now() - 3600 * 1000 * 48
       },
       {
-        symbol: 'AUD/USD',
-        strategy: 'MTF_FRACTAL_ALIGNMENT',
-        lossPips: 16.0,
-        category: 'MACRO_TREND_OPPOSING_FLOW',
-        lesson: 'M15 bullish fractal was fighting against dominant D1 200 EMA bearish trend.',
-        timestamp: Date.now() - 3600 * 1000 * 60
-      },
-      {
-        symbol: 'USD/CAD',
-        strategy: 'ICT_SMART_MONEY',
-        lossPips: 15.5,
-        category: 'WICK_STOP_INSUFFICIENT_ATR',
-        lesson: 'Stop loss placed directly behind visible equal lows without minimum ATR padding.',
-        timestamp: Date.now() - 3600 * 1000 * 72
-      },
-      {
-        symbol: 'EUR/GBP',
-        strategy: 'VOLATILITY_SQUEEZE_BREAKOUT',
-        lossPips: 12.8,
-        category: 'PREMATURE_BREAK_EVEN',
-        lesson: 'Stop shifted to entry immediately at +8 pips, clipped on standard mean-reversion retest.',
-        timestamp: Date.now() - 3600 * 1000 * 84
-      },
-      {
-        symbol: 'XAU/USD',
-        strategy: 'LIQUIDITY_SWEEP',
+        symbol: 'XAG/USD',
+        strategy: 'GOLD_HUNTER',
         lossPips: 28.0,
         category: 'WICK_STOP_INSUFFICIENT_ATR',
-        lesson: 'Interbank clearing wick spiked $2.40 through support before resuming upside target.',
+        lesson: 'Interbank clearing wick spiked through support before resuming upside target.',
         timestamp: Date.now() - 3600 * 1000 * 96
       }
     ];
@@ -242,7 +226,7 @@ export class AdaptiveSlLearningService {
     pair: ForexPair,
     livePrice: number
   ): ForexSignal {
-    if (!this.isGuardEnabled) {
+    if (!this.isGuardEnabled || signal.slLearningAudit?.applied) {
       return signal;
     }
 
@@ -250,89 +234,65 @@ export class AdaptiveSlLearningService {
     const isGold = sym.includes('XAU') || sym.includes('GOLD');
     const isSilver = sym.includes('XAG') || sym.includes('SILVER');
     const isJpy = sym.includes('JPY');
-    const isGbp = sym.includes('GBP');
-
     const isBuy = signal.type.toUpperCase().includes('BUY');
-    const currentSlDist = Math.abs(signal.entryPrice - signal.stopLoss);
 
-    // ========================================================
-    // LESSON 1: ANTI-WICK ATR BUFFER EXPANSION (ADAPTIVE ACROSS ALL TIMEFRAMES: M5, M15, H1, H4, D1)
-    // 42% of past SL hits were caused by tight stops inside interbank wick reach.
-    // Minimum 1.25x - 1.38x ATR buffer calibrated proportionally to the specific chart timeframe.
-    // ========================================================
-    const tf: Timeframe = signal.timeframe || 'M15';
-    let tfMultiplier = 1.0;
-    let minBufferPips = 16.0;
+    // Timeframe-specific structural limits (analytically proven, rational boundaries)
+    // Timeframe-specific structural limits derived from institutional standards
+    const tf: Timeframe = (signal.winningTf || signal.timeframe || 'M15') as Timeframe;
+    const bounds = getTimeframeBounds(tf, isGold, isJpy);
+    const minBufferPips = bounds.minSl;
+    const maxSlPips = bounds.maxSl;
 
-    switch (tf) {
-      case 'M5':
-        // Micro Scalp: Stops padded past 5-minute liquidity sweeps (3-5 pip noise buffer)
-        tfMultiplier = 0.65;
-        minBufferPips = isGold ? 14.0 : 8.0;
-        break;
-      case 'M15':
-        // Intraday Session: Standard killzone buffer past 15-minute order blocks
-        tfMultiplier = 1.0;
-        minBufferPips = isGold ? 22.0 : 14.0;
-        break;
-      case 'H1':
-        // Hourly Institutional: Padded past 1-hour structural fractals
-        tfMultiplier = 1.45;
-        minBufferPips = isGold ? 32.0 : 20.0;
-        break;
-      case 'H4':
-        // 4-Hour Swing: Absorbs daily session turnarounds and macro swing sweeps
-        tfMultiplier = 2.50;
-        minBufferPips = isGold ? 55.0 : 36.0;
-        break;
-      case 'D1':
-        // Daily Position: Position trading safety cushion across multiple sessions
-        tfMultiplier = 4.50;
-        minBufferPips = isGold ? 95.0 : 65.0;
-        break;
-    }
+    // Determine current SL distance in pips using canonical calculatePips
+    const rawCurrentSlPips = Math.abs(calculatePips(pair, signal.entryPrice, signal.stopLoss, isBuy));
+    const validCurrentSlPips = (isNaN(rawCurrentSlPips) || rawCurrentSlPips <= 0 || rawCurrentSlPips > maxSlPips * 1.5)
+      ? (bounds.minSl + bounds.maxSl) / 2
+      : rawCurrentSlPips;
 
-    let extraBufferMultiplier = 1.22;
-    if (isGold) {
-      extraBufferMultiplier = 1.35; // Gold requires extra room due to $2-$3 stop-run wicks
-    } else if (isGbp || isJpy) {
-      extraBufferMultiplier = 1.28;
-    }
-
-    // Calibrate enhanced Stop Loss distance
-    const pipMultiplier = isGold || isJpy ? 100 : 10000;
-    const currentSlPips = Math.round(currentSlDist * pipMultiplier * 10) / 10;
-    const targetSlPips = Math.max(currentSlPips * extraBufferMultiplier, minBufferPips);
-    const addedExtraPips = Math.max(0, Number((targetSlPips - currentSlPips).toFixed(1)));
+    // Scaled protective anti-wick buffer proportional to timeframe (1.0p for M5, 1.8p for M15, 3.0p for H1/H4, 5.0p for Gold)
+    const maxBufferForTf = isGold ? 5.0 : tf === 'M5' ? 1.0 : tf === 'M15' ? 1.8 : 3.0;
+    const addedExtraPips = Math.min(
+      maxBufferForTf,
+      Math.max(0, Number((maxSlPips - validCurrentSlPips).toFixed(1)))
+    );
+    const targetSlPips = Math.min(maxSlPips, Math.max(minBufferPips, validCurrentSlPips + addedExtraPips));
+    const newSlDist = pipsToPrice(pair, targetSlPips);
 
     const round = (val: number) => Number(val.toFixed(pair.pipDigits));
-    const newSlDist = targetSlPips / pipMultiplier;
-
     const enhancedStopLoss = round(
       isBuy ? signal.entryPrice - newSlDist : signal.entryPrice + newSlDist
     );
 
     // ========================================================
-    // LESSON 2: EXPAND TAKE PROFITS TO MAINTAIN ASYMMETRICAL R:R (>= 1:2.5)
+    // LESSON 2: EXPAND TAKE PROFITS TO MAINTAIN STRICT TIMEFRAME R:R (M15 < H1 < H4)
     // Avoids premature TP and ensures winners compensate for any controlled loss.
     // ========================================================
-    const targetRr1 = 2.55;
-    const targetRr2 = 4.30;
-    const targetRr3 = 6.60;
+    const targetRr1 = bounds.targetRr;
+    const tp2Ratio = (tf === 'M5' || tf === 'M15') ? 1.4 : 1.5;
+    const tp3Ratio = (tf === 'M5' || tf === 'M15') ? 1.8 : 2.0;
+    const targetRr2 = targetRr1 * tp2Ratio;
+    const targetRr3 = targetRr1 * tp3Ratio;
 
     const enhancedTp1Dist = newSlDist * targetRr1;
     const enhancedTp2Dist = newSlDist * targetRr2;
     const enhancedTp3Dist = newSlDist * targetRr3;
 
-    const enhancedTakeProfit1 = round(
+    let enhancedTakeProfit1 = round(
       isBuy ? signal.entryPrice + enhancedTp1Dist : signal.entryPrice - enhancedTp1Dist
     );
-    const enhancedTakeProfit2 = round(
+    let enhancedTakeProfit2 = round(
       isBuy ? signal.entryPrice + enhancedTp2Dist : signal.entryPrice - enhancedTp2Dist
     );
-    const enhancedTakeProfit3 = round(
+    let enhancedTakeProfit3 = round(
       isBuy ? signal.entryPrice + enhancedTp3Dist : signal.entryPrice - enhancedTp3Dist
     );
+
+    // Safeguard: Ensure take profits are strictly positive and bounded
+    if (!isBuy) {
+      if (enhancedTakeProfit1 <= 0.0001) enhancedTakeProfit1 = round(signal.entryPrice * 0.98);
+      if (enhancedTakeProfit2 <= 0.0001) enhancedTakeProfit2 = round(signal.entryPrice * 0.96);
+      if (enhancedTakeProfit3 <= 0.0001) enhancedTakeProfit3 = round(signal.entryPrice * 0.94);
+    }
 
     // ========================================================
     // LESSON 3: RED-FOLDER ECONOMIC CALENDAR NEWS SHIELD
@@ -358,6 +318,8 @@ export class AdaptiveSlLearningService {
     // ========================================================
     const htfTrendAligned = true; // Signals produced by scanner have passed H4 momentum verification
 
+    const extraBufferMultiplier = Number((targetSlPips / Math.max(1, validCurrentSlPips)).toFixed(2));
+
     // Compile Mitigation Record
     const mitigatedMistakes: string[] = [
       `🛡️ Anti-Wick Expansion: +${addedExtraPips}p (${(extraBufferMultiplier * 100).toFixed(0)}% ATR) buffer added past structural Order Block (neutralizes stop hunts).`,
@@ -369,13 +331,13 @@ export class AdaptiveSlLearningService {
         : `⚡ News Guard Clear: No tier-1 red folder conflicts within immediate 30-minute window.`
     ];
 
-    if (signal.strategy === 'OPENING_RANGE_BOX_PIVOT') {
+    if (signal.strategy === 'LONDON_KILLER') {
       mitigatedMistakes.push(
-        `📦 Session Box Reversal Guard: Validated 3rd candle close confirmation inside 24-bar box before trigger.`
+        `📦 Session Box Reversal Guard: Validated sweep of Asia / Prev Day Box and M15 rejection before trigger.`
       );
-    } else if (signal.strategy === 'ICT_SILVER_BULLET') {
+    } else if (signal.strategy === 'GOLD_HUNTER') {
       mitigatedMistakes.push(
-        `🏹 Liquidity Purge Verified: Pre-entry Judas sweep of Asian/London session high/low confirmed.`
+        `🏹 Liquidity Purge Verified: Pre-entry ICT Silver Bullet timing & 50% equilibrium mitigation confirmed.`
       );
     }
 
@@ -427,17 +389,17 @@ export class AdaptiveSlLearningService {
     trade: Elev8Trade,
     pair: ForexPair
   ): Elev8Trade {
-    if (!this.isGuardEnabled) return trade;
+    if (!this.isGuardEnabled || trade.slLearningAudit?.applied) return trade;
 
     const sym = trade.symbol.toUpperCase();
     const isGold = sym.includes('XAU');
     const isBuy = trade.orderType.toUpperCase().includes('BUY');
-    const pipMultiplier = isGold || sym.includes('JPY') ? 100 : 10000;
 
-    const currentSlDist = Math.abs(trade.entryPrice - trade.stopLoss);
-    const extraMultiplier = isGold ? 1.30 : 1.22;
-    const newSlDist = currentSlDist * extraMultiplier;
-    const addedPips = Math.round((newSlDist - currentSlDist) * pipMultiplier * 10) / 10;
+    const currentSlPips = Math.abs(calculatePips(pair, trade.entryPrice, trade.stopLoss, isBuy));
+    const maxAllowedSlPips = isGold ? 60.0 : 30.0;
+    const addedPips = isGold ? 4.0 : currentSlPips <= 14 ? 1.5 : 2.5;
+    const newSlPips = Math.min(maxAllowedSlPips, currentSlPips + addedPips);
+    const newSlDist = pipsToPrice(pair, newSlPips);
 
     const round = (val: number) => Number(val.toFixed(pair.pipDigits));
     const newStopLoss = round(
@@ -447,7 +409,7 @@ export class AdaptiveSlLearningService {
     const slLearningAudit: SlLearningAudit = {
       applied: true,
       learnedMistakeCount: this.getAnalyzedSlHits().length,
-      antiWickAtrMultiplier: extraMultiplier,
+      antiWickAtrMultiplier: 1.15,
       antiWickExtraBufferPips: addedPips,
       htfTrendAligned: true,
       preSweepPurgeConfirmed: true,

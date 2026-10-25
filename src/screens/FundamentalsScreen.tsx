@@ -30,7 +30,7 @@ export const FundamentalsScreen: React.FC<Props> = ({
   };
 
   return (
-    <div className="space-y-4 max-w-4xl mx-auto pb-16 text-left">
+    <div className="space-y-4 w-full pb-16 text-left">
       {/* Title & Refresh */}
       <div className="flex items-center justify-between">
         <div>

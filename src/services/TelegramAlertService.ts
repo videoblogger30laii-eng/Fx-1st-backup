@@ -4,6 +4,7 @@ import { isForexMarketOpen } from './marketData';
 const STORAGE_KEY = 'elev8_telegram_alert_config';
 const SENT_SIGNALS_STORAGE_KEY = 'elev8_telegram_sent_signals_v2';
 const SENT_ALERTS_STORAGE_KEY = 'elev8_telegram_sent_alerts_v3';
+const MODULE_LOAD_TIME = Date.now();
 
 // Synchronous in-memory lock sets to block concurrent / StrictMode / multi-tick duplicate calls before network completion
 const inFlightAndSentSignalKeys = new Set<string>();
@@ -125,13 +126,32 @@ export class TelegramAlertService {
   }
 
   /**
+   * Baselining method called when the web app launches:
+   * Marks all pre-existing / loaded signals as already acknowledged without dispatching network calls,
+   * guaranteeing that only genuine real-time signals formed thereafter will trigger Telegram alerts.
+   */
+  static baselineInitialSignals(signals: ForexSignal[]): void {
+    if (!signals || !Array.isArray(signals)) return;
+    signals.forEach(s => {
+      this.markSignalSent(s);
+      try {
+        const msg = this.formatSignalMessage(s);
+        const fp = this.getAlertFingerprint(msg);
+        this.recordAlertSent(fp);
+      } catch {}
+    });
+  }
+
+  /**
    * Generates a canonical deduplication fingerprint for any alert message.
    * Strips volatile live tick quotes, pip fluctuations, and header variations so two rapid ticks
    * or two code paths on the same pair (e.g., EUR/USD) produce the exact same fingerprint.
    */
   static getAlertFingerprint(message: string): string {
+    const cleanMsg = message.toUpperCase();
+
     // 1. Canonical fingerprint for Price Watchdog Alerts (e.g. EUR/USD PRICE_BELOW H4 Demand Block)
-    if (message.includes('PRICE ALERT TRIGGERED') || message.includes('Alert Triggered!')) {
+    if (cleanMsg.includes('PRICE ALERT TRIGGERED') || cleanMsg.includes('ALERT TRIGGERED!')) {
       const pairMatch = message.match(/Pair:\s*\*?([A-Z0-9/]+)\*?/i);
       const condMatch = message.match(/(PRICE_BELOW|PRICE_ABOVE)/i);
       const noteMatch = message.match(/\(([^)]+)\)/);
@@ -141,22 +161,41 @@ export class TelegramAlertService {
       return `PRICE_ALERT_CANONICAL:${pair}:${cond}:${note}`;
     }
 
-    // 2. Canonical fingerprint for Trade Signal cards (prevents header variations from double-sending same pair signal)
-    if (message.includes('*Entry Price:*') && message.includes('*Pair:*')) {
-      const pairMatch = message.match(/\*Pair:\*\s*([A-Z0-9/]+)/i);
-      const actionMatch = message.match(/\*Action:\*\s*([^\n]+)/i);
-      const statusMatch = message.match(/\*Status:\*\s*([^\n]+)/i);
-      const entryMatch = message.match(/\*Entry Price:\*\s*([0-9.,]+)/i);
-      if (pairMatch && actionMatch) {
+    // 2. Canonical fingerprint for Take Profit Hits
+    if (cleanMsg.includes('TAKE PROFIT') || cleanMsg.includes('TP1 HIT') || cleanMsg.includes('TP1 REACHED')) {
+      const pairMatch = message.match(/Pair:\s*\*?([A-Z0-9/]+)\*?/i);
+      const pair = pairMatch ? pairMatch[1].toUpperCase() : 'UNKNOWN_PAIR';
+      return `TP_HIT_CANONICAL:${pair}`;
+    }
+
+    // 3. Canonical fingerprint for Stop Loss Hits
+    if (cleanMsg.includes('STOP LOSS') || cleanMsg.includes('SL HIT')) {
+      const pairMatch = message.match(/Pair:\s*\*?([A-Z0-9/]+)\*?/i);
+      const pair = pairMatch ? pairMatch[1].toUpperCase() : 'UNKNOWN_PAIR';
+      return `SL_HIT_CANONICAL:${pair}`;
+    }
+
+    // 4. Canonical fingerprint for Pending Order Filled / Triggered
+    if (cleanMsg.includes('PENDING ORDER FILLED') || cleanMsg.includes('PENDING SIGNAL TRIGGERED')) {
+      const pairMatch = message.match(/Pair:\s*\*?([A-Z0-9/]+)\*?/i);
+      const pair = pairMatch ? pairMatch[1].toUpperCase() : 'UNKNOWN_PAIR';
+      return `PENDING_FILL_CANONICAL:${pair}`;
+    }
+
+    // 5. Canonical fingerprint for Trade Signal cards (prevents header variations from double-sending same pair signal)
+    if ((message.includes('Entry') || message.includes('Action')) && (message.includes('Pair') || message.includes('Pair:'))) {
+      const pairMatch = message.match(/Pair:\*?\s*([A-Z0-9/]+)/i) || message.match(/([A-Z]{3}\/[A-Z]{3}|XAU\/USD|XAG\/USD|BTC\/USD)/i);
+      const actionMatch = message.match(/Action:\*?\s*([^\n]+)/i) || message.match(/(BUY|SELL)/i);
+      const entryMatch = message.match(/Entry(?:\s*Price)?:\*?\s*([0-9.,]+)/i);
+      if (pairMatch) {
         const pair = pairMatch[1].trim().toUpperCase();
-        const action = actionMatch[1].trim().toUpperCase();
-        const status = statusMatch ? statusMatch[1].trim().toUpperCase() : 'STATUS';
+        const action = actionMatch ? actionMatch[1].trim().toUpperCase() : 'TRADE';
         const entry = entryMatch ? entryMatch[1].trim() : 'ENTRY';
-        return `SIGNAL_CARD_CANONICAL:${pair}:${action}:${status}:${entry}`;
+        return `SIGNAL_CARD_CANONICAL:${pair}:${action}:${entry}`;
       }
     }
 
-    // 3. General normalized message fingerprint
+    // 6. General normalized message fingerprint
     return message
       .replace(/Price:\s*\*?[0-9.,]+\*?/gi, 'Price:NORM')
       .replace(/Filled at:\s*\*?[0-9.,]+\*?/gi, 'FilledAt:NORM')
@@ -174,7 +213,7 @@ export class TelegramAlertService {
   /**
    * Checks if an alert fingerprint was already sent (in-memory or in localStorage) within the cooldown window.
    */
-  static isDuplicateAlert(fingerprint: string, cooldownMs: number = 6 * 3600 * 1000): boolean {
+  static isDuplicateAlert(fingerprint: string, cooldownMs: number = 24 * 3600 * 1000): boolean {
     const now = Date.now();
 
     // 1. Check synchronous in-memory map first (blocks sub-millisecond concurrent calls)
@@ -277,6 +316,17 @@ export class TelegramAlertService {
       return { success: false, message: 'Telegram new-signal alerts are disabled.' };
     }
 
+    // Strict startup grace period check: never send automated signals during first 60 seconds of app load/refresh
+    if (!userInitiated && (Date.now() - MODULE_LOAD_TIME < 60000)) {
+      this.markSignalSent(signal, customHeader);
+      try {
+        const msg = this.formatSignalMessage(signal, customHeader);
+        const fp = this.getAlertFingerprint(msg);
+        this.recordAlertSent(fp);
+      } catch {}
+      return { success: false, message: 'Startup grace period - automated signal alert suppressed & baselined.' };
+    }
+
     // Never send automated signal alerts during weekend market closure
     if (!userInitiated && !isForexMarketOpen(new Date())) {
       this.markSignalSent(signal, customHeader);
@@ -335,6 +385,8 @@ export class TelegramAlertService {
     }
   }
 
+  private static lastAutomatedSendTimestamp = 0;
+
   /**
    * Dispatches real-time alert directly to user's Telegram via Official Telegram Bot API.
    * Synchronously deduplicates identical alerts so rapid ticks or React StrictMode never send duplicates.
@@ -350,35 +402,72 @@ export class TelegramAlertService {
       return { success: false, message: 'Telegram alerts are disabled.' };
     }
 
+    const fingerprint = this.getAlertFingerprint(message);
+
+    // Strict startup grace period check: never send automated alerts during first 60 seconds of app load/refresh
+    // Baseline and record the fingerprint so it can NEVER burst when the grace period finishes!
+    if (!userInitiated && (Date.now() - MODULE_LOAD_TIME < 60000)) {
+      this.recordAlertSent(fingerprint);
+      return { success: false, message: 'Startup grace period - automated alert suppressed & baselined.' };
+    }
+
     // Never send automated alerts during weekend market closure
     if (!userInitiated && !isForexMarketOpen(new Date())) {
+      this.recordAlertSent(fingerprint);
       return {
         success: false,
         message: 'Weekend market closed — automated Telegram alerts paused until Sunday 22:00 GMT open.'
       };
     }
 
-    const fingerprint = this.getAlertFingerprint(message);
     // Even for manual user-initiated clicks, block sub-15-second accidental double-triggers;
-    // for all automated triggers, enforce full 6-hour deduplication window.
-    const cooldownWindow = userInitiated ? 15 * 1000 : 6 * 3600 * 1000;
+    // for all automated triggers, enforce full 24-hour deduplication window.
+    const cooldownWindow = userInitiated ? 15 * 1000 : 24 * 3600 * 1000;
     if (this.isDuplicateAlert(fingerprint, cooldownWindow)) {
       return { success: false, message: 'Duplicate alert suppressed.' };
     }
 
+    // Rate-limiting throttle: Prevent spam floods by enforcing minimum 3-second spacing between automated alerts
+    const now = Date.now();
+    if (!userInitiated && now - this.lastAutomatedSendTimestamp < 3000) {
+      return { success: false, message: 'Anti-spam rate limit: Telegram alert throttled.' };
+    }
+
     // Lock synchronously BEFORE network await so parallel calls cannot race
     this.recordAlertSent(fingerprint);
+    if (!userInitiated) {
+      this.lastAutomatedSendTimestamp = now;
+    }
 
     const token = config.botToken.replace(/\s+/g, '');
     let chatId = config.chatId.replace(/\s+/g, '');
 
-    // Auto-detect chatId if not yet configured
+    // If chatId is empty locally, fetch from server config
+    if (!chatId) {
+      try {
+        const cfgRes = await fetch('/api/telegram/config');
+        const serverCfg = await cfgRes.json();
+        if (serverCfg && serverCfg.chatId) {
+          chatId = serverCfg.chatId;
+          if (serverCfg.botToken) {
+            this.saveConfig({ ...config, chatId, botToken: serverCfg.botToken });
+          }
+        }
+      } catch {}
+    }
+
+    // Auto-detect chatId if still not configured
     if (token && !chatId) {
       try {
         const detectRes = await this.autoDetectChatId(token);
         if (detectRes.success && detectRes.chatId) {
           chatId = detectRes.chatId;
           this.saveConfig({ ...config, chatId });
+          fetch('/api/telegram/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...config, chatId })
+          }).catch(() => {});
         }
       } catch {}
     }
@@ -390,6 +479,20 @@ export class TelegramAlertService {
       };
     }
 
+    // 1. Try sending via backend server proxy (/api/telegram/send) first — guarantees 100% success in downloaded app / APK / PWA / Webview without CORS or network blocks
+    try {
+      const proxyRes = await fetch('/api/telegram/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, chatId, message })
+      });
+      const proxyData = await proxyRes.json();
+      if (proxyData.success) {
+        return { success: true, message: '✅ Telegram alert sent successfully!' };
+      }
+    } catch {}
+
+    // 2. Fallback to direct client-side fetch if proxy failed or offline
     try {
       const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',

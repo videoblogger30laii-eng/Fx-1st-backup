@@ -336,7 +336,7 @@ export const AiChatScreen: React.FC<Props> = ({
   const quickChips = getQuickChips();
 
   return (
-    <div className="flex flex-col min-h-[calc(100dvh-170px)] max-w-4xl mx-auto relative text-left">
+    <div className="flex flex-col min-h-[calc(100dvh-170px)] max-w-md mx-auto relative text-left px-4">
       {/* Hidden File Input for Image Upload */}
       <input
         ref={fileInputRef}

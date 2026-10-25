@@ -154,7 +154,7 @@ export const DerivHistoricalService = {
 
     const granularity = options.granularity || 900; // 900 = 15m
     const count = options.count || 5000;
-    const strategy: StrategyType = options.strategy || 'BEST_TRADE_NOW';
+    const strategy: StrategyType = options.strategy || 'GOLD_HUNTER';
     const timeframe: Timeframe = options.timeframe || 'M15';
 
     return new Promise((resolve) => {

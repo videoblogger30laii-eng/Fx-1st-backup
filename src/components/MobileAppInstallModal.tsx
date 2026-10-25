@@ -47,12 +47,33 @@ export const MobileAppInstallModal: React.FC<Props> = ({
 
   const activeOrigin = typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'https://ais-pre-khyxbhrliwbprp5vdzyqd6-952034086177.asia-southeast1.run.app';
   const directApkUrl = `${activeOrigin}/FX-Signals-Pro.apk?v=1.4.0`;
+  const telegramDownloadUrl = `${activeOrigin}/download`;
   const activeQrUrl = qrTarget === 'APK' ? directApkUrl : activeOrigin;
   const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=230x230&margin=10&data=${encodeURIComponent(activeQrUrl)}`;
 
-  const handleCopyUrl = () => {
-    navigator.clipboard.writeText(activeQrUrl);
+  const handleCopyTelegramPost = () => {
+    const postText = `📲 *FX Signals Pro v1.4.0 — Official App Download*\n\n` +
+      `Real-time Institutional Forex, Gold & Silver Signals, Smart Money Concepts, Live Currency Strength Meter, and MT5 Order Execution.\n\n` +
+      `⬇️ *Direct Download Link for Android (.APK):*\n${telegramDownloadUrl}\n\n` +
+      `🌐 *Live Web App:* ${activeOrigin}\n\n` +
+      `👉 Tap the link above to download the app directly to your phone!`;
+
+    navigator.clipboard.writeText(postText);
     setCopiedUrl(true);
+    setActionMessage({
+      type: 'ok',
+      text: '✅ Ready-to-send Telegram download post copied to clipboard! Paste it into your Telegram channel or chat.'
+    });
+    setTimeout(() => setCopiedUrl(false), 3000);
+  };
+
+  const handleCopyUrl = () => {
+    navigator.clipboard.writeText(telegramDownloadUrl);
+    setCopiedUrl(true);
+    setActionMessage({
+      type: 'ok',
+      text: '✅ Telegram download link copied to clipboard!'
+    });
     setTimeout(() => setCopiedUrl(false), 2500);
   };
 
@@ -96,7 +117,7 @@ export const MobileAppInstallModal: React.FC<Props> = ({
         });
         setActionMessage({
           type: 'ok',
-          text: '✅ Shared FX-Signals-Pro.apk! You can save it to Files/Downloads or send via WhatsApp/Telegram.'
+          text: '✅ Shared FX-Signals-Pro.apk! You can save it to Files/Downloads or send via Telegram.'
         });
       } else if (nav.share) {
         await nav.share({
@@ -302,11 +323,59 @@ export const MobileAppInstallModal: React.FC<Props> = ({
                   <span>⬇️ Direct Download Updated FX-Signals-Pro.apk (v1.4.0)</span>
                 </a>
 
-                {/* 2. Native OS Share APK File (WhatsApp, Telegram, Save to Files, Quick Share) */}
+                {/* 2. Telegram Official Download Link Section */}
+                <div className="bg-[#080B11] border border-[#2979FF]/40 rounded-xl p-3 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black text-[#2979FF] flex items-center gap-1.5">
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Telegram Download Link</span>
+                    </span>
+                    <span className="text-[10px] font-bold text-[#00E676] bg-[#00E676]/15 px-1.5 py-0.5 rounded">
+                      Ready to Share
+                    </span>
+                  </div>
+
+                  <p className="text-[10.5px] text-[#94A3B8] leading-tight">
+                    Share this link in Telegram channels or chats. Tapping it starts the APK download immediately on mobile:
+                  </p>
+
+                  <div className="flex items-center gap-1.5 bg-[#101522] p-1.5 rounded-lg border border-[#222F47] text-[11px] font-mono text-[#E2E8F0] select-all">
+                    <span className="truncate flex-1">{telegramDownloadUrl}</span>
+                    <button
+                      onClick={handleCopyUrl}
+                      className="px-2 py-1 bg-[#182033] hover:bg-[#222F47] text-white rounded text-[10px] font-bold flex items-center gap-1 shrink-0"
+                    >
+                      {copiedUrl ? <Check className="w-3 h-3 text-[#00E676]" /> : <Copy className="w-3 h-3" />}
+                      <span>Copy Link</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={handleCopyTelegramPost}
+                      className="py-2 px-2.5 rounded-lg bg-[#141C2E] hover:bg-[#1C263D] border border-[#2979FF]/40 text-[#2979FF] font-bold text-[11px] flex items-center justify-center gap-1.5 transition-all"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy Telegram Post</span>
+                    </button>
+
+                    <a
+                      href={`https://t.me/share/url?url=${encodeURIComponent(telegramDownloadUrl)}&text=${encodeURIComponent('📲 Download FX Signals Pro v1.4.0 (.APK) — Institutional Forex, Gold & Silver Signals!')}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="py-2 px-2.5 rounded-lg bg-[#2979FF] hover:bg-[#2979FF]/90 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 transition-all no-underline text-center"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Share to Telegram</span>
+                    </a>
+                  </div>
+                </div>
+
+                {/* 3. Native OS Share APK File (Telegram, Save to Files, Quick Share) */}
                 <button
                   onClick={handleNativeShareApkFile}
                   disabled={isSharing}
-                  className="w-full py-2.5 px-4 rounded-xl bg-[#2979FF] hover:bg-[#2979FF]/90 text-white font-black text-xs flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-60"
+                  className="w-full py-2.5 px-4 rounded-xl bg-[#182033] hover:bg-[#222F47] border border-[#222F47] text-white font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-60"
                 >
                   {isSharing ? (
                     <>
@@ -315,38 +384,38 @@ export const MobileAppInstallModal: React.FC<Props> = ({
                     </>
                   ) : (
                     <>
-                      <Share2 className="w-4 h-4" />
-                      <span>📤 Share FX-Signals-Pro.apk File (WhatsApp / Files)</span>
+                      <Share2 className="w-4 h-4 text-[#00E676]" />
+                      <span>📤 Share APK File Directly (Telegram / Files)</span>
                     </>
                   )}
                 </button>
 
-                {/* 3. Send APK Directly to Telegram Chat */}
+                {/* 4. Send APK Directly to Telegram Chat via Bot */}
                 <button
                   onClick={handleSendApkToTelegram}
                   disabled={isSendingTelegram}
-                  className="w-full py-2.5 px-4 rounded-xl bg-[#182033] hover:bg-[#222F47] border border-[#2979FF]/50 text-[#F1F5F9] font-bold text-xs flex items-center justify-center gap-2 transition-all disabled:opacity-60"
+                  className="w-full py-2 px-4 rounded-xl bg-[#101522] hover:bg-[#182033] border border-[#2979FF]/30 text-[#94A3B8] hover:text-[#F1F5F9] font-medium text-[11px] flex items-center justify-center gap-2 transition-all disabled:opacity-60"
                 >
                   {isSendingTelegram ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin text-[#2979FF]" />
-                      <span>Uploading FX-Signals-Pro.apk to Telegram...</span>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#2979FF]" />
+                      <span>Uploading to Telegram Bot...</span>
                     </>
                   ) : (
                     <>
-                      <Send className="w-4 h-4 text-[#2979FF]" />
-                      <span>✈️ Send FX-Signals-Pro.apk to My Telegram</span>
+                      <Send className="w-3.5 h-3.5 text-[#2979FF]" />
+                      <span>✈️ Send APK to My Telegram Chat via Bot</span>
                     </>
                   )}
                 </button>
 
-                {/* 4. Instant Standalone App File (Opens immediately without APK installer permissions) */}
+                {/* 5. Instant Standalone App File (Opens immediately without APK installer permissions) */}
                 <a
                   href="/api/download/mobile-app?v=1.4.0"
                   download="FX-Signals-Pro-Mobile-App-v1.4.0.html"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="w-full py-2 px-4 rounded-xl bg-[#101522] hover:bg-[#182033] border border-[#FFD700]/40 text-[#FFD700] font-bold text-[11px] flex items-center justify-center gap-2 transition-all no-underline"
+                  className="w-full py-2 px-4 rounded-xl bg-[#101522] hover:bg-[#182033] border border-[#FFD700]/30 text-[#FFD700] font-bold text-[11px] flex items-center justify-center gap-2 transition-all no-underline"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>⚡ Instant Open Portable App v1.4.0 (No APK Install Needed)</span>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { ForexPair, Timeframe, CandleStick, MarketDataProvider } from '../types';
 import { CandlestickChart } from '../components/CandlestickChart';
 import { formatPrice } from '../services/marketData';
@@ -14,6 +15,7 @@ interface Props {
   onPairSelect: (pair: ForexPair) => void;
   onTimeframeSelect: (tf: Timeframe) => void;
   onRefreshCandles?: () => void;
+  onBack?: () => void;
 }
 
 export const ChartTerminalScreen: React.FC<Props> = ({
@@ -25,7 +27,8 @@ export const ChartTerminalScreen: React.FC<Props> = ({
   marketDataProvider,
   onPairSelect,
   onTimeframeSelect,
-  onRefreshCandles
+  onRefreshCandles,
+  onBack
 }) => {
   const [ohlc, setOhlc] = useState<PairOHLC>(() => realPriceService.getOHLC(selectedPair.symbol));
 
@@ -57,7 +60,17 @@ export const ChartTerminalScreen: React.FC<Props> = ({
   ];
 
   return (
-    <div className="space-y-4 max-w-4xl mx-auto pb-16 text-left">
+    <div className="space-y-4 w-full pb-16 text-left">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 px-3.5 py-2 bg-[#101522] border border-[#222F47] hover:border-[#2979FF] text-[#F1F5F9] rounded-xl text-xs font-bold transition-all shadow-xs group"
+        >
+          <ArrowLeft className="w-4 h-4 text-[#2979FF] group-hover:-translate-x-0.5 transition-transform" />
+          <span>Back to Signals</span>
+        </button>
+      )}
+
       {/* Pair Switcher Carousel */}
       <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
         {allPairs.map(pair => {

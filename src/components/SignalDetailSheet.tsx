@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ForexSignal } from '../types';
+import { ForexSignal, isMarketExecutionSignal } from '../types';
 import {
   formatPrice,
   calculatePips,
@@ -7,11 +7,15 @@ import {
   calculateLotSize,
   getFormattedCountdown,
   getFormattedTimeElapsed,
+  formatSignalDateTime,
   getFormattedTotalValidity,
   getValidityProgress,
   getTpProgressRatio,
   isForexMarketOpen,
-  getWeekendMarketState
+  getWeekendMarketState,
+  getSignalExecutedAtMs,
+  getFormattedExecutedTime,
+  getFormattedExecutionTimeDiff
 } from '../services/marketData';
 import { realPriceService } from '../services/RealPriceService';
 import { getSignalDetailedAnalysis } from '../services/signalAnalysisEngine';
@@ -84,6 +88,11 @@ export const SignalDetailSheet: React.FC<Props> = ({
   const tp1Pips = Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.takeProfit1, isBuy));
   const countdown = getFormattedCountdown(signal, nowClockMs);
   const isPending = signal.status === 'PENDING' || signal.isPending;
+  const isMarketExecution = isMarketExecutionSignal(signal.type);
+  const isRunning = signal.status === 'RUNNING';
+  const executedAtMs = !isMarketExecution && isRunning && !isPending && !isClosed ? getSignalExecutedAtMs(signal, nowClockMs) : undefined;
+  const executedTimeText = executedAtMs ? getFormattedExecutedTime(signal, nowClockMs) : '';
+  const waitText = executedAtMs ? getFormattedExecutionTimeDiff(signal, nowClockMs) : '';
 
   // Compute full institutional analysis
   const analysis = getSignalDetailedAnalysis(signal);
@@ -205,8 +214,22 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
                 {signal.confluenceScore}% Confluence
               </span>
             </div>
-            <div className="text-[11px] text-[#94A3B8] mt-0.5">
-              {signal.pair.name} • {signal.timeframe} Timeframe ({getFormattedTotalValidity(signal)}) • {signal.killzone}
+            <div className="text-[11px] text-[#94A3B8] mt-0.5 flex items-center gap-1.5 flex-wrap">
+              <span>{signal.pair.name} • [{signal.winningTf || signal.timeframe}]</span>
+              <span>•</span>
+              <span className="text-[#F1F5F9] font-bold">Posted: {formatSignalDateTime(signal.createdAtMs)}</span>
+              <span>({getFormattedTimeElapsed(signal, nowClockMs)})</span>
+              {!isMarketExecution && isRunning && executedAtMs && (
+                <>
+                  <span>•</span>
+                  <span className="text-[#FFD700] font-bold">Executed: {formatSignalDateTime(executedAtMs)}</span>
+                  <span className="text-[#00E676] font-semibold">({executedTimeText.replace('Executed ', '')})</span>
+                  <span>•</span>
+                  <span className="text-[#60A5FA] font-mono bg-[#2979FF]/15 px-1.5 py-0.2 rounded border border-[#2979FF]/30">+{waitText} fill delay</span>
+                </>
+              )}
+              <span>•</span>
+              <span>{signal.killzone}</span>
             </div>
           </div>
 
@@ -255,6 +278,35 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
             {analysis.smcParameters.pricingZone}
           </span>
         </div>
+
+        {/* Non-Market Execution (Limit/Stop Orders) Real Fill Telemetry Linear Banner */}
+        {!isMarketExecution && isRunning && !isPending && !isClosed && executedAtMs && (
+          <div className="my-2 p-2.5 rounded-xl bg-gradient-to-r from-[#182033] via-[#10192d] to-[#182033] border border-[#2979FF]/45 flex flex-wrap items-center justify-between gap-1.5 text-[10px] font-mono">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="px-2 py-0.5 rounded bg-[#2979FF]/20 text-[#60A5FA] border border-[#2979FF]/40 font-black text-[9px] uppercase tracking-wide">
+                {signal.type.replace('_', ' ')}
+              </span>
+              <span className="font-bold text-[#FFD700] flex items-center gap-1">
+                <Zap className="w-3 h-3 text-[#FFD700]" />
+                <span>EXECUTED AT ENTRY:</span>
+                <span className="text-[#00E676] font-black">{executedTimeText}</span>
+              </span>
+              <span className="text-[#94A3B8] text-[9px] hidden sm:inline">
+                ({formatSignalDateTime(executedAtMs)})
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 text-[9px] text-[#94A3B8]">
+              <span>
+                Posted: <span className="text-[#F1F5F9] font-bold">{getFormattedTimeElapsed(signal, nowClockMs).replace('Posted ', '')}</span>
+              </span>
+              <span className="text-[#64748B]">·</span>
+              <span className="text-[#60A5FA] font-bold bg-[#2979FF]/15 px-2 py-0.5 rounded border border-[#2979FF]/30">
+                Time to Fill: +{waitText}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Closed Trade Post-Mortem Forensic Banner */}
         {isClosed && (

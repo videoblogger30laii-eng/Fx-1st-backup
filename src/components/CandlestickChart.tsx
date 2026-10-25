@@ -170,7 +170,7 @@ export const CandlestickChart: React.FC<Props> = ({
       </div>
 
       {/* TradingView Advanced Real-Time Chart Container */}
-      <div className="relative w-full h-[520px] sm:h-[560px] bg-[#0B0F19]">
+      <div className="relative w-full h-[420px] sm:h-[500px] bg-[#0B0F19]">
         {/* Direct native iframe: Resizes cleanly with 100% width/height without external script errors */}
         <iframe
           key={`${tvSymbol}-${tvInterval}`}
