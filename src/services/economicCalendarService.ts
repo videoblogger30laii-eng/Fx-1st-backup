@@ -1,5 +1,6 @@
-import { EconomicEvent, ForexPair, ForexSignal, SignalType } from '../types';
+import { ConfluenceBreakdown, EconomicEvent, ForexPair, ForexSignal, SignalType } from '../types';
 import { PersistenceManager } from './persistence';
+import { currencyStrengthService } from './currencyStrengthService';
 
 const CALENDAR_ANCHOR_KEY = 'forex_calendar_anchor_ts_v3';
 const CALENDAR_APPLIED_RELEASES_KEY = 'forex_calendar_applied_releases_v3';
@@ -543,8 +544,51 @@ class EconomicCalendarService {
           continue;
         }
 
+        const liveStrengthSnap = currencyStrengthService.getLiveCurrencyStrengthSnapshot();
+        const computeRealPostNewsBreakdown = (): { score: number; breakdown: ConfluenceBreakdown } => {
+          const impactPts = evt.impact === 'HIGH' ? 24 : evt.impact === 'MEDIUM' ? 16 : 10;
+          const surprisePts = (evt.actual && evt.forecast && evt.actual !== evt.forecast) ? 16 : 6;
+          const quotePts = hasRealLiveQuote ? 16 : 0;
+          let strPts = 0;
+          if (liveStrengthSnap.hasLiveData) {
+            const parts = impact.pair.toUpperCase().split('/');
+            const b = parts[0] || '';
+            const q = parts[1] || 'USD';
+            const bItem = liveStrengthSnap.items.find(i => i.currency === b);
+            const qItem = liveStrengthSnap.items.find(i => i.currency === q);
+            if (bItem && qItem) {
+              const dirDelta = shouldBeBuy ? (bItem.strength - qItem.strength) : (qItem.strength - bItem.strength);
+              if (dirDelta >= 3.0) strPts = 24;
+              else if (dirDelta >= 1.5) strPts = 18;
+              else if (dirDelta >= 0.3) strPts = 12;
+              else if (dirDelta >= -0.5) strPts = 6;
+              else strPts = -10;
+            }
+          }
+          const spreadPts = (pairObj.spreadPips <= 2.5 || isGoldPair) ? 8 : 0;
+          const total = Math.max(25, Math.min(96, Math.round(impactPts + surprisePts + quotePts + strPts + spreadPts)));
+          const breakdown: ConfluenceBreakdown = {
+            h4Score: impactPts,
+            h1M15Score: surprisePts,
+            strengthScore: strPts,
+            d1LiquidityScore: quotePts,
+            atrSpreadScore: spreadPts,
+            newsPenalty: 0,
+            total,
+            summaryText: `H4:${impactPts} + H1/M15:${surprisePts} + Strength:${strPts} + D1/Liq:${quotePts} + ATR:${spreadPts} = ${total}`,
+            sources: {
+              h4Bars: 0,
+              h1Bars: 0,
+              m15Bars: 0,
+              d1Bars: 0
+            }
+          };
+          return { score: total, breakdown };
+        };
+
         if (existingIndex === -1) {
-          // Pair has no active signal -> Create a brand-new Post-News Signal Card!
+          // Pair has no active signal -> Create a brand-new Post-News Signal Card with genuine confluence!
+          const { score: realNewsScore, breakdown: newsConfluenceBreakdown } = computeRealPostNewsBreakdown();
           const newPostNewsSignal: ForexSignal = {
             id: newsSigId,
             pair: { ...pairObj, currentPrice: newCurrent },
@@ -558,7 +602,8 @@ class EconomicCalendarService {
             takeProfit3: newTp3,
             pips: activePips,
             riskReward: '1:2.6',
-            confluenceScore: 93,
+            confluenceScore: realNewsScore,
+            confluenceBreakdown: newsConfluenceBreakdown,
             rationale: `📰 NEW POST-NEWS SIGNAL (${evt.title}: Actual ${actualLabel} vs Forecast ${evt.forecast}): ${impact.explanation} Institutional order flow triggered immediate ${shouldBeBuy ? 'BUY' : 'SELL'} expansion on ${impact.pair} (${slPipsCount}p SL / +${tp1PipsCount}p TP1).`,
             timeframe: 'M15',
             timestamp: 'Just Released (News Catalyst)',
@@ -568,8 +613,10 @@ class EconomicCalendarService {
             isFavorite: false,
             hasAlert: true,
             killzone: `${evt.currency} High-Impact News Release`,
-            winProbability: 93,
-            quality: 'A_PLUS',
+            winProbability: 0,
+            quality: 'C',
+            winPctSource: 'Live Post-News Event (0 historical trades)',
+            backtestTradeCount: 0,
             economicRisk: `📰 NEW SIGNAL FROM NEWS: ${evt.title} (${actualLabel} vs ${evt.forecast})`,
             validityTimeLeft: `Active (+${activePips} pips)`,
             validityExpiresAt: `Targeting M15 TP1 ${newTp1} (+${tp1PipsCount}p)`,
@@ -588,9 +635,9 @@ class EconomicCalendarService {
                 detail: `${evt.title}: Actual ${actualLabel} vs Forecast ${evt.forecast}`
               },
               {
-                title: 'Post-News Displacement Candle',
-                isConfirmed: true,
-                detail: `${shouldBeBuy ? 'Bullish' : 'Bearish'} M15 institutional order flow confirmed`
+                title: 'Live Quote & Strength Verification',
+                isConfirmed: Boolean(hasRealLiveQuote && liveStrengthSnap.hasLiveData),
+                detail: `${shouldBeBuy ? 'Bullish' : 'Bearish'} post-news order flow (${realNewsScore}/100 confluence)`
               },
               {
                 title: '0.01 Micro-Lot Tradability',
@@ -609,23 +656,23 @@ class EconomicCalendarService {
           const existingIsBuy = existingSig.type.startsWith('BUY');
 
           if (existingIsBuy === shouldBeBuy) {
-            // News supports existing signal direction -> Boost confluence & mark News Confirmed (avoid duplicate prefix stacking)
+            // News supports existing signal direction -> Add bounded catalyst bonus (no artificial 92+ jump)
             if (existingSig.rationale.includes(evt.title)) {
               continue;
             }
             const cleanBaseRationale = existingSig.rationale.replace(/^✅ NEWS CATALYST ALIGNED \([^)]+\):\s*/g, '');
-            const boostedScore = Math.min(98, Math.max(existingSig.confluenceScore + 2, 92));
+            const catalystBoost = evt.impact === 'HIGH' ? 5 : 3;
+            const boostedScore = Math.min(100, (existingSig.confluenceScore || 0) + catalystBoost);
             nextSignals[existingIndex] = {
               ...existingSig,
               confluenceScore: boostedScore,
-              quality: 'A_PLUS',
               economicRisk: `✅ NEWS CONFIRMED (${evt.title}: ${actualLabel} vs ${evt.forecast})`,
               rationale: `✅ NEWS CATALYST ALIGNED (${evt.title}: Actual ${actualLabel} vs Forecast ${evt.forecast}): ${cleanBaseRationale}`,
               checklist: [
                 {
                   title: `News Catalyst Aligned (${evt.currency})`,
                   isConfirmed: true,
-                  detail: `${evt.title} (${actualLabel}) confirms ${shouldBeBuy ? 'BUY' : 'SELL'} bias`
+                  detail: `${evt.title} (${actualLabel}) confirms ${shouldBeBuy ? 'BUY' : 'SELL'} bias (+${catalystBoost} catalyst)`
                 },
                 ...existingSig.checklist.filter(c => !c.title.includes('News Catalyst'))
               ]
@@ -637,6 +684,7 @@ class EconomicCalendarService {
             hasChanges = true;
           } else if (hasRealLiveQuote && (existingSig.createdAtMs || 0) < evt.timestamp) {
             // Only flip if we have a real live quote AND the signal was created prior to the news release
+            const { score: flippedScore, breakdown: flippedBreakdown } = computeRealPostNewsBreakdown();
             nextSignals[existingIndex] = {
               ...existingSig,
               pair: { ...pairObj, currentPrice: newCurrent },
@@ -652,8 +700,10 @@ class EconomicCalendarService {
               takeProfit: newTp1,
               pips: activePips,
               riskReward: '1:2.6',
-              confluenceScore: 92,
-              quality: 'A_PLUS',
+              confluenceScore: flippedScore,
+              confluenceBreakdown: flippedBreakdown,
+              winProbability: existingSig.winProbability,
+              quality: existingSig.quality,
               timestamp: 'Updated by News Release',
               validityTimeLeft: `Active (+${activePips} pips)`,
               validityExpiresAt: `Targeting ${targetTf} TP1 ${newTp1} (+${tp1PipsCount}p)`,
@@ -678,11 +728,25 @@ class EconomicCalendarService {
     }
 
     // Deduplication:
-    // 1. All closed trades (HIT_TP, HIT_SL) stay permanently in the Closed ledger.
+    // 1. All closed trades (HIT_TP, HIT_SL) stay permanently in the Closed ledger with strict deduplication.
     // 2. Only 1 active trade (RUNNING or PENDING) is allowed per pair at a time.
     const seenActivePairs = new Set<string>();
+    const seenClosedFp = new Set<string>();
+    const seenClosedIds = new Set<string>();
     const dedupedSignals = nextSignals.filter(s => {
       if (s.status === 'HIT_TP' || s.status === 'HIT_SL') {
+        const baseId = (s.id || '').replace(/-HIST-\d+/g, '').replace(/-HIT_TP-\d+/g, '').replace(/-HIT_SL-\d+/g, '');
+        const dec = s.pair?.pipDigits ?? 2;
+        const entryStr = typeof s.entryPrice === 'number' ? s.entryPrice.toFixed(dec) : '0';
+        const pipsStr = Math.round((s.pips ?? 0) * 10) / 10;
+        const fp = `${s.pair.symbol}-${s.type}-${entryStr}-${s.status}-${pipsStr}`;
+
+        if (seenClosedIds.has(s.id) || (baseId && seenClosedIds.has(baseId)) || seenClosedFp.has(fp)) {
+          return false;
+        }
+        seenClosedIds.add(s.id);
+        if (baseId) seenClosedIds.add(baseId);
+        seenClosedFp.add(fp);
         return true;
       }
       const symbol = s.pair.symbol;

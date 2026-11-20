@@ -20,9 +20,7 @@ import { StrategyBacktester } from '../services/strategyBacktester';
 import { ALL_PAIRS, formatPrice } from '../services/marketData';
 import {
   DerivHistoricalService,
-  DerivTradeVerificationResult,
-  DEFAULT_DERIV_SYMBOLS,
-  DERIV_PAIR_MAP
+  DerivTradeVerificationResult
 } from '../services/derivHistoricalService';
 import { RealEquityCurveChart } from '../components/RealEquityCurveChart';
 import { MonteCarloStressModal } from '../components/MonteCarloStressModal';
@@ -69,6 +67,9 @@ interface Props {
   summary: BacktestSummary;
   filter: BacktestFilter;
   liveSignals?: ForexSignal[];
+  sourceTrades?: BacktestTrade[];
+  candlesScannedCount?: number;
+  isScanningPortfolio?: boolean;
   onStrategySelect: (strat: StrategyType) => void;
   onTimeframeSelect: (tf: Timeframe | null) => void;
   onConfluenceSelect: (score: number) => void;
@@ -84,6 +85,9 @@ export const BacktestingLabScreen: React.FC<Props> = ({
   summary: initialSummary,
   filter,
   liveSignals = [],
+  sourceTrades,
+  candlesScannedCount,
+  isScanningPortfolio = false,
   onStrategySelect,
   onTimeframeSelect,
   onConfluenceSelect,
@@ -104,9 +108,6 @@ export const BacktestingLabScreen: React.FC<Props> = ({
   // Time Horizon Local State
   const [selectedHorizon, setSelectedHorizon] = useState<BacktestTimeHorizon>(filter.timeHorizon || 'ALL');
 
-  // Candle Count Scan Setting for Candle-based engine
-  const [candleScanCount, setCandleScanCount] = useState<number>(5000);
-
   // Trade Ledger Display Limits (Compact default to avoid bulky scrolling)
   const [tradeLimit, setTradeLimit] = useState<number>(10);
   const [tradeSearchQuery, setTradeSearchQuery] = useState<string>('');
@@ -125,13 +126,24 @@ export const BacktestingLabScreen: React.FC<Props> = ({
       '';
   });
 
-  const [scanStatusMsg, setScanStatusMsg] = useState<string>(
-    'Deriv Live: 5,000 Real Candles Ready'
-  );
-  const [isDerivAuthorized, setIsDerivAuthorized] = useState<boolean>(false);
-  const [totalCandlesScanned, setTotalCandlesScanned] = useState<number>(5000);
+  const [scanStatusMsg, setScanStatusMsg] = useState<string>(() => {
+    const count = candlesScannedCount ?? BacktestEngine.getCachedPortfolioStats().candlesScanned;
+    return count > 0
+      ? `Real OHLC Ready: ${count.toLocaleString()} Candles Scanned (M15/H1/H4/D1)`
+      : 'Ready to scan real M15/H1/H4/D1 OHLC candles across 30 pairs';
+  });
+  const [totalCandlesScanned, setTotalCandlesScanned] = useState<number>(() => {
+    return candlesScannedCount ?? BacktestEngine.getCachedPortfolioStats().candlesScanned;
+  });
   const [isApiSettingsOpen, setIsApiSettingsOpen] = useState<boolean>(false);
   const [isMonteCarloOpen, setIsMonteCarloOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof candlesScannedCount === 'number' && candlesScannedCount > 0) {
+      setTotalCandlesScanned(candlesScannedCount);
+      setScanStatusMsg(`Real OHLC Verified: ${candlesScannedCount.toLocaleString()} Candles (H4 9/50 + MTF Confluence)`);
+    }
+  }, [candlesScannedCount]);
 
   // 6-Gate Quantitative Risk Shield Interactive State
   const [activeGates, setActiveGates] = useState<InstitutionalGateSettings>(() => {
@@ -140,20 +152,32 @@ export const BacktestingLabScreen: React.FC<Props> = ({
   const [isGatesSettingsOpen, setIsGatesSettingsOpen] = useState<boolean>(false);
   const [selectedAuditTrade, setSelectedAuditTrade] = useState<BacktestTrade | null>(null);
 
+  const effectiveSourceTrades = useMemo(() => {
+    if (sourceTrades && sourceTrades.length > 0) return sourceTrades;
+    const cached = BacktestEngine.getCachedPortfolioStats();
+    return cached.trades.length > 0 ? cached.trades : undefined;
+  }, [sourceTrades]);
+
   const handleToggleGate = (gateKey: keyof InstitutionalGateSettings) => {
     const updated: InstitutionalGateSettings = {
       ...activeGates,
       [gateKey]: !activeGates[gateKey]
     };
     setActiveGates(updated);
+    const cached = BacktestEngine.getCachedPortfolioStats();
+    const recomputedTrades =
+      cached.cachedPairs > 0
+        ? BacktestEngine.recomputePortfolioFromCachedCandles(updated)
+        : effectiveSourceTrades;
+
     const newSummary = BacktestEngine.runBacktest({
       ...filter,
       timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon,
       gateSettings: updated
-    }, undefined, liveSignals);
+    }, recomputedTrades, liveSignals);
     setCurrentSummary(newSummary);
     if (onSummaryUpdate) {
-      onSummaryUpdate(newSummary);
+      onSummaryUpdate(newSummary, recomputedTrades);
     }
   };
 
@@ -167,14 +191,20 @@ export const BacktestingLabScreen: React.FC<Props> = ({
       gateSpreadTolerance: enabled
     };
     setActiveGates(updated);
+    const cached = BacktestEngine.getCachedPortfolioStats();
+    const recomputedTrades =
+      cached.cachedPairs > 0
+        ? BacktestEngine.recomputePortfolioFromCachedCandles(updated)
+        : effectiveSourceTrades;
+
     const newSummary = BacktestEngine.runBacktest({
       ...filter,
       timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon,
       gateSettings: updated
-    }, undefined, liveSignals);
+    }, recomputedTrades, liveSignals);
     setCurrentSummary(newSummary);
     if (onSummaryUpdate) {
-      onSummaryUpdate(newSummary);
+      onSummaryUpdate(newSummary, recomputedTrades);
     }
   };
 
@@ -215,10 +245,21 @@ export const BacktestingLabScreen: React.FC<Props> = ({
     } else {
       const updated = BacktestEngine.runBacktest({
         ...filter,
-        timeHorizon: horizon === 'ALL' ? null : horizon
-      }, undefined, liveSignals);
+        timeHorizon: horizon === 'ALL' ? null : horizon,
+        gateSettings: activeGates
+      }, effectiveSourceTrades, liveSignals);
       setCurrentSummary(updated);
     }
+  };
+
+  // Handle Confluence Cutoff Selection (also syncs fx_min_score_cutoff when 70 or 80)
+  const handleSelectConfluenceCutoff = (score: number) => {
+    if (score === 70 || score === 80) {
+      try {
+        localStorage.setItem('fx_min_score_cutoff', String(score));
+      } catch {}
+    }
+    onConfluenceSelect(score);
   };
 
   // Save credentials to localStorage
@@ -232,88 +273,57 @@ export const BacktestingLabScreen: React.FC<Props> = ({
   };
 
   /**
-   * 100% Accurate Candle-Based Backtest Runner:
-   * Connects to Deriv Live, fetches real OHLC candles (500 to 5000 count),
-   * runs zero-lookahead, spread-aware, fixed 1.5R ATR strategy logic.
+   * 100% Real Multi-Timeframe Candle Backtest Runner:
+   * Fetches real M15/H1/H4/D1 OHLC candles from /api/market/candles across selected/all 30 pairs,
+   * enforces H4 9/50 EMA Trend Filter & real 5-factor Confluence Scoring (0-100) with zero lookahead bias.
    */
   const handleRunAccurateBacktest = async () => {
     setIsFetchingLive(true);
     setFetchError(null);
-    setScanStatusMsg('Connecting: wss://ws.derivws.com/websockets/v3...');
-
-    const elAppId = document.getElementById('derivAppId') as HTMLInputElement | null;
-    const elToken = document.getElementById('derivApiToken') as HTMLInputElement | null;
-
-    const appId = (
-      elAppId?.value?.trim() ||
-      derivAppIdInput.trim() ||
-      localStorage.getItem('fx_deriv_app_id') ||
-      (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_DERIV_APP_ID) ||
-      '1089'
-    ).replace(/\D/g, '') || '1089';
-
-    const token = (
-      elToken?.value?.trim() ||
-      derivTokenInput.trim() ||
-      localStorage.getItem('fx_deriv_token') ||
-      (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_DERIV_API_TOKEN) ||
-      ''
-    ).trim();
-
-    const targetPair = filter.pairSymbol;
-    let symbolsToFetch = DEFAULT_DERIV_SYMBOLS;
-    if (targetPair && DERIV_PAIR_MAP[targetPair]) {
-      symbolsToFetch = [DERIV_PAIR_MAP[targetPair]];
-    }
-
-    const granMap: Record<Timeframe, number> = {
-      M5: 300,
-      M15: 900,
-      H1: 3600,
-      H4: 14400,
-      D1: 86400
-    };
-    const granularity = filter.timeframe ? (granMap[filter.timeframe] || 900) : 900;
+    const targetSymbols = filter.pairSymbol
+      ? [filter.pairSymbol]
+      : ALL_PAIRS.filter(p => !filter.category || filter.category === 'ALL' || getAssetCategory(p.symbol) === filter.category).map(p => p.symbol);
+    setScanStatusMsg(`Fetching real M15/H1/H4/D1 candles for ${targetSymbols.length} pair(s)...`);
 
     try {
-      const derivResult = await DerivHistoricalService.fetchAndRunBacktest({
-        appId,
-        token,
-        symbols: symbolsToFetch,
-        granularity,
-        count: candleScanCount,
-        strategy: filter.strategy,
-        timeframe: filter.timeframe || undefined
+      const portfolioResult = await BacktestEngine.runPortfolioRealCandleBacktest({
+        symbols: targetSymbols,
+        timeframes: filter.timeframe ? [filter.timeframe] : ['M15', 'H1', 'H4', 'D1'],
+        gateSettings: activeGates,
+        forceRefresh: true,
+        onProgress: (done, total, bars) => {
+          setTotalCandlesScanned(bars);
+          setScanStatusMsg(`Scanning ${done}/${total} pairs (${bars.toLocaleString()} real OHLC bars)...`);
+        }
       });
 
-      setScanStatusMsg(derivResult.statusMessage);
-      setIsDerivAuthorized(derivResult.isAuthorized);
-      setTotalCandlesScanned(derivResult.totalCandles || candleScanCount);
+      setTotalCandlesScanned(portfolioResult.candlesScanned);
       setLastLiveSyncTime(Date.now());
-
-      if (derivResult.trades.length > 0) {
-        const newSummary = BacktestEngine.runBacktest({
-          ...filter,
-          timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon
-        }, derivResult.trades, liveSignals);
-        setCurrentSummary(newSummary);
-        if (onSummaryUpdate) {
-          onSummaryUpdate(newSummary, derivResult.trades);
-        }
-      } else {
-        const fallbackSummary = BacktestEngine.runBacktest({
-          ...filter,
-          timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon
-        }, undefined, liveSignals);
-        setCurrentSummary(fallbackSummary);
+      setScanStatusMsg(
+        `Scanned ${portfolioResult.candlesScanned.toLocaleString()} real OHLC bars across ${portfolioResult.pairsWithCandles}/${portfolioResult.pairsScanned} pairs (${portfolioResult.trades.length} real setups)`
+      );
+      if (portfolioResult.errors.length > 0 && portfolioResult.pairsWithCandles === 0) {
+        setFetchError(portfolioResult.errors[0]);
       }
-    } catch {
-      setFetchError('Deriv live connection error. Evaluated on real historical candle database.');
-      setScanStatusMsg('Using public feed, login for private data');
+
+      const newSummary = BacktestEngine.runBacktest({
+        ...filter,
+        timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon,
+        gateSettings: activeGates
+      }, portfolioResult.trades, liveSignals);
+
+      setCurrentSummary(newSummary);
+      if (onSummaryUpdate) {
+        onSummaryUpdate(newSummary, portfolioResult.trades);
+      }
+    } catch (err: any) {
+      setFetchError(err?.message || 'Candle fetch failed. Evaluated on cached / OANDA archive.');
+      setScanStatusMsg('Using cached real OHLC & OANDA archive');
       const fallbackSummary = BacktestEngine.runBacktest({
         ...filter,
-        timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon
-      }, undefined, liveSignals);
+        timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon,
+        gateSettings: activeGates
+      }, effectiveSourceTrades, liveSignals);
       setCurrentSummary(fallbackSummary);
     } finally {
       setIsFetchingLive(false);
@@ -339,10 +349,10 @@ export const BacktestingLabScreen: React.FC<Props> = ({
   ];
 
   const confluenceTiers = [
-    { score: 85, label: 'A+ VIP (85%+)' },
-    { score: 90, label: 'Elite (90%+)' },
-    { score: 80, label: 'High Prob (80%+)' },
-    { score: 70, label: 'All Setups (70%+)' },
+    { score: 70, label: '70+ (Standby + Active)' },
+    { score: 80, label: '80+ (Active Cutoff)' },
+    { score: 85, label: '85+ (A+ Strong)' },
+    { score: 90, label: '90+ (VIP Elite)' },
   ];
 
   const categoryTabs: { key: AssetCategory | null; label: string; icon: string }[] = [
@@ -422,11 +432,13 @@ export const BacktestingLabScreen: React.FC<Props> = ({
     return BacktestEngine.compareAllStrategies(
       {
         ...filter,
-        timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon
+        timeHorizon: selectedHorizon === 'ALL' ? null : selectedHorizon,
+        gateSettings: activeGates
       },
-      liveSignals
+      liveSignals,
+      effectiveSourceTrades
     );
-  }, [filter, selectedHorizon, liveSignals]);
+  }, [filter, selectedHorizon, liveSignals, activeGates, effectiveSourceTrades]);
 
   const activeStrategyDetail = useMemo(() => {
     return (
@@ -444,8 +456,9 @@ export const BacktestingLabScreen: React.FC<Props> = ({
     return BACKTEST_TIME_HORIZONS.map(h => {
       const hSummary = BacktestEngine.runBacktest({
         ...filter,
-        timeHorizon: h.id === 'ALL' ? null : h.id
-      }, undefined, liveSignals);
+        timeHorizon: h.id === 'ALL' ? null : h.id,
+        gateSettings: activeGates
+      }, effectiveSourceTrades, liveSignals);
       return {
         ...h,
         totalTrades: hSummary.totalTrades,
@@ -457,7 +470,7 @@ export const BacktestingLabScreen: React.FC<Props> = ({
         lossTrades: hSummary.lossTrades
       };
     });
-  }, [filter, liveSignals, currentSummary]);
+  }, [filter, liveSignals, activeGates, effectiveSourceTrades]);
 
   return (
     <div className="space-y-3 max-w-md mx-auto pb-16 text-left px-4">
@@ -474,24 +487,54 @@ export const BacktestingLabScreen: React.FC<Props> = ({
               </h2>
               <span className="text-[9.5px] font-bold text-[#00E676] flex items-center gap-1">
                 <Radio className="w-2.5 h-2.5 text-[#00E676] animate-pulse" />
-                <span>{totalCandlesScanned.toLocaleString()} Real Candles · Zero-Lookahead</span>
+                <span>
+                  {totalCandlesScanned > 0
+                    ? `${totalCandlesScanned.toLocaleString()} Real OHLC Bars · Zero-Lookahead`
+                    : `${currentSummary.totalTrades} Verified Trades · Zero-Lookahead`}
+                </span>
               </span>
             </div>
             <p className="text-[10.5px] text-[#94A3B8]">
-              1R Risk = $100 · Strategy-Calibrated ATR Stop/Target · Live Deriv WebSocket Candle Verification
+              1R Risk = $100 · H4 9/50 EMA Trend Filter · Real MTF 0–100 Confluence ({filter.minConfluence}+ Cutoff)
             </p>
           </div>
         </div>
 
-        {/* Action Controls */}
+        {/* Action Controls + 70+ vs 80+ Quick Cutoff Selector */}
         <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex items-center bg-[#080B11] border border-[#222F47] rounded-lg p-0.5">
+            <span className="text-[9px] font-bold text-[#94A3B8] px-1.5 uppercase">Cutoff:</span>
+            <button
+              onClick={() => handleSelectConfluenceCutoff(70)}
+              className={`px-2 py-0.5 text-[10px] font-black rounded transition-all cursor-pointer ${
+                filter.minConfluence <= 70
+                  ? 'bg-[#FFD700] text-[#080B11]'
+                  : 'text-[#94A3B8] hover:text-[#F1F5F9]'
+              }`}
+              title="Recalculate backtest using Standard 70+ confluence cutoff (includes Standby + Active)"
+            >
+              70+ ({tierCounts[70]})
+            </button>
+            <button
+              onClick={() => handleSelectConfluenceCutoff(80)}
+              className={`px-2 py-0.5 text-[10px] font-black rounded transition-all cursor-pointer ${
+                filter.minConfluence === 80
+                  ? 'bg-[#00E676] text-[#080B11]'
+                  : 'text-[#94A3B8] hover:text-[#F1F5F9]'
+              }`}
+              title="Recalculate backtest using Strict 80+ confluence cutoff (Active signals only)"
+            >
+              80+ ({tierCounts[80]})
+            </button>
+          </div>
+
           <button
             onClick={() => setShowStrategyMatrix(!showStrategyMatrix)}
             className="flex items-center gap-1 px-2.5 py-1 text-[10.5px] font-bold text-[#00E676] hover:text-white bg-[#182033] hover:bg-[#00E676]/20 border border-[#00E676]/40 rounded-lg transition-colors cursor-pointer"
-            title="Toggle 3-Strategy Quantitative Blueprint & Comparison Matrix"
+            title="Toggle Strategy Quantitative Blueprint & Comparison Matrix"
           >
             <Layers className="w-3 h-3 text-[#00E676]" />
-            <span>{showStrategyMatrix ? 'Hide Strategy Specs' : 'Compare 3 Strategies'}</span>
+            <span>{showStrategyMatrix ? 'Hide Strategy Specs' : 'Compare Strategies'}</span>
           </button>
 
           <button
@@ -515,17 +558,27 @@ export const BacktestingLabScreen: React.FC<Props> = ({
 
           <button
             onClick={handleRunAccurateBacktest}
-            disabled={isFetchingLive}
+            disabled={isFetchingLive || isScanningPortfolio}
             className="flex items-center gap-1 px-3 py-1 text-[10.5px] font-black text-[#080B11] bg-[#00E676] hover:bg-[#00E676]/90 disabled:opacity-50 rounded-lg shadow-xs transition-all cursor-pointer"
           >
-            {isFetchingLive ? (
+            {(isFetchingLive || isScanningPortfolio) ? (
               <Loader2 className="w-3 h-3 animate-spin" />
             ) : (
               <RefreshCw className="w-3 h-3" />
             )}
-            <span>{isFetchingLive ? `Scanning ${candleScanCount}...` : 'Sync Live Candles'}</span>
+            <span>{(isFetchingLive || isScanningPortfolio) ? 'Recalculating...' : 'Recalculate Candles'}</span>
           </button>
         </div>
+      </div>
+
+      {/* Live Scan Status / Error Strip */}
+      <div className="bg-[#080B11] border border-[#222F47] rounded-lg px-3 py-1.5 flex items-center justify-between gap-2 text-[10px] font-mono">
+        <span className={fetchError ? 'text-[#FF3366]' : 'text-[#94A3B8]'}>
+          {fetchError || scanStatusMsg}
+        </span>
+        <span className="text-[#FFD700] shrink-0 font-bold">
+          Cutoff: ≥{filter.minConfluence}% ({filter.minConfluence >= 80 ? '80+ Active' : '70+ Standard'})
+        </span>
       </div>
 
       {/* 1B. 6-Gate Institutional Quantitative Execution Engine Verification & Ablation Simulator */}
@@ -676,41 +729,51 @@ export const BacktestingLabScreen: React.FC<Props> = ({
         <div className="bg-[#080B11] border border-[#222F47] rounded-lg px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[9.5px] font-mono">
           <div className="flex items-center gap-1.5">
             <span className="text-[#64748B] uppercase">Quant Shield Advantage:</span>
-            <span className="text-[#00E676] font-bold">
-              +{Math.max(0, currentSummary.winRate - (currentSummary.unshieldedWinRate || 52)).toFixed(1)}% WR Boost
-            </span>
+            {(() => {
+              const wrDelta = currentSummary.winRate - (currentSummary.unshieldedWinRate ?? 0);
+              return (
+                <span className={`font-bold ${wrDelta >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                  {wrDelta >= 0 ? `+${wrDelta.toFixed(1)}%` : `${wrDelta.toFixed(1)}%`} WR vs Raw
+                </span>
+              );
+            })()}
             <span className="text-[#64748B]">·</span>
             <span className="text-[#FFD700] font-bold">
-              {currentSummary.breakevenSavesCount || 14} Breakeven Zero-Loss Saves
+              {currentSummary.breakevenSavesCount} Breakeven Zero-Loss Saves
             </span>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-[#2979FF] font-bold">
-              -{Math.max(0, (currentSummary.unshieldedDrawdown || 15.6) - currentSummary.maxDrawdownPercent).toFixed(1)}% DD Cut
-            </span>
+            {(() => {
+              const ddCut = (currentSummary.unshieldedDrawdown ?? 0) - currentSummary.maxDrawdownPercent;
+              return (
+                <span className="text-[#2979FF] font-bold">
+                  {ddCut >= 0 ? `-${ddCut.toFixed(1)}%` : `+${Math.abs(ddCut).toFixed(1)}%`} DD Delta
+                </span>
+              );
+            })()}
             <span className="text-[#64748B]">·</span>
             <span className="text-[#94A3B8]">
-              {currentSummary.newsTradesAvoided || 18} News Spikes Bypassed
+              {currentSummary.newsTradesAvoided} News Spikes Bypassed
             </span>
           </div>
         </div>
       </div>
 
-      {/* 2. Top-Level 3-Strategy Selector + Live Leaderboard Metrics + Engine Mode Switcher */}
+      {/* 2. Top-Level Strategy Selector + Live Leaderboard Metrics + Engine Mode Switcher */}
       <div className="bg-[#101522] border border-[#222F47] rounded-xl p-2.5 space-y-2 shadow-sm terminal-card">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 px-0.5">
           <span className="text-[10px] font-black text-[#F1F5F9] uppercase tracking-wider flex items-center gap-1.5">
             <Award className="w-3.5 h-3.5 text-[#FFD700] shrink-0" />
-            <span>3-Strategy Institutional Suite (Live Core-Calculated Metrics)</span>
+            <span>Institutional Strategy Suite (Real Calculated Metrics)</span>
           </span>
           <span className="text-[9.5px] font-mono text-[#00E676] truncate">
             Active: {STRATEGY_CONFIGS[filter.strategy]?.title} · {activeSpec.targetRR} Target (+{activeSpec.realizedWinR}R Win)
           </span>
         </div>
 
-        {/* 3-Strategy Model Segmented Grid with Real Computed Metrics */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+        {/* 4-Strategy Model Segmented Grid with Real Computed Metrics */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
           {allStrategiesComparison.map((comp) => {
             const isSelected = filter.strategy === comp.strategy;
             const isEnsemble = comp.tierTag === 'ENSEMBLE';
@@ -740,8 +803,8 @@ export const BacktestingLabScreen: React.FC<Props> = ({
                   <span className="text-[10px] font-black text-[#FFD700]">
                     {comp.winRate.toFixed(1)}% WR
                   </span>
-                  <span className="text-[9px] font-bold text-[#00E676]">
-                    +{comp.netRoiPercent}% ROI
+                  <span className={`text-[9px] font-bold ${comp.netRoiPercent >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                    {comp.netRoiPercent >= 0 ? `+${comp.netRoiPercent}%` : `${comp.netRoiPercent}%`} ROI
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-1 mt-0.5 font-mono text-[8.5px] text-[#64748B]">
@@ -880,8 +943,8 @@ export const BacktestingLabScreen: React.FC<Props> = ({
               <div className="grid grid-cols-3 gap-2 font-mono text-xs bg-[#101522] border border-[#222F47] rounded-lg p-2 sm:px-3 sm:py-2 shrink-0">
                 <div className="text-left">
                   <span className="text-[8.5px] text-[#64748B] uppercase block">Expectancy / Trade</span>
-                  <span className="font-black text-[#00E676] text-[11px] sm:text-xs">
-                    +${activeStrategyDetail.expectancyDollars.toFixed(1)} (+{activeStrategyDetail.expectancyR.toFixed(2)}R)
+                  <span className={`font-black text-[11px] sm:text-xs ${activeStrategyDetail.expectancyDollars >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                    {activeStrategyDetail.expectancyDollars >= 0 ? `+$${activeStrategyDetail.expectancyDollars.toFixed(1)}` : `-$${Math.abs(activeStrategyDetail.expectancyDollars).toFixed(1)}`} ({activeStrategyDetail.expectancyR >= 0 ? `+${activeStrategyDetail.expectancyR.toFixed(2)}R` : `${activeStrategyDetail.expectancyR.toFixed(2)}R`})
                   </span>
                 </div>
                 <div className="border-x border-[#222F47] px-2 text-left">
@@ -1019,8 +1082,8 @@ export const BacktestingLabScreen: React.FC<Props> = ({
                       <td className="py-2 px-2 font-bold text-[#00E676]">
                         {row.profitFactor.toFixed(2)}
                       </td>
-                      <td className="py-2 px-2 whitespace-nowrap text-[#00E676] font-bold">
-                        +${row.expectancyDollars.toFixed(0)} ({row.expectancyR >= 0 ? `+${row.expectancyR.toFixed(2)}R` : `${row.expectancyR.toFixed(2)}R`})
+                      <td className={`py-2 px-2 whitespace-nowrap font-bold ${row.expectancyDollars >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                        {row.expectancyDollars >= 0 ? `+$${row.expectancyDollars.toFixed(0)}` : `-$${Math.abs(row.expectancyDollars).toFixed(0)}`} ({row.expectancyR >= 0 ? `+${row.expectancyR.toFixed(2)}R` : `${row.expectancyR.toFixed(2)}R`})
                       </td>
                       <td className="py-2 px-2 whitespace-nowrap text-[10px]">
                         <span className="text-[#00E676]">+{row.avgWinPips}p</span>
@@ -1030,8 +1093,8 @@ export const BacktestingLabScreen: React.FC<Props> = ({
                       <td className="py-2 px-2 text-[#FF3366]">
                         -{row.maxDrawdownPercent}%
                       </td>
-                      <td className="py-2 px-2 font-black text-[#00E676] whitespace-nowrap">
-                        +{row.netRoiPercent}% (+${row.netProfitDollars.toLocaleString()})
+                      <td className={`py-2 px-2 font-black whitespace-nowrap ${row.netRoiPercent >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                        {row.netRoiPercent >= 0 ? `+${row.netRoiPercent}%` : `${row.netRoiPercent}%`} ({row.netProfitDollars >= 0 ? `+$${row.netProfitDollars.toLocaleString()}` : `-$${Math.abs(row.netProfitDollars).toLocaleString()}`})
                       </td>
                       <td className="py-2 px-2.5 text-right whitespace-nowrap text-[#FFD700]">
                         {row.bestPairSymbol} ({row.bestPairWinRate}%)
@@ -1061,22 +1124,10 @@ export const BacktestingLabScreen: React.FC<Props> = ({
               </span>
             </div>
 
-            {/* Candle Scan Count Selector */}
-            <div className="flex items-center gap-1 bg-[#080B11] p-0.5 rounded-lg border border-[#222F47]">
-              <span className="text-[9.5px] text-[#64748B] font-bold px-1.5">Depth:</span>
-              {[500, 1000, 2500, 5000].map(cnt => (
-                <button
-                  key={cnt}
-                  onClick={() => setCandleScanCount(cnt)}
-                  className={`px-2 py-0.5 text-[9.5px] font-bold rounded transition-all cursor-pointer ${
-                    candleScanCount === cnt
-                      ? 'bg-[#00E676] text-[#080B11]'
-                      : 'text-[#94A3B8] hover:text-[#F1F5F9]'
-                  }`}
-                >
-                  {cnt}
-                </button>
-              ))}
+            {/* Multi-Timeframe Scope Badge */}
+            <div className="flex items-center gap-1.5 bg-[#080B11] px-2.5 py-1 rounded-lg border border-[#222F47] text-[9.5px] font-mono">
+              <span className="text-[#64748B] font-bold">MTF Feed:</span>
+              <span className="text-[#00E676] font-bold">M15 · H1 · H4 (9/50 EMA) · D1</span>
             </div>
           </div>
 
@@ -1113,14 +1164,14 @@ export const BacktestingLabScreen: React.FC<Props> = ({
                 {confluenceTiers.map(tier => (
                   <button
                     key={tier.score}
-                    onClick={() => onConfluenceSelect(tier.score)}
+                    onClick={() => handleSelectConfluenceCutoff(tier.score)}
                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                       filter.minConfluence === tier.score
                         ? 'bg-[#FFD700] text-[#080B11]'
                         : 'bg-[#182033] text-[#94A3B8] hover:text-[#F1F5F9]'
                     }`}
                   >
-                    {tier.score}%+ ({tierCounts[tier.score as keyof typeof tierCounts]})
+                    {tier.score}+ ({tierCounts[tier.score as keyof typeof tierCounts]})
                   </button>
                 ))}
               </div>
@@ -1178,12 +1229,20 @@ export const BacktestingLabScreen: React.FC<Props> = ({
               </thead>
               <tbody className="divide-y divide-[#222F47]/60 text-[#F1F5F9]">
                 {currentSummary.confluenceMatrix.map((tier, idx) => (
-                  <tr key={idx} className="hover:bg-[#182033]/50">
+                  <tr
+                    key={idx}
+                    onClick={() => handleSelectConfluenceCutoff(tier.minConfluence)}
+                    className={`cursor-pointer transition-colors ${
+                      filter.minConfluence === tier.minConfluence ? 'bg-[#182033]' : 'hover:bg-[#182033]/50'
+                    }`}
+                  >
                     <td className="py-1.5 font-bold text-[#FFD700]">{tier.label}</td>
                     <td className="py-1.5 font-bold text-[#00E676]">{tier.winRate}%</td>
                     <td className="py-1.5">{tier.totalTrades}</td>
                     <td className="py-1.5">{tier.profitFactor.toFixed(2)}</td>
-                    <td className="py-1.5 text-[#00E676]">+{tier.netPips}p</td>
+                    <td className={`py-1.5 ${tier.netPips >= 0 ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                      {tier.netPips >= 0 ? `+${tier.netPips}p` : `${tier.netPips}p`}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1288,7 +1347,7 @@ export const BacktestingLabScreen: React.FC<Props> = ({
                     </span>
                   </div>
                   <span className="text-[9.5px] font-mono text-[#FFD700]">
-                    Signals Gate: ≥88% Confluence
+                    Cutoff: ≥{filter.minConfluence}% ({filter.minConfluence >= 80 ? '80+ Strict' : '70+ Standard'})
                   </span>
                 </div>
               </div>
@@ -1314,6 +1373,7 @@ export const BacktestingLabScreen: React.FC<Props> = ({
         initialBalance={10000}
         trades={currentSummary.filteredTrades}
         summary={currentSummary}
+        gateBreakevenArm={activeGates.gateBreakevenArm}
       />
 
       {/* 7. RECENT TRADES EXECUTION LEDGER (Clean Single Table with Deriv WS Verification & AI Audit) */}

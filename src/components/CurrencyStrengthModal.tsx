@@ -143,11 +143,12 @@ export const CurrencyStrengthModal: React.FC<Props> = ({ isOpen, onClose, onSele
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-black text-[#F1F5F9] flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-[#FFD700]" />
-                Top High-Confluence Institutional Pairings (Gold, Silver & FX)
+                Top Live FX Divergence Pairings (24h % Change)
               </span>
               <button
                 onClick={handleSendToTelegram}
-                className="px-2.5 py-1 rounded-lg bg-[#0088cc]/20 hover:bg-[#0088cc]/30 border border-[#0088cc]/40 text-[#0088cc] text-[10px] font-bold flex items-center gap-1 transition-all"
+                disabled={strengths.length === 0}
+                className="px-2.5 py-1 rounded-lg bg-[#0088cc]/20 hover:bg-[#0088cc]/30 disabled:opacity-40 border border-[#0088cc]/40 text-[#0088cc] text-[10px] font-bold flex items-center gap-1 transition-all"
               >
                 {sentAlert ? (
                   <>
@@ -163,36 +164,42 @@ export const CurrencyStrengthModal: React.FC<Props> = ({ isOpen, onClose, onSele
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-              {pairings.map((rec, i) => (
-                <div
-                  key={i}
-                  onClick={() => onSelectPair && onSelectPair(rec.pair)}
-                  className="bg-[#080B11] border border-[#222F47] hover:border-[#00E676]/50 rounded-lg p-2.5 cursor-pointer transition-all"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-mono font-black text-xs text-white">{rec.pair}</span>
-                      <span
-                        className={`text-[8.5px] font-black px-1.5 py-0.5 rounded ${
-                          rec.action === 'BUY'
-                            ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
-                            : 'bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40'
-                        }`}
-                      >
-                        {rec.action}
+            {pairings.length === 0 ? (
+              <div className="p-3 rounded-lg bg-[#080B11] border border-[#FF3366]/40 text-center text-xs font-bold text-[#FF5252]">
+                NO DATA - CANNOT GENERATE SIGNAL (Waiting for live 24h interbank price feed)
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                {pairings.map((rec, i) => (
+                  <div
+                    key={i}
+                    onClick={() => onSelectPair && onSelectPair(rec.pair)}
+                    className="bg-[#080B11] border border-[#222F47] hover:border-[#00E676]/50 rounded-lg p-2.5 cursor-pointer transition-all"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-black text-xs text-white">{rec.pair}</span>
+                        <span
+                          className={`text-[8.5px] font-black px-1.5 py-0.5 rounded ${
+                            rec.action === 'BUY'
+                              ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
+                              : 'bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40'
+                          }`}
+                        >
+                          {rec.action}
+                        </span>
+                      </div>
+                      <span className="text-[9.5px] font-mono font-bold text-[#FFD700]">
+                        +{rec.strengthDiff}p
                       </span>
                     </div>
-                    <span className="text-[9.5px] font-mono font-bold text-[#FFD700]">
-                      +{rec.strengthDiff}p
-                    </span>
+                    <p className="text-[9.5px] text-[#94A3B8] mt-1 line-clamp-2">
+                      {rec.confluenceReason}
+                    </p>
                   </div>
-                  <p className="text-[9.5px] text-[#94A3B8] mt-1 line-clamp-2">
-                    {rec.confluenceReason}
-                  </p>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Category Filter Tabs */}
@@ -295,8 +302,13 @@ export const CurrencyStrengthModal: React.FC<Props> = ({ isOpen, onClose, onSele
                 <h4 className="text-xs font-bold text-[#94A3B8] uppercase tracking-wider">
                   Relative Strength Index (0.0 to 10.0) — {filteredStrengths.length} Assets
                 </h4>
-                <span className="text-[10px] text-[#64748B]">Sorted Strongest to Weakest</span>
+                <span className="text-[10px] text-[#64748B]">Sorted Strongest to Weakest (24h Live %)</span>
               </div>
+              {filteredStrengths.length === 0 ? (
+                <div className="p-6 rounded-xl bg-[#101522] border border-[#FF3366]/40 text-center text-xs font-bold text-[#FF5252]">
+                  NO DATA - CANNOT GENERATE SIGNAL
+                </div>
+              ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {filteredStrengths.map(item => {
                   const pct = (item.strength / 10) * 100;
@@ -395,6 +407,7 @@ export const CurrencyStrengthModal: React.FC<Props> = ({ isOpen, onClose, onSele
                   );
                 })}
               </div>
+              )}
             </div>
           )}
         </div>

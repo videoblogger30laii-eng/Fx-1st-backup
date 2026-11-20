@@ -1,6 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { ForexPair, AssetCategory, getAssetCategory } from '../types';
 import { ALL_PAIRS } from '../services/marketData';
+import { signalScannerService } from '../services/signalScannerService';
+import { currencyStrengthService } from '../services/currencyStrengthService';
+import { realPriceService } from '../services/RealPriceService';
+import { computeEMA, computeRSI, detectSMCOnTimeframe, sortCandlesAsc } from '../services/technicalAnalysis';
 import {
   ArrowUpRight,
   ArrowDownRight,
@@ -36,33 +40,69 @@ export const MultiTimeframeMatrix: React.FC<Props> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
 
   const currentPair = selectedPair || allPairs[0];
+  const strengthSnap = useMemo(() => currencyStrengthService.getLiveCurrencyStrengthSnapshot(), [allPairs]);
 
-  // Mock computed MTF for a specific pair
-  const generatePairMtf = (symbol: string) => {
-    const isGold = symbol.includes('XAU');
-    const isJpy = symbol.includes('JPY');
-    const isUsd = symbol.includes('USD');
+  // Real MTF inspection from cached live candles (M15, H1, H4, D1) + live currency/price delta
+  const generatePairMtf = (pair: ForexPair) => {
+    const sym = pair.symbol.toUpperCase();
+    const livePrice = realPriceService.hasLivePrice(sym)
+      ? realPriceService.getPrice(sym)
+      : pair.currentPrice > 0
+      ? pair.currentPrice
+      : pair.basePrice;
 
-    // Deterministic pseudo-confluence based on symbol
-    const charCodeSum = symbol.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-    const isBull = charCodeSum % 2 === 0;
+    const parts = sym.includes('/') ? sym.split('/') : [sym.slice(0, 3), 'USD'];
+    const baseItem = strengthSnap.items.find(s => s.currency === parts[0]);
+    const quoteItem = strengthSnap.items.find(s => s.currency === parts[1]);
+    const ohlcChangePct = realPriceService.getOHLC(sym)?.changePercent;
+    const liveFallbackBull =
+      baseItem && quoteItem
+        ? baseItem.strength >= quoteItem.strength
+        : typeof ohlcChangePct === 'number' && Number.isFinite(ohlcChangePct)
+        ? ohlcChangePct >= 0
+        : livePrice >= pair.basePrice;
 
-    return [
-      { tf: '5M', trend: isBull ? 'BULLISH' : 'BEARISH', rsi: isBull ? 58.4 : 42.1, status: isBull ? 'BUY PULLBACK' : 'SELL RETEST', isBull },
-      { tf: '15M', trend: isBull ? 'BULLISH' : 'BEARISH', rsi: isBull ? 62.1 : 39.5, status: isBull ? 'FVG MITIGATION' : 'FVG BREAKDOWN', isBull },
-      { tf: '1H', trend: isBull ? 'BULLISH' : 'BEARISH', rsi: isBull ? 54.0 : 44.8, status: isBull ? 'ORDER BLOCK FILL' : 'SUPPLY REJECTION', isBull },
-      { tf: '4H', trend: isBull ? 'BULLISH' : 'BEARISH', rsi: isBull ? 67.8 : 36.2, status: isBull ? 'STRUCTURE SHIFT' : 'LIQUIDITY SWEEP', isBull },
-      { tf: '1D', trend: isBull ? 'BULLISH' : 'BEARISH', rsi: isBull ? 59.2 : 41.0, status: isBull ? 'MACRO EXPANSION' : 'MACRO DOWNTREND', isBull },
-    ];
+    const inspectTf = (label: string, cacheTf?: 'M15' | 'H1' | 'H4' | 'D1') => {
+      const raw = cacheTf ? signalScannerService.getCachedCandles(sym, cacheTf) : undefined;
+      const sorted = sortCandlesAsc(raw);
+      if (sorted.length >= 20) {
+        const closes = sorted.map(c => c.close);
+        const ema20 = computeEMA(closes, 20) ?? closes[closes.length - 1];
+        const ema50 = closes.length >= 50 ? computeEMA(closes, 50) : null;
+        const rsi = computeRSI(closes, 14) ?? 50;
+        const isBull = ema50 !== null ? livePrice > ema50 && livePrice >= ema20 * 0.999 : livePrice >= ema20;
+        const smc = detectSMCOnTimeframe(sorted, livePrice, isBull);
+        const status = smc.hasData ? smc.smcSummary.toUpperCase() : (isBull ? 'ABOVE EMA' : 'BELOW EMA');
+        return { tf: label, trend: isBull ? 'BULLISH' : 'BEARISH', rsi, status, isBull, isReal: true };
+      }
+
+      // Live currency strength & 24h price direction when OHLCV candles haven't been scanned yet
+      const estRsi = liveFallbackBull ? 54.0 : 46.0;
+      return {
+        tf: label,
+        trend: liveFallbackBull ? 'BULLISH' : 'BEARISH',
+        rsi: estRsi,
+        status: strengthSnap.hasLiveData ? 'LIVE CCY FLOW' : 'SCAN TO LOAD',
+        isBull: liveFallbackBull,
+        isReal: false
+      };
+    };
+
+    const m15 = inspectTf('15M', 'M15');
+    const h1 = inspectTf('1H', 'H1');
+    const h4 = inspectTf('4H', 'H4');
+    const d1 = inspectTf('1D', 'D1');
+    const m5 = { ...m15, tf: '5M' };
+    return [m5, m15, h1, h4, d1];
   };
 
-  const currentMtf = useMemo(() => generatePairMtf(currentPair.symbol), [currentPair.symbol]);
+  const currentMtf = useMemo(() => generatePairMtf(currentPair), [currentPair, strengthSnap]);
   const currentBullCount = currentMtf.filter(m => m.isBull).length;
 
   // 30 Assets Matrix Data
   const fullMatrix = useMemo(() => {
     return allPairs.map(p => {
-      const mtf = generatePairMtf(p.symbol);
+      const mtf = generatePairMtf(p);
       const bulls = mtf.filter(m => m.isBull).length;
       const bears = 5 - bulls;
       const confluenceScore = Math.round((Math.max(bulls, bears) / 5) * 100);
@@ -80,7 +120,7 @@ export const MultiTimeframeMatrix: React.FC<Props> = ({
         mtf
       };
     });
-  }, [allPairs]);
+  }, [allPairs, strengthSnap]);
 
   const filteredMatrix = useMemo(() => {
     return fullMatrix.filter(item => {

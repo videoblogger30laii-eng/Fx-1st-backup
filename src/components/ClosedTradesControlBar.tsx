@@ -32,6 +32,15 @@ export type ClosedSortOption =
   | 'LOSSES_FIRST'
   | 'PAIR_AZ';
 export type ClosedOutcomeFilter = 'ALL' | 'WINS' | 'LOSSES';
+export type ClosedTfFilter = 'ALL' | 'M15' | 'H1' | 'H4';
+
+export interface TimeframeStat {
+  total: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  netPips: number;
+}
 
 interface Props {
   selectedTimeRange: ClosedTimeRange;
@@ -40,6 +49,9 @@ interface Props {
   onChangeSortOption: (opt: ClosedSortOption) => void;
   selectedOutcome: ClosedOutcomeFilter;
   onChangeOutcome: (outcome: ClosedOutcomeFilter) => void;
+  selectedTimeframe?: ClosedTfFilter;
+  onChangeTimeframe?: (tf: ClosedTfFilter) => void;
+  timeframeStats?: Record<ClosedTfFilter, TimeframeStat>;
   customStartDate: string;
   customEndDate: string;
   onChangeCustomDates: (start: string, end: string) => void;
@@ -58,6 +70,9 @@ export const ClosedTradesControlBar: React.FC<Props> = ({
   onChangeSortOption,
   selectedOutcome,
   onChangeOutcome,
+  selectedTimeframe = 'ALL',
+  onChangeTimeframe,
+  timeframeStats,
   customStartDate,
   customEndDate,
   onChangeCustomDates,
@@ -263,7 +278,79 @@ export const ClosedTradesControlBar: React.FC<Props> = ({
         })}
       </div>
 
-      {/* Secondary Row: Outcome Filter Pills */}
+      {/* Timeframe Filter Row: 15min, 1hr, 4hrs Win/Loss Rates */}
+      <div className="flex items-center gap-1.5 pt-2 border-t border-[#222F47]/65 overflow-x-auto no-scrollbar py-0.5">
+        <span className="text-[10px] text-[#64748B] uppercase tracking-wider mr-1 hidden sm:inline shrink-0 font-bold">Timeframe:</span>
+        <button
+          onClick={() => onChangeTimeframe && onChangeTimeframe('ALL')}
+          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all border shrink-0 cursor-pointer flex items-center gap-1 ${
+            selectedTimeframe === 'ALL'
+              ? 'bg-[#2979FF] border-[#2979FF] text-white font-black shadow-xs'
+              : 'bg-[#080B11] border-[#222F47] text-[#94A3B8] hover:text-white'
+          }`}
+        >
+          <span>All Timeframes</span>
+          {timeframeStats?.ALL && (
+            <span className="text-[9px] opacity-80 font-mono">({timeframeStats.ALL.winRate}%)</span>
+          )}
+        </button>
+
+        <button
+          onClick={() => onChangeTimeframe && onChangeTimeframe('M15')}
+          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all border shrink-0 cursor-pointer flex items-center gap-1 ${
+            selectedTimeframe === 'M15'
+              ? 'bg-[#2979FF] border-[#2979FF] text-white font-black shadow-xs'
+              : 'bg-[#080B11] border-[#222F47] text-[#94A3B8] hover:text-[#60A5FA]'
+          }`}
+        >
+          <span>⚡ 15 Min</span>
+          {timeframeStats?.M15 && (
+            <span className={`text-[9px] font-mono px-1 py-0.2 rounded font-black ${
+              timeframeStats.M15.winRate >= 50 ? 'bg-[#00E676]/20 text-[#00E676]' : 'bg-[#FF3366]/20 text-[#FF3366]'
+            }`}>
+              {timeframeStats.M15.winRate}% WR
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => onChangeTimeframe && onChangeTimeframe('H1')}
+          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all border shrink-0 cursor-pointer flex items-center gap-1 ${
+            selectedTimeframe === 'H1'
+              ? 'bg-[#2979FF] border-[#2979FF] text-white font-black shadow-xs'
+              : 'bg-[#080B11] border-[#222F47] text-[#94A3B8] hover:text-[#60A5FA]'
+          }`}
+        >
+          <span>⏱️ 1 Hour</span>
+          {timeframeStats?.H1 && (
+            <span className={`text-[9px] font-mono px-1 py-0.2 rounded font-black ${
+              timeframeStats.H1.winRate >= 50 ? 'bg-[#00E676]/20 text-[#00E676]' : 'bg-[#FF3366]/20 text-[#FF3366]'
+            }`}>
+              {timeframeStats.H1.winRate}% WR
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => onChangeTimeframe && onChangeTimeframe('H4')}
+          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all border shrink-0 cursor-pointer flex items-center gap-1 ${
+            selectedTimeframe === 'H4'
+              ? 'bg-[#2979FF] border-[#2979FF] text-white font-black shadow-xs'
+              : 'bg-[#080B11] border-[#222F47] text-[#94A3B8] hover:text-[#60A5FA]'
+          }`}
+        >
+          <span>🎯 4 Hours</span>
+          {timeframeStats?.H4 && (
+            <span className={`text-[9px] font-mono px-1 py-0.2 rounded font-black ${
+              timeframeStats.H4.winRate >= 50 ? 'bg-[#00E676]/20 text-[#00E676]' : 'bg-[#FF3366]/20 text-[#FF3366]'
+            }`}>
+              {timeframeStats.H4.winRate}% WR
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Tertiary Row: Outcome Filter Pills */}
       <div className="flex items-center gap-1.5 pt-2 border-t border-[#222F47]/65 overflow-x-auto no-scrollbar py-0.5">
         <span className="text-[10px] text-[#64748B] uppercase tracking-wider mr-1 hidden sm:inline shrink-0 font-bold">Result:</span>
         <button

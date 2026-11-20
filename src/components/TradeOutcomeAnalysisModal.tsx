@@ -79,7 +79,7 @@ ${analysis.futureActionPlan.rules.map(p => `• ${p.rule}: ${p.practicalImplemen
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md animate-fadeIn text-left">
+    <div className="fixed inset-0 z-60 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md animate-fadeIn text-left">
       <div className="bg-[#0B0F19] border border-[#222F47] rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
         {/* Top Header */}
         <div className="p-3.5 sm:p-4 border-b border-[#222F47] flex items-center justify-between bg-[#101522] flex-wrap gap-2">

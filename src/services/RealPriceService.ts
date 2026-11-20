@@ -6,6 +6,8 @@ export interface PairOHLC {
   high: number;
   low: number;
   close: number;
+  bid?: number;
+  ask?: number;
   changePips: number;
   changePercent: number;
   lastUpdated: number;
@@ -33,45 +35,11 @@ class RealPriceService {
   private isStarted = false;
   private cachedFxRates: Record<string, number> = {};
   public lastLiveTickTime: Record<string, number> = {};
+  public hasRealFeedPrice: Record<string, boolean> = {};
+  public hasRealChange24h: Record<string, boolean> = {};
   public activeSource: string = 'TRADINGVIEW_FEED';
 
-  public latestPrices: Record<string, number> = {
-    // Majors
-    'EUR/USD': 1.1211,
-    'GBP/USD': 1.3242,
-    'USD/JPY': 157.84,
-    'USD/CHF': 0.8871,
-    'AUD/USD': 0.6959,
-    'NZD/USD': 0.5626,
-    'USD/CAD': 1.4248,
-    // Crosses / Minors
-    'EUR/GBP': 0.8497,
-    'EUR/JPY': 178.02,
-    'EUR/AUD': 1.6152,
-    'EUR/CAD': 1.6025,
-    'EUR/CHF': 0.9323,
-    'EUR/NZD': 2.0029,
-    'GBP/JPY': 208.45,
-    'GBP/AUD': 1.9008,
-    'GBP/CAD': 1.8162,
-    'GBP/CHF': 1.0965,
-    'GBP/NZD': 2.3569,
-    'AUD/JPY': 109.80,
-    'AUD/CAD': 0.9908,
-    'AUD/CHF': 0.5760,
-    'AUD/NZD': 1.2380,
-    'CAD/JPY': 110.65,
-    'CAD/CHF': 0.5898,
-    'CHF/JPY': 190.36,
-    'NZD/JPY': 88.56,
-    'NZD/CAD': 0.7995,
-    'NZD/CHF': 0.4649,
-    // Metals & Commodities
-    'XAU/USD': 4164.00,
-    'XAG/USD': 59.65,
-    'USOIL': 71.40,
-    'UKOIL': 75.20
-  };
+  public latestPrices: Record<string, number> = {};
 
   public ohlcStore: Record<string, PairOHLC> = {};
 
@@ -79,72 +47,65 @@ class RealPriceService {
   private allPricesListeners: AllPricesListener[] = [];
 
   constructor() {
-    this.initOHLCStore();
-  }
-
-  private initOHLCStore() {
-    Object.entries(this.latestPrices).forEach(([symbol, price]) => {
-      const isGold = symbol.includes('XAU');
-      const isSilver = symbol.includes('XAG');
-      const isJpy = symbol.includes('JPY');
-      const is2Dec = isGold || isSilver || isJpy || symbol.includes('OIL');
-      const offset = isGold ? 4.5 : isSilver ? 0.25 : isJpy ? 0.35 : 0.0025;
-      const open = Number((price - offset).toFixed(is2Dec ? 2 : 4));
-      const high = Math.max(open, price) + (isGold ? 2.5 : isSilver ? 0.15 : isJpy ? 0.2 : 0.0015);
-      const low = Math.min(open, price) - (isGold ? 2.5 : isSilver ? 0.15 : isJpy ? 0.2 : 0.0015);
-
-      this.ohlcStore[symbol] = {
-        open,
-        high: Number(high.toFixed(is2Dec ? 2 : 4)),
-        low: Number(low.toFixed(is2Dec ? 2 : 4)),
-        close: price,
-        changePips: 0,
-        changePercent: 0,
-        lastUpdated: Date.now()
-      };
-      this.recalculateOHLC(symbol, price);
-    });
+    // Do NOT populate fake/static prices or synthetic OHLC offsets on boot.
+    // latestPrices and ohlcStore remain empty until authentic live market ticks arrive.
   }
 
   private recalculateOHLC(
     symbol: string,
     currentPrice: number,
     explicitHigh?: number,
-    explicitLow?: number
+    explicitLow?: number,
+    explicitOpen?: number,
+    explicitChangePercent?: number,
+    explicitBid?: number,
+    explicitAsk?: number
   ): PairOHLC {
     const prev = this.ohlcStore[symbol] || {
-      open: currentPrice,
+      open: explicitOpen && explicitOpen > 0 ? explicitOpen : currentPrice,
       high: currentPrice,
       low: currentPrice,
       close: currentPrice,
+      bid: currentPrice,
+      ask: currentPrice,
       changePips: 0,
       changePercent: 0,
       lastUpdated: Date.now()
     };
 
+    const resolvedOpen = explicitOpen && explicitOpen > 0 ? explicitOpen : prev.open;
     const isGold = symbol.includes('XAU');
     const isSilver = symbol.includes('XAG');
     const isJpy = symbol.includes('JPY');
     const digits = isGold || isSilver || isJpy || symbol.includes('OIL') ? 2 : 5;
 
-    const baseHigh = Math.max(prev.high, currentPrice);
+    const baseHigh = Math.max(prev.high || currentPrice, currentPrice);
     const high = explicitHigh && explicitHigh > 0 ? Math.max(baseHigh, explicitHigh) : baseHigh;
-    const baseLow = Math.min(prev.low, currentPrice);
+    const baseLow = Math.min(prev.low || currentPrice, currentPrice);
     const low = explicitLow && explicitLow > 0 ? Math.min(baseLow, explicitLow) : baseLow;
-    const change = currentPrice - prev.open;
-    const changePercent = prev.open > 0 ? (change / prev.open) * 100 : 0;
+    const change = resolvedOpen > 0 ? currentPrice - resolvedOpen : 0;
+    const computedPct = resolvedOpen > 0 ? (change / resolvedOpen) * 100 : 0;
+    const changePercent =
+      typeof explicitChangePercent === 'number' && Number.isFinite(explicitChangePercent)
+        ? explicitChangePercent
+        : computedPct;
 
     // Pip multiplier
     const pipMultiplier = isGold ? 10 : isSilver || isJpy ? 100 : 10000;
     const changePips = Math.round(change * pipMultiplier * 10) / 10;
 
+    const validBid = explicitBid && explicitBid > 0 ? explicitBid : prev.bid;
+    const validAsk = explicitAsk && explicitAsk > 0 ? explicitAsk : prev.ask;
+
     const updated: PairOHLC = {
-      open: prev.open,
+      open: resolvedOpen,
       high: Number(high.toFixed(digits)),
       low: Number(low.toFixed(digits)),
       close: currentPrice,
+      bid: validBid,
+      ask: validAsk,
       changePips,
-      changePercent: Number(changePercent.toFixed(2)),
+      changePercent: Number(changePercent.toFixed(4)),
       lastUpdated: Date.now()
     };
 
@@ -196,6 +157,7 @@ class RealPriceService {
           const now = Date.now();
           if (!this.lastLiveTickTime[tick.pairSymbol] || (now - this.lastLiveTickTime[tick.pairSymbol] > 12000)) {
             this.lastLiveTickTime[tick.pairSymbol] = now;
+            this.hasRealFeedPrice[tick.pairSymbol] = true;
             this.updatePrice(tick.pairSymbol, tick.quote, 'Deriv Live Feed');
           }
         }
@@ -219,6 +181,7 @@ class RealPriceService {
   }
 
   private async fetchTvScan(market: 'forex' | 'cfd' | 'america' | 'crypto', tickers: string[]): Promise<any> {
+    const scanColumns = ['close', 'change', 'high', 'low', 'open', 'bid', 'ask'];
     try {
       const proxyController = new AbortController();
       const proxyTimeout = setTimeout(() => proxyController.abort(), 5000);
@@ -228,7 +191,7 @@ class RealPriceService {
         body: JSON.stringify({
           market,
           tickers,
-          columns: ['close', 'change', 'high', 'low', 'open']
+          columns: scanColumns
         }),
         signal: proxyController.signal
       });
@@ -247,7 +210,7 @@ class RealPriceService {
       headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify({
         symbols: { tickers },
-        columns: ['close', 'change', 'high', 'low', 'open']
+        columns: scanColumns
       }),
       signal: controller.signal
     });
@@ -335,16 +298,28 @@ class RealPriceService {
           json.data.forEach((item: any) => {
             const sym = mapping[item.s];
             const close = Number(item.d?.[0]);
+            const tvChangePct = Number(item.d?.[1]);
             const high = Number(item.d?.[2]);
             const low = Number(item.d?.[3]);
+            const open = Number(item.d?.[4]);
+            const bid = Number(item.d?.[5]);
+            const ask = Number(item.d?.[6]);
             if (sym && !isNaN(close) && close > 0) {
               const digits = sym.includes('JPY') || sym.includes('XAU') || sym.includes('XAG') ? 2 : 5;
               const formattedPrice = Number(close.toFixed(digits));
               const validHigh = !isNaN(high) && high > 0 ? Number(high.toFixed(digits)) : undefined;
               const validLow = !isNaN(low) && low > 0 ? Number(low.toFixed(digits)) : undefined;
+              const validOpen = !isNaN(open) && open > 0 ? Number(open.toFixed(digits)) : undefined;
+              const validChange = Number.isFinite(tvChangePct) ? tvChangePct : undefined;
+              const validBid = !isNaN(bid) && bid > 0 ? bid : undefined;
+              const validAsk = !isNaN(ask) && ask > 0 ? ask : undefined;
               this.lastLiveTickTime[sym] = Date.now();
+              this.hasRealFeedPrice[sym] = true;
+              if (validChange !== undefined || validOpen !== undefined) {
+                this.hasRealChange24h[sym] = true;
+              }
               this.activeSource = 'TRADINGVIEW_FEED';
-              this.updatePrice(sym, formattedPrice, 'TradingView Real Feed', validHigh, validLow);
+              this.updatePrice(sym, formattedPrice, 'TradingView Real Feed', validHigh, validLow, validOpen, validChange, validBid, validAsk);
             }
           });
 
@@ -377,23 +352,44 @@ class RealPriceService {
       let goldUpdated = false;
       let silverUpdated = false;
       json?.data?.forEach((d: any) => {
+        const pct = Number(d.d?.[1]);
+        const hi = Number(d.d?.[2]);
+        const lo = Number(d.d?.[3]);
+        const op = Number(d.d?.[4]);
+        const bid = Number(d.d?.[5]);
+        const ask = Number(d.d?.[6]);
+        const validPct = Number.isFinite(pct) ? pct : undefined;
+        const validOp = !isNaN(op) && op > 0 ? op : undefined;
+        const validHi = !isNaN(hi) && hi > 0 ? hi : undefined;
+        const validLo = !isNaN(lo) && lo > 0 ? lo : undefined;
+        const validBid = !isNaN(bid) && bid > 0 ? bid : undefined;
+        const validAsk = !isNaN(ask) && ask > 0 ? ask : undefined;
+
         if (!goldUpdated && (d.s === 'FX:XAUUSD' || d.s === 'FOREXCOM:XAUUSD' || d.s === 'TVC:GOLD') && d.d?.[0]) {
           goldUpdated = true;
           const goldPrice = Number(Number(d.d[0]).toFixed(2));
           this.lastLiveTickTime['XAU/USD'] = Date.now();
-          this.updatePrice('XAU/USD', goldPrice, 'TradingView Gold Feed');
+          this.hasRealFeedPrice['XAU/USD'] = true;
+          if (validPct !== undefined || validOp !== undefined) this.hasRealChange24h['XAU/USD'] = true;
+          this.updatePrice('XAU/USD', goldPrice, 'TradingView Gold Feed', validHi, validLo, validOp, validPct, validBid, validAsk);
         }
         if (!silverUpdated && (d.s === 'FX:XAGUSD' || d.s === 'FOREXCOM:XAGUSD' || d.s === 'TVC:SILVER') && d.d?.[0]) {
           silverUpdated = true;
           const silverPrice = Number(Number(d.d[0]).toFixed(2));
           this.lastLiveTickTime['XAG/USD'] = Date.now();
-          this.updatePrice('XAG/USD', silverPrice, 'TradingView Silver Feed');
+          this.hasRealFeedPrice['XAG/USD'] = true;
+          if (validPct !== undefined || validOp !== undefined) this.hasRealChange24h['XAG/USD'] = true;
+          this.updatePrice('XAG/USD', silverPrice, 'TradingView Silver Feed', validHi, validLo, validOp, validPct, validBid, validAsk);
         }
         if (d.s === 'TVC:USOIL' && d.d?.[0]) {
-          this.updatePrice('USOIL', Number(Number(d.d[0]).toFixed(2)), 'TradingView Oil');
+          this.hasRealFeedPrice['USOIL'] = true;
+          if (validPct !== undefined || validOp !== undefined) this.hasRealChange24h['USOIL'] = true;
+          this.updatePrice('USOIL', Number(Number(d.d[0]).toFixed(2)), 'TradingView Oil', validHi, validLo, validOp, validPct, validBid, validAsk);
         }
         if (d.s === 'TVC:UKOIL' && d.d?.[0]) {
-          this.updatePrice('UKOIL', Number(Number(d.d[0]).toFixed(2)), 'TradingView Oil');
+          this.hasRealFeedPrice['UKOIL'] = true;
+          if (validPct !== undefined || validOp !== undefined) this.hasRealChange24h['UKOIL'] = true;
+          this.updatePrice('UKOIL', Number(Number(d.d[0]).toFixed(2)), 'TradingView Oil', validHi, validLo, validOp, validPct, validBid, validAsk);
         }
       });
     } catch {}
@@ -439,6 +435,7 @@ class RealPriceService {
             if (!isNaN(p) && p > 0) {
               const singleSym = needsUpdate[0];
               this.lastLiveTickTime[singleSym] = Date.now();
+              this.hasRealFeedPrice[singleSym] = true;
               this.updatePrice(singleSym, p, 'Twelve Data');
               return true;
             }
@@ -449,6 +446,7 @@ class RealPriceService {
             const price = parseFloat(obj?.price);
             if (!isNaN(price) && price > 0) {
               this.lastLiveTickTime[sym] = Date.now();
+              this.hasRealFeedPrice[sym] = true;
               this.updatePrice(sym, price, 'Twelve Data');
             }
           });
@@ -485,6 +483,7 @@ class RealPriceService {
           const now = Date.now();
           if (!this.lastLiveTickTime['XAU/USD'] || (now - this.lastLiveTickTime['XAU/USD'] > 8000)) {
             this.lastLiveTickTime['XAU/USD'] = now;
+            this.hasRealFeedPrice['XAU/USD'] = true;
             this.updatePrice('XAU/USD', goldPrice, 'Gold Spot Live Feed');
           }
           return goldPrice;
@@ -582,6 +581,7 @@ class RealPriceService {
         const rawPrice = quoteRate / baseRate;
         const isJpy = quote === 'JPY';
         const price = Number(rawPrice.toFixed(isJpy ? 2 : 5));
+        this.hasRealFeedPrice[symbol] = true;
         this.updatePrice(symbol, price, 'Interbank Benchmark');
         hasUpdated = true;
       }
@@ -610,14 +610,24 @@ class RealPriceService {
     return this.latestPrices[symbol] || 0;
   }
 
-  public updatePrice(symbol: string, price: number, source?: string, high?: number, low?: number) {
+  public updatePrice(
+    symbol: string,
+    price: number,
+    source?: string,
+    high?: number,
+    low?: number,
+    open?: number,
+    explicitChangePercent?: number,
+    bid?: number,
+    ask?: number
+  ) {
     if (price <= 0) return;
     this.latestPrices[symbol] = price;
     const foundPair = ALL_PAIRS.find(p => p.symbol === symbol);
     if (foundPair) {
       foundPair.currentPrice = price;
     }
-    const ohlc = this.recalculateOHLC(symbol, price, high, low);
+    const ohlc = this.recalculateOHLC(symbol, price, high, low, open, explicitChangePercent, bid, ask);
 
     const tick: RealPriceTick = {
       symbol,
@@ -630,8 +640,38 @@ class RealPriceService {
     this.notifyListeners(tick);
   }
 
+  public setLiveQuoteSnapshot(
+    symbol: string,
+    price: number,
+    changePercent24h: number,
+    source: string = 'LIVE_QUOTE'
+  ): void {
+    if (price <= 0 || !Number.isFinite(changePercent24h)) return;
+    const open = price / (1 + changePercent24h / 100);
+    this.lastLiveTickTime[symbol] = Date.now();
+    this.hasRealFeedPrice[symbol] = true;
+    this.hasRealChange24h[symbol] = true;
+    this.updatePrice(symbol, price, source, price, price, open, changePercent24h);
+  }
+
+  public resetLiveFeedState(): void {
+    this.lastLiveTickTime = {};
+    this.hasRealFeedPrice = {};
+    this.hasRealChange24h = {};
+    this.latestPrices = {};
+    this.ohlcStore = {};
+  }
+
   public getPrice(symbol: string): number {
     return this.latestPrices[symbol] || 0;
+  }
+
+  public hasLivePrice(symbol: string): boolean {
+    return Boolean(this.hasRealFeedPrice[symbol] && this.latestPrices[symbol] && this.latestPrices[symbol] > 0);
+  }
+
+  public hasLive24hChange(symbol: string): boolean {
+    return Boolean(this.hasRealFeedPrice[symbol] && this.hasRealChange24h[symbol] && this.ohlcStore[symbol]);
   }
 
   public getOHLC(symbol: string): PairOHLC {
@@ -640,6 +680,8 @@ class RealPriceService {
       high: this.getPrice(symbol),
       low: this.getPrice(symbol),
       close: this.getPrice(symbol),
+      bid: this.getPrice(symbol),
+      ask: this.getPrice(symbol),
       changePips: 0,
       changePercent: 0,
       lastUpdated: Date.now()

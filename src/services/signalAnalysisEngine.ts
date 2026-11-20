@@ -84,7 +84,7 @@ export function getSignalDetailedAnalysis(signal: ForexSignal): SignalAnalysis {
   const atrPips = Math.round(slPips * 0.85);
   const atrVolatility = `${signal.timeframe} 14-Period ATR: ${isGold ? `$${(atrPips / 10).toFixed(2)} (${atrPips} pips)` : isSilver ? `$${(atrPips / 100).toFixed(2)} (${atrPips} pips)` : `${atrPips} pips`}. Broker spread (${signal.pair.spreadPips} pips) accounts for only ${((signal.pair.spreadPips / Math.max(1, slPips)) * 100).toFixed(1)}% of the ${slPips}-pip ${signal.timeframe} stop distance.`;
 
-  const displacement = `Institutional displacement verified: The setup trigger candle printed a body-to-range ratio of ${signal.confluenceScore > 90 ? '78%' : '66%'}, confirming high-volume commercial order execution without hesitation wicks.`;
+  const displacement = `Institutional displacement & multi-timeframe check (${signal.scoreBreakdownText || `${signal.timeframe}: ${signal.confluenceScore}/100`}) — ${signal.volumeExhaustionConfirmed ? 'confirmed candle displacement & volume expansion.' : 'observing lower-timeframe candle confirmation.'}`;
 
   const volumeProfile = `Volume Profile (VPVR): High Volume Node (POC - Point of Control) firmly supports the ${isBuy ? 'demand block base' : 'supply block crest'}, confirming heavy institutional participation.`;
 

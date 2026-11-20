@@ -10,9 +10,11 @@ const MODULE_LOAD_TIME = Date.now();
 const inFlightAndSentSignalKeys = new Set<string>();
 const inFlightAndSentMessageFingerprints = new Map<string, number>();
 
+const REVOKED_TOKEN = '8750503064:AAHU1FA80-Hqvjwc010oUDI2pgkitH2bJRI';
+
 export const DEFAULT_TELEGRAM_CONFIG: TelegramAlertConfig = {
   enabled: true,
-  botToken: '8750503064:AAHU1FA80-Hqvjwc010oUDI2pgkitH2bJRI',
+  botToken: '',
   chatId: '',
   notifyOnNewSignal: true,
   notifyOnPendingTrigger: true,
@@ -28,7 +30,8 @@ export class TelegramAlertService {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        const rawToken = parsed.botToken || DEFAULT_TELEGRAM_CONFIG.botToken;
+        let rawToken = parsed.botToken || '';
+        if (rawToken === REVOKED_TOKEN) rawToken = '';
         return {
           ...DEFAULT_TELEGRAM_CONFIG,
           ...parsed,
@@ -50,7 +53,33 @@ export class TelegramAlertService {
         chatId: config.chatId.replace(/\s+/g, '')
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+      fetch('/api/telegram/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sanitized)
+      }).catch(() => {});
     } catch {}
+  }
+
+  static isConfigured(config?: TelegramAlertConfig): boolean {
+    const cfg = config || this.getConfig();
+    const token = (cfg?.botToken || '').trim();
+    const chatId = (cfg?.chatId || '').trim();
+    return Boolean(cfg?.enabled && token.length > 5 && chatId.length > 0);
+  }
+
+  static clearAlertFingerprint(fingerprint: string): void {
+    inFlightAndSentMessageFingerprints.delete(fingerprint);
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem(SENT_ALERTS_STORAGE_KEY);
+        if (raw) {
+          const store: Record<string, number> = JSON.parse(raw);
+          delete store[fingerprint];
+          localStorage.setItem(SENT_ALERTS_STORAGE_KEY, JSON.stringify(store));
+        }
+      } catch {}
+    }
   }
 
   static getSentSignalKeys(): Set<string> {
@@ -353,18 +382,48 @@ export class TelegramAlertService {
   static async autoDetectChatId(token: string): Promise<{ success: boolean; chatId?: string; message: string }> {
     const cleanToken = token.replace(/\s+/g, '');
     if (!cleanToken) {
-      return { success: false, message: 'Please enter Bot Token first.' };
+      return { success: false, message: 'Please enter your Bot Token first.' };
     }
+    if (cleanToken === REVOKED_TOKEN) {
+      return {
+        success: false,
+        message: 'This is an old placeholder token. Please copy your real bot token from @BotFather in Telegram.'
+      };
+    }
+
     try {
-      const res = await fetch(`https://api.telegram.org/bot${cleanToken}/getUpdates`);
-      const data = await res.json();
-      if (!data.ok) {
-        return { success: false, message: data.description || 'Could not fetch updates.' };
+      // 1. Try server proxy first to avoid browser CORS/Failed to fetch blocks
+      let data: any = null;
+      try {
+        const proxyRes = await fetch('/api/telegram/updates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: cleanToken })
+        });
+        if (proxyRes.ok) {
+          data = await proxyRes.json();
+        }
+      } catch {}
+
+      // 2. Client fallback
+      if (!data) {
+        const res = await fetch(`https://api.telegram.org/bot${cleanToken}/getUpdates`);
+        data = await res.json();
+      }
+
+      if (!data || !data.ok) {
+        if (data && (data.error_code === 401 || (data.description && data.description.includes('Unauthorized')))) {
+          return {
+            success: false,
+            message: 'Telegram Bot Token is unauthorized (401). Please copy the API token from @BotFather.'
+          };
+        }
+        return { success: false, message: data?.description || 'Could not fetch updates from Telegram.' };
       }
       if (!data.result || data.result.length === 0) {
         return {
           success: false,
-          message: 'No messages received yet. Please open t.me/my_fx_trade_bot and tap START first!'
+          message: 'No recent messages found. Open your bot in Telegram, send any message (e.g. "hi"), then tap Auto-Detect again.'
         };
       }
       const lastUpdate = data.result[data.result.length - 1];
@@ -378,7 +437,7 @@ export class TelegramAlertService {
       }
       return {
         success: false,
-        message: 'Could not extract Chat ID. Please send "hi" to @my_fx_trade_bot and try again.'
+        message: 'Could not extract numeric Chat ID. Send "hi" to your bot and tap Auto-Detect again.'
       };
     } catch (err: any) {
       return { success: false, message: `Error detecting Chat ID: ${err.message}` };
@@ -399,13 +458,12 @@ export class TelegramAlertService {
     const config = configOverride || this.getConfig();
 
     if (!config.enabled) {
-      return { success: false, message: 'Telegram alerts are disabled.' };
+      return { success: false, message: 'Telegram alerts are disabled in settings.' };
     }
 
     const fingerprint = this.getAlertFingerprint(message);
 
     // Strict startup grace period check: never send automated alerts during first 60 seconds of app load/refresh
-    // Baseline and record the fingerprint so it can NEVER burst when the grace period finishes!
     if (!userInitiated && (Date.now() - MODULE_LOAD_TIME < 60000)) {
       this.recordAlertSent(fingerprint);
       return { success: false, message: 'Startup grace period - automated alert suppressed & baselined.' };
@@ -420,27 +478,20 @@ export class TelegramAlertService {
       };
     }
 
-    // Even for manual user-initiated clicks, block sub-15-second accidental double-triggers;
-    // for all automated triggers, enforce full 24-hour deduplication window.
+    // Cooldown window
     const cooldownWindow = userInitiated ? 15 * 1000 : 24 * 3600 * 1000;
     if (this.isDuplicateAlert(fingerprint, cooldownWindow)) {
-      return { success: false, message: 'Duplicate alert suppressed.' };
+      return { success: false, message: 'Duplicate alert suppressed (already sent within cooldown).' };
     }
 
-    // Rate-limiting throttle: Prevent spam floods by enforcing minimum 3-second spacing between automated alerts
+    // Anti-spam rate limit for background automated alerts
     const now = Date.now();
     if (!userInitiated && now - this.lastAutomatedSendTimestamp < 3000) {
       return { success: false, message: 'Anti-spam rate limit: Telegram alert throttled.' };
     }
 
-    // Lock synchronously BEFORE network await so parallel calls cannot race
-    this.recordAlertSent(fingerprint);
-    if (!userInitiated) {
-      this.lastAutomatedSendTimestamp = now;
-    }
-
-    const token = config.botToken.replace(/\s+/g, '');
-    let chatId = config.chatId.replace(/\s+/g, '');
+    const token = (config.botToken || '').replace(/\s+/g, '');
+    let chatId = (config.chatId || '').replace(/\s+/g, '');
 
     // If chatId is empty locally, fetch from server config
     if (!chatId) {
@@ -456,7 +507,7 @@ export class TelegramAlertService {
       } catch {}
     }
 
-    // Auto-detect chatId if still not configured
+    // Auto-detect chatId if token is present but chatId is still empty
     if (token && !chatId) {
       try {
         const detectRes = await this.autoDetectChatId(token);
@@ -472,14 +523,41 @@ export class TelegramAlertService {
       } catch {}
     }
 
-    if (!token || !chatId) {
+    if (!token) {
       return {
         success: false,
-        message: 'Please tap START in @my_fx_trade_bot on Telegram first so the bot knows your chat!'
+        message: 'Telegram Bot Token is missing. Please configure your bot token in settings.'
       };
     }
 
-    // 1. Try sending via backend server proxy (/api/telegram/send) first — guarantees 100% success in downloaded app / APK / PWA / Webview without CORS or network blocks
+    if (!chatId) {
+      return {
+        success: false,
+        message: 'Telegram Chat ID not connected. Open your Telegram bot, tap START, then auto-detect or enter your Chat ID.'
+      };
+    }
+
+    // Lock synchronously BEFORE network await
+    this.recordAlertSent(fingerprint);
+    if (!userInitiated) {
+      this.lastAutomatedSendTimestamp = now;
+    }
+
+    // Helper for friendly error descriptions
+    const toFriendlyError = (raw: string) => {
+      if (raw.includes('Unauthorized') || raw.includes('401')) {
+        return 'Telegram Bot Token is invalid or unauthorized (401). Please check the token from @BotFather.';
+      }
+      if (raw.includes('chat not found')) {
+        return 'Telegram Chat not found (400). Please open your bot in Telegram and tap START first.';
+      }
+      if (raw.includes('blocked by the user')) {
+        return 'The Telegram bot was blocked by the user. Please unblock it and tap START.';
+      }
+      return raw || 'Failed to dispatch Telegram alert.';
+    };
+
+    // 1. Try sending via backend server proxy (/api/telegram/send)
     try {
       const proxyRes = await fetch('/api/telegram/send', {
         method: 'POST',
@@ -523,11 +601,13 @@ export class TelegramAlertService {
         return { success: true, message: '✅ Telegram alert sent successfully!' };
       }
 
+      this.clearAlertFingerprint(fingerprint);
       return {
         success: false,
-        message: data.description || 'Failed to send to Telegram.'
+        message: toFriendlyError(data.description || plainData.description || '')
       };
     } catch (err: any) {
+      this.clearAlertFingerprint(fingerprint);
       return {
         success: false,
         message: `Network error sending to Telegram: ${err.message}`

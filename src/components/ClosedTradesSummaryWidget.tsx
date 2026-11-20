@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { ForexSignal } from '../types';
 import {
   Trophy,
@@ -16,29 +16,70 @@ import {
   AlertTriangle,
   ShieldCheck,
   Hourglass,
-  ArrowRight
+  ArrowRight,
+  RotateCcw
 } from 'lucide-react';
 import { getTradeDurationMs, formatDurationCompact } from '../services/marketData';
+import { ClosedTfFilter, TimeframeStat } from './ClosedTradesControlBar';
+
+export function getSignalTfKey(s: ForexSignal): 'M15' | 'H1' | 'H4' | 'OTHER' {
+  const tf = (s.winningTf || s.tfScores?.winningTf || s.timeframe || '').toUpperCase();
+  if (tf.includes('15') || tf === 'M15') return 'M15';
+  if (tf.includes('1H') || tf === 'H1') return 'H1';
+  if (tf.includes('4H') || tf === 'H4') return 'H4';
+  return 'OTHER';
+}
 
 interface Props {
   closedSignals: ForexSignal[];
   filteredCount?: number;
   searchQuery?: string;
   timeframeLabel?: string;
+  selectedTimeframe?: ClosedTfFilter;
+  onSelectTimeframe?: (tf: ClosedTfFilter) => void;
+  timeframeStats?: Record<ClosedTfFilter, TimeframeStat>;
 }
 
 export const ClosedTradesSummaryWidget: React.FC<Props> = ({
-  closedSignals,
+  closedSignals: rawClosedSignals,
   filteredCount,
   searchQuery,
-  timeframeLabel
+  timeframeLabel,
+  selectedTimeframe = 'ALL',
+  onSelectTimeframe,
+  timeframeStats
 }) => {
-  // Aggregate wins and losses
+  const [showAllSequence, setShowAllSequence] = useState<boolean>(false);
+
+  // Strictly deduplicate closedSignals so duplicate clones are 100% eliminated from all metrics and badges
+  const closedSignals = useMemo(() => {
+    const seen = new Set<string>();
+    const seenFp = new Set<string>();
+    const list: ForexSignal[] = [];
+    for (const s of rawClosedSignals) {
+      const baseId = (s.id || '').replace(/-HIST-\d+/g, '').replace(/-HIT_TP-\d+/g, '').replace(/-HIT_SL-\d+/g, '');
+      const sym = (s.pair?.symbol || '').toUpperCase();
+      const pipsStr = Math.round((s.pips ?? 0) * 10) / 10;
+      const fp = `${sym}-${s.status}-${pipsStr}`;
+      if (!seen.has(s.id) && (!baseId || !seen.has(baseId)) && !seenFp.has(fp)) {
+        seen.add(s.id);
+        if (baseId) seen.add(baseId);
+        seenFp.add(fp);
+        list.push(s);
+      }
+    }
+    return list;
+  }, [rawClosedSignals]);
+
+  // Aggregate wins, break-evens, and losses
   const wins = closedSignals.filter(
     s => s.status === 'HIT_TP' || (s.pips ?? 0) > 0
   );
+  const breakEvens = closedSignals.filter(
+    s => s.status !== 'HIT_TP' && (s.pips ?? 0) === 0
+  );
   const losses = closedSignals.filter(
-    s => s.status === 'HIT_SL' || (s.pips ?? 0) < 0
+    s => (s.pips ?? 0) < 0
   );
 
   const totalClosed = closedSignals.length;
@@ -128,6 +169,27 @@ export const ClosedTradesSummaryWidget: React.FC<Props> = ({
   const winBarHeightPercent = Math.max(12, Math.round((winCount / maxBarCount) * 100));
   const lossBarHeightPercent = Math.max(12, Math.round((lossCount / maxBarCount) * 100));
 
+  // Timeframe Win/Loss Stats Matrix
+  const effectiveTfStats = useMemo(() => {
+    if (timeframeStats) return timeframeStats;
+
+    const calc = (sigs: ForexSignal[]): TimeframeStat => {
+      const total = sigs.length;
+      const wins = sigs.filter(s => s.status === 'HIT_TP' || (s.pips ?? 0) > 0).length;
+      const losses = sigs.filter(s => (s.pips ?? 0) < 0).length;
+      const winRate = total > 0 ? Math.round((wins / total) * 100 * 10) / 10 : 0;
+      const netPips = Math.round(sigs.reduce((acc, s) => acc + (s.pips ?? 0), 0) * 10) / 10;
+      return { total, wins, losses, winRate, netPips };
+    };
+
+    return {
+      ALL: calc(closedSignals),
+      M15: calc(closedSignals.filter(s => getSignalTfKey(s) === 'M15')),
+      H1: calc(closedSignals.filter(s => getSignalTfKey(s) === 'H1')),
+      H4: calc(closedSignals.filter(s => getSignalTfKey(s) === 'H4')),
+    };
+  }, [timeframeStats, closedSignals]);
+
   return (
     <div className="bg-[#101522] border border-[#222F47] hover:border-[#222F47]/90 rounded-2xl p-4 shadow-lg space-y-3.5 transition-all">
       {/* Header Strip */}
@@ -137,16 +199,21 @@ export const ClosedTradesSummaryWidget: React.FC<Props> = ({
             <BarChart3 className="w-4 h-4 text-[#2979FF]" />
           </div>
           <div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-black text-[#F1F5F9] uppercase tracking-wide">
                 Closed Trades Performance
               </span>
               <span className="text-[10px] font-mono font-bold text-[#FFD700] bg-[#FFD700]/10 px-1.5 py-0.2 rounded border border-[#FFD700]/25">
                 {totalClosed} {totalClosed === 1 ? 'Trade' : 'Trades'}
               </span>
+              {selectedTimeframe && selectedTimeframe !== 'ALL' && (
+                <span className="text-[10px] font-mono font-black text-[#60A5FA] bg-[#2979FF]/15 px-2 py-0.2 rounded border border-[#2979FF]/30">
+                  {selectedTimeframe === 'M15' ? '⚡ 15m Scalp' : selectedTimeframe === 'H1' ? '⏱️ 1h Intraday' : '🎯 4h Swing'}
+                </span>
+              )}
               {timeframeLabel && (
-                <span className="text-[10px] font-mono font-bold text-[#60A5FA] bg-[#2979FF]/10 px-1.5 py-0.2 rounded border border-[#2979FF]/25">
-                  ⏱️ {timeframeLabel}
+                <span className="text-[10px] font-mono font-bold text-[#94A3B8] bg-[#182033] px-1.5 py-0.2 rounded border border-[#222F47]">
+                  {timeframeLabel}
                 </span>
               )}
             </div>
@@ -182,6 +249,96 @@ export const ClosedTradesSummaryWidget: React.FC<Props> = ({
         </div>
       ) : (
         <>
+          {/* Institutional Timeframe Win/Loss Matrix Card */}
+          <div className="bg-[#080B11] rounded-xl border border-[#222F47] p-3 space-y-2.5">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-[#2979FF]" />
+                <span className="text-[11px] font-black text-[#F1F5F9] uppercase tracking-wider">
+                  Win / Loss Rates By Timeframe
+                </span>
+                <span className="text-[9.5px] text-[#64748B] font-mono hidden xs:inline">
+                  (15m · 1h · 4h)
+                </span>
+              </div>
+              {selectedTimeframe !== 'ALL' && onSelectTimeframe && (
+                <button
+                  onClick={() => onSelectTimeframe('ALL')}
+                  className="text-[10px] font-bold text-[#60A5FA] hover:text-[#93C5FD] transition-colors cursor-pointer flex items-center gap-1 bg-[#2979FF]/15 px-2 py-0.5 rounded-md border border-[#2979FF]/30"
+                >
+                  <RotateCcw className="w-2.5 h-2.5" />
+                  <span>Show All Timeframes</span>
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[
+                { key: 'ALL' as const, label: 'All Timeframes', icon: '🌐', sub: 'Entire Session' },
+                { key: 'M15' as const, label: '15 Min (M15)', icon: '⚡', sub: 'Scalp Orders' },
+                { key: 'H1' as const, label: '1 Hour (H1)', icon: '⏱️', sub: 'Intraday Orders' },
+                { key: 'H4' as const, label: '4 Hours (H4)', icon: '🎯', sub: 'Swing Orders' },
+              ].map(tfItem => {
+                const isSelected = selectedTimeframe === tfItem.key;
+                const stat = effectiveTfStats[tfItem.key] || { total: 0, wins: 0, losses: 0, winRate: 0, netPips: 0 };
+                const isProfitable = stat.winRate >= 50;
+
+                return (
+                  <button
+                    key={tfItem.key}
+                    type="button"
+                    onClick={() => onSelectTimeframe && onSelectTimeframe(tfItem.key)}
+                    className={`relative p-2.5 rounded-xl text-left transition-all border cursor-pointer flex flex-col justify-between ${
+                      isSelected
+                        ? 'bg-[#182033] border-[#2979FF] ring-2 ring-[#2979FF]/50 shadow-md shadow-[#2979FF]/15 scale-[1.02]'
+                        : 'bg-[#101522] border-[#222F47] hover:border-[#2979FF]/40 hover:bg-[#141B2D]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span className="text-[10px] font-bold text-[#94A3B8] flex items-center gap-1 truncate">
+                        <span>{tfItem.icon}</span>
+                        <span className="truncate">{tfItem.label}</span>
+                      </span>
+                      {isSelected ? (
+                        <span className="text-[8px] font-black px-1.5 py-0.2 rounded bg-[#2979FF] text-white shrink-0">
+                          FILTERED
+                        </span>
+                      ) : (
+                        <span className="text-[8.5px] font-mono text-[#64748B]">
+                          {tfItem.sub}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-baseline justify-between gap-1 my-1">
+                      <span className={`text-base font-black font-mono leading-none ${
+                        stat.total === 0
+                          ? 'text-[#64748B]'
+                          : isProfitable
+                          ? 'text-[#00E676]'
+                          : stat.winRate > 0
+                          ? 'text-[#FFD700]'
+                          : 'text-[#FF3366]'
+                      }`}>
+                        {stat.total > 0 ? `${stat.winRate}%` : '0%'}
+                      </span>
+                      <span className={`text-[10px] font-mono font-bold ${
+                        stat.netPips > 0 ? 'text-[#00E676]' : stat.netPips < 0 ? 'text-[#FF3366]' : 'text-[#94A3B8]'
+                      }`}>
+                        {stat.netPips > 0 ? `+${stat.netPips}p` : `${stat.netPips}p`}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[9px] font-mono text-[#64748B] pt-1.5 border-t border-[#222F47]/50 mt-0.5">
+                      <span className="font-bold text-[#F1F5F9]">{stat.wins}W / {stat.losses}L</span>
+                      <span className="text-[#94A3B8]">{stat.total} {stat.total === 1 ? 'trade' : 'trades'}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Main Visual: Horizontal Win / Loss Proportional Bar Chart */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-[11px] font-mono">
@@ -494,38 +651,58 @@ export const ClosedTradesSummaryWidget: React.FC<Props> = ({
           </div>
 
           {/* Micro Trade Result Ledger Sparkline */}
-          <div className="pt-1 border-t border-[#222F47]/40 space-y-1">
-            <div className="flex items-center justify-between text-[9.5px] text-[#64748B] font-bold uppercase tracking-wider">
-              <span>Closed Trade Ledger Sequence:</span>
-              <span className="text-[#94A3B8] font-mono font-normal">
-                {closedSignals.length} closed {closedSignals.length === 1 ? 'setup' : 'setups'}
-              </span>
-            </div>
+          {(() => {
+            const sequenceSignals = closedSignals;
+            const visibleSequence = showAllSequence ? sequenceSignals : sequenceSignals.slice(0, 24);
 
-            <div className="flex flex-wrap gap-1.5 pt-0.5">
-              {closedSignals.map((sig, idx) => {
-                const isWin = sig.status === 'HIT_TP' || (sig.pips ?? 0) > 0;
-                const pipVal = sig.pips ?? 0;
-                const formattedPips = pipVal > 0 ? `+${pipVal}p` : `${pipVal}p`;
-
-                return (
-                  <div
-                    key={`${sig.id}-${sig.closedAtMs || idx}`}
-                    className={`flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-mono font-bold transition-all ${
-                      isWin
-                        ? 'bg-[#00E676]/10 border-[#00E676]/30 text-[#00E676]'
-                        : 'bg-[#FF3366]/10 border-[#FF3366]/30 text-[#FF3366]'
-                    }`}
-                    title={`${sig.pair.symbol} (${sig.type}) ${sig.status}: ${formattedPips} at ${sig.timeframe}`}
-                  >
-                    <span className="text-[9px]">{isWin ? '✓' : '✕'}</span>
-                    <span className="text-[#F1F5F9] font-sans font-semibold">{sig.pair.symbol}</span>
-                    <span>{formattedPips}</span>
+            return (
+              <div className="pt-1 border-t border-[#222F47]/40 space-y-1">
+                <div className="flex items-center justify-between text-[9.5px] text-[#64748B] font-bold uppercase tracking-wider flex-wrap gap-1">
+                  <span>Closed Trade Ledger Sequence:</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[#94A3B8] font-mono font-normal">
+                      {showAllSequence ? sequenceSignals.length : Math.min(24, sequenceSignals.length)} of {sequenceSignals.length} closed
+                    </span>
+                    {sequenceSignals.length > 24 && (
+                      <button
+                        onClick={() => setShowAllSequence(!showAllSequence)}
+                        className="text-[9.5px] font-bold text-[#2979FF] hover:underline cursor-pointer"
+                      >
+                        {showAllSequence ? 'Show Recent (24)' : `Show All (${sequenceSignals.length})`}
+                      </button>
+                    )}
                   </div>
-                );
-              })}
-            </div>
-          </div>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  {visibleSequence.map((sig, idx) => {
+                    const pipVal = sig.pips ?? 0;
+                    const isWin = sig.status === 'HIT_TP' || pipVal > 0;
+                    const isBe = !isWin && pipVal === 0;
+                    const formattedPips = isWin ? `+${pipVal}p` : isBe ? '0p (BE)' : `${pipVal}p`;
+
+                    return (
+                      <div
+                        key={`${sig.id}-${sig.closedAtMs || idx}`}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-mono font-bold transition-all ${
+                          isWin
+                            ? 'bg-[#00E676]/10 border-[#00E676]/30 text-[#00E676]'
+                            : isBe
+                            ? 'bg-[#2979FF]/15 border-[#2979FF]/40 text-[#60A5FA]'
+                            : 'bg-[#FF3366]/10 border-[#FF3366]/30 text-[#FF3366]'
+                        }`}
+                        title={`${sig.pair.symbol} (${sig.type}) ${sig.status}: ${formattedPips} at ${sig.timeframe}`}
+                      >
+                        <span className="text-[9px]">{isWin ? '✓' : isBe ? '🛡️' : '✕'}</span>
+                        <span className="text-[#F1F5F9] font-sans font-semibold">{sig.pair.symbol}</span>
+                        <span>{formattedPips}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
         </>
       )}
     </div>

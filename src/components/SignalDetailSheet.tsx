@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ForexSignal, isMarketExecutionSignal } from '../types';
 import {
   formatPrice,
@@ -21,12 +21,14 @@ import { realPriceService } from '../services/RealPriceService';
 import { getSignalDetailedAnalysis } from '../services/signalAnalysisEngine';
 import { PersistenceManager } from '../services/persistence';
 import { TradeOutcomeAnalysisModal } from './TradeOutcomeAnalysisModal';
+import { TimeMachineModal } from './TimeMachineModal';
 import {
   X,
   Copy,
   Check,
   Sparkles,
   FlaskConical,
+  History,
   Bell,
   Star,
   ShieldCheck,
@@ -55,6 +57,7 @@ interface Props {
   onAskAi: (signal: ForexSignal) => void;
   onSetCustomAlert: (signal: ForexSignal) => void;
   onOpenElev8Order?: (signal: ForexSignal) => void;
+  onCloseTrade?: (signal: ForexSignal) => void;
   nowClockMs: number;
   isMarketOpen?: boolean;
 }
@@ -70,6 +73,7 @@ export const SignalDetailSheet: React.FC<Props> = ({
   onAskAi,
   onSetCustomAlert,
   onOpenElev8Order,
+  onCloseTrade,
   nowClockMs,
   isMarketOpen
 }) => {
@@ -79,6 +83,7 @@ export const SignalDetailSheet: React.FC<Props> = ({
   const [copiedMt4, setCopiedMt4] = useState(false);
   const [copiedTelegram, setCopiedTelegram] = useState(false);
   const [isOutcomeModalOpen, setIsOutcomeModalOpen] = useState(false);
+  const [isTimeMachineOpen, setIsTimeMachineOpen] = useState(false);
 
   const isClosed = signal.status === 'HIT_SL' || signal.status === 'HIT_TP' || Boolean(signal.closedAtMs);
   const isWinOutcome = signal.status === 'HIT_TP' || (signal.pips ?? 0) > 0;
@@ -87,9 +92,10 @@ export const SignalDetailSheet: React.FC<Props> = ({
   const isBuy = signal.type.startsWith('BUY');
   const tp1Pips = Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.takeProfit1, isBuy));
   const countdown = getFormattedCountdown(signal, nowClockMs);
-  const isPending = signal.status === 'PENDING' || signal.isPending;
+  const isStandby = signal.status === 'STANDBY';
+  const isPending = (signal.status === 'PENDING' || signal.isPending) && !isStandby;
   const isMarketExecution = isMarketExecutionSignal(signal.type);
-  const isRunning = signal.status === 'RUNNING';
+  const isRunning = signal.status === 'RUNNING' && !isStandby;
   const executedAtMs = !isMarketExecution && isRunning && !isPending && !isClosed ? getSignalExecutedAtMs(signal, nowClockMs) : undefined;
   const executedTimeText = executedAtMs ? getFormattedExecutedTime(signal, nowClockMs) : '';
   const waitText = executedAtMs ? getFormattedExecutionTimeDiff(signal, nowClockMs) : '';
@@ -103,28 +109,37 @@ export const SignalDetailSheet: React.FC<Props> = ({
     return current > 0 ? current : (signal.pair.currentPrice || signal.entryPrice);
   });
   const [flashDir, setFlashDir] = useState<'up' | 'down' | null>(null);
+  const prevPriceRef = useRef<number>(livePrice);
+  const flashTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    prevPriceRef.current = livePrice;
+  }, [livePrice]);
 
   useEffect(() => {
     const current = realPriceService.getPrice(signal.pair.symbol);
-    if (current > 0) setLivePrice(current);
+    if (current > 0) {
+      setLivePrice(current);
+      prevPriceRef.current = current;
+    }
 
     const unsubscribe = realPriceService.onPrice((tick) => {
       if (tick.symbol === signal.pair.symbol && tick.price > 0) {
-        setLivePrice(prev => {
-          if (tick.price > prev) {
-            setFlashDir('up');
-            setTimeout(() => setFlashDir(null), 900);
-          } else if (tick.price < prev) {
-            setFlashDir('down');
-            setTimeout(() => setFlashDir(null), 900);
-          }
-          return tick.price;
-        });
+        const prev = prevPriceRef.current;
+        if (tick.price !== prev) {
+          const dir = tick.price > prev ? 'up' : 'down';
+          if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+          setFlashDir(dir);
+          flashTimerRef.current = setTimeout(() => setFlashDir(null), 900);
+          prevPriceRef.current = tick.price;
+        }
+        setLivePrice(tick.price);
       }
     });
 
     return () => {
       unsubscribe();
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     };
   }, [signal.pair.symbol]);
 
@@ -213,6 +228,28 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
               <span className="text-[10px] font-bold text-[#FFD700] bg-[#FFD700]/15 px-2 py-0.5 rounded border border-[#FFD700]/30">
                 {signal.confluenceScore}% Confluence
               </span>
+
+              <span
+                className={`text-[10px] font-mono font-black px-2 py-0.5 rounded border ${
+                  signal.quality === 'C' || signal.backtestTradeCount === 0
+                    ? 'bg-[#FF9100]/15 text-[#FF9100] border-[#FF9100]/40'
+                    : 'bg-[#00E676]/15 text-[#00E676] border-[#00E676]/40'
+                }`}
+              >
+                Grade {signal.quality === 'A_PLUS' ? 'A+' : (signal.quality || 'C')}
+              </span>
+
+              {(signal.backtestTradeCount === 0 || signal.winPctSource === 'NO BACKTEST DATA - 0 TRADES') && (
+                <span className="text-[10px] font-mono font-bold text-[#FF9100] bg-[#FF9100]/15 px-2 py-0.5 rounded border border-[#FF9100]/35">
+                  NO BACKTEST DATA - 0 TRADES
+                </span>
+              )}
+
+              {isStandby && (
+                <span className="text-[10px] font-black text-[#FFD700] bg-[#FFD700]/20 px-2 py-0.5 rounded border border-[#FFD700]/40 flex items-center gap-1">
+                  <span>⏳ STANDBY</span>
+                </span>
+              )}
             </div>
             <div className="text-[11px] text-[#94A3B8] mt-0.5 flex items-center gap-1.5 flex-wrap">
               <span>{signal.pair.name} • [{signal.winningTf || signal.timeframe}]</span>
@@ -252,6 +289,20 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
             >
               <Star className={`w-4 h-4 ${signal.isFavorite ? 'fill-[#FFD700]' : ''}`} />
             </button>
+            {onCloseTrade && (
+              <button
+                type="button"
+                onClick={() => {
+                  onCloseTrade(signal);
+                  onDismiss();
+                }}
+                className="flex items-center gap-1 text-[10.5px] font-black px-2.5 py-1.5 rounded-lg border border-[#FF3366]/40 bg-[#FF3366]/15 hover:bg-[#FF3366]/30 text-[#FF5252] hover:text-[#FF1744] transition-all cursor-pointer shadow-xs active:scale-95"
+                title="Close Trade: Dismiss & hide everywhere for 15 minutes. Automatically rescans after 15m."
+              >
+                <X className="w-3.5 h-3.5 text-[#FF5252]" />
+                <span>Close</span>
+              </button>
+            )}
             <button
               onClick={onDismiss}
               className="p-2 rounded-lg bg-[#182033] border border-[#222F47] text-[#94A3B8] hover:text-[#F1F5F9]"
@@ -278,6 +329,28 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
             {analysis.smcParameters.pricingZone}
           </span>
         </div>
+
+        {/* Standby Setup Observation & Trigger Requirements Banner */}
+        {isStandby && (
+          <div className="my-2 p-2.5 rounded-xl bg-gradient-to-r from-[#182033] via-[#1c1810] to-[#182033] border border-[#FFD700]/45 space-y-1.5 text-[10px] font-mono text-[#FFD700]">
+            <div className="flex items-center justify-between">
+              <span className="font-bold flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-[#FFD700]" />
+                <span>STANDBY OBSERVATION (80-87% CONFLUENCE GATE):</span>
+              </span>
+              <span className="text-[9px] bg-[#FFD700]/15 px-2 py-0.5 rounded border border-[#FFD700]/30 font-bold">
+                Awaiting Confirmation
+              </span>
+            </div>
+            <p className="text-[11px] font-sans text-[#F1F5F9] leading-relaxed">
+              {signal.standbyTriggerDetail || 'Monitoring Order Block & liquidity sweep before entry execution.'}
+            </p>
+            <div className="text-[9px] text-[#94A3B8] font-sans pt-1 border-t border-[#FFD700]/20 flex items-center justify-between">
+              <span>Observed Entry Level: <strong className="text-[#FFD700]">{formatPrice(signal.pair, signal.entryPrice)}</strong></span>
+              <span>Zero live risk · No premature execution</span>
+            </div>
+          </div>
+        )}
 
         {/* Non-Market Execution (Limit/Stop Orders) Real Fill Telemetry Linear Banner */}
         {!isMarketExecution && isRunning && !isPending && !isClosed && executedAtMs && (
@@ -450,6 +523,48 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
                 <div className="text-[9px] text-[#64748B]">Target asymmetric</div>
               </div>
             </div>
+
+            {/* Real H4 50/9 EMA & Live Currency Strength Generation Audit */}
+            {signal.generationAudit && (
+              <div className="bg-[#101522] p-3 rounded-xl border border-[#38BDF8]/40 space-y-1.5">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <span className="text-xs font-black text-[#38BDF8] uppercase">
+                    Saved Real Generation Audit ({signal.generationAudit.h4TrendBias})
+                  </span>
+                  <span className="text-[10px] font-mono text-[#94A3B8]">
+                    {signal.generationAudit.generatedAtIso}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono pt-1">
+                  <div className="bg-[#080B11] p-2 rounded-lg border border-[#222F47]">
+                    <span className="text-[9px] text-[#94A3B8] block uppercase">H4 50 EMA</span>
+                    <strong className="text-[#F1F5F9]">{signal.generationAudit.ema50}</strong>
+                  </div>
+                  <div className="bg-[#080B11] p-2 rounded-lg border border-[#222F47]">
+                    <span className="text-[9px] text-[#94A3B8] block uppercase">H4 9 EMA</span>
+                    <strong className="text-[#F1F5F9]">{signal.generationAudit.ema9}</strong>
+                  </div>
+                  <div className="bg-[#080B11] p-2 rounded-lg border border-[#222F47]">
+                    <span className="text-[9px] text-[#94A3B8] block uppercase">Currency Score</span>
+                    <strong className="text-[#F1F5F9]">
+                      {signal.generationAudit.baseCurrency} {signal.generationAudit.baseStrengthScore} / {signal.generationAudit.quoteCurrency} {signal.generationAudit.quoteStrengthScore}
+                    </strong>
+                  </div>
+                  <div className="bg-[#080B11] p-2 rounded-lg border border-[#222F47]">
+                    <span className="text-[9px] text-[#94A3B8] block uppercase">Backtest Source</span>
+                    <strong className="text-[#FFD700] truncate block" title={signal.generationAudit.winPctSource}>
+                      {signal.generationAudit.winPct !== null ? `${signal.generationAudit.winPct}%` : '0 TRADES'} (Grade {signal.generationAudit.grade === 'A_PLUS' ? 'A+' : signal.generationAudit.grade})
+                    </strong>
+                  </div>
+                </div>
+                {(signal.confluenceBreakdown || signal.generationAudit.confluenceBreakdown) && (
+                  <div className="bg-[#080B11] p-2 rounded-lg border border-[#222F47] text-[10.5px] font-mono text-[#00E676]">
+                    <span className="text-[#94A3B8] uppercase text-[9px] mr-1.5">Real Confluence Math:</span>
+                    <strong>{(signal.confluenceBreakdown || signal.generationAudit.confluenceBreakdown)!.summaryText}</strong>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Why Entry Level at this Point */}
             <div className="bg-[#101522] p-3 rounded-xl border border-[#222F47] border-l-4 border-l-[#2979FF]">
@@ -795,7 +910,7 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
         )}
 
         {/* Action Buttons Footer */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 mt-3 border-t border-[#222F47]">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-3 mt-3 border-t border-[#222F47]">
           <button
             onClick={copyMt4}
             className="flex items-center justify-center gap-1.5 py-2.5 bg-[#182033] hover:bg-[#222F47] text-[#F1F5F9] font-bold text-xs rounded-xl border border-[#222F47] transition-colors"
@@ -810,6 +925,14 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
           >
             {copiedTelegram ? <Check className="w-4 h-4 text-[#00E676]" /> : <Copy className="w-4 h-4 text-[#94A3B8]" />}
             <span>{copiedTelegram ? 'Copied Telegram' : 'Copy Full Analysis'}</span>
+          </button>
+
+          <button
+            onClick={() => setIsTimeMachineOpen(true)}
+            className="flex items-center justify-center gap-1.5 py-2.5 bg-[#8B5CF6]/20 hover:bg-[#8B5CF6]/30 text-[#A78BFA] font-bold text-xs rounded-xl border border-[#8B5CF6]/40 transition-colors"
+          >
+            <History className="w-4 h-4 text-[#A78BFA]" />
+            <span>Time Machine</span>
           </button>
 
           <button
@@ -835,6 +958,14 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
         isOpen={isOutcomeModalOpen}
         onClose={() => setIsOutcomeModalOpen(false)}
         tradeOrSignal={signal}
+      />
+
+      {/* Quantum Time Machine Modal */}
+      <TimeMachineModal
+        isOpen={isTimeMachineOpen}
+        onClose={() => setIsTimeMachineOpen(false)}
+        signal={signal}
+        onOpenElev8Order={onOpenElev8Order ? () => onOpenElev8Order(signal) : undefined}
       />
     </div>
   );

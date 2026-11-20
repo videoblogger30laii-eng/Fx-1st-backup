@@ -1,5 +1,5 @@
 import { ForexSignal, CandleStick, Timeframe } from '../types';
-import { formatPrice, calculatePips, generateCandles } from './marketData';
+import { formatPrice, calculatePips, getTypicalPairSpread } from './marketData';
 import { realPriceService } from './RealPriceService';
 import { DERIV_PAIR_MAP } from './derivHistoricalService';
 import { PersistenceManager } from './persistence';
@@ -12,35 +12,77 @@ export interface ReconciliationReport {
 
 /**
  * OfflineGapReconciler:
- * Automatically runs on app launch, browser tab wake, and network reconnect.
- * Replays real market candle history between signal creation and now to guarantee
- * that any SL or TP hits that occurred while the browser or computer was closed
- * are 100% accurately detected, recorded, and transitioned.
+ * Automatically runs on app launch, browser tab wake, network reconnect, and periodic 30s sync.
+ * Replays real M1/M5 market candle history strictly at/after signal entry time using MT5 Bid/Ask rules
+ * so brief intrabar wick spikes or Ask spread triggers are never missed.
  */
 class OfflineGapReconciler {
   private isReconciling = false;
   private lastReconciliationTime = 0;
 
   /**
-   * Fetches real historical candles from Deriv public websocket without requiring user login
+   * Fetches real historical M1/M5 candles from /api/market/candles first, falling back to Deriv public websocket.
    */
   private async fetchCandlesForReconciliation(
     symbol: string,
-    timeframe: Timeframe,
+    _timeframe: Timeframe,
     startTimeMs: number
   ): Promise<CandleStick[]> {
+    // Primary: Local Yahoo Finance /api/market/candles M1 (1m resolution) or M5 for older signals
+    const ageMs = Date.now() - startTimeMs;
+    const primaryTf = ageMs > 20 * 3600 * 1000 ? 'M5' : 'M1';
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7000);
+      const res = await fetch(
+        `/api/market/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${primaryTf}&count=500`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.ok && Array.isArray(json.candles) && json.candles.length > 0) {
+          return json.candles.map((c: any) => ({
+            timestamp: Number(c.timestamp),
+            open: Number(c.open),
+            high: Number(c.high),
+            low: Number(c.low),
+            close: Number(c.close),
+            volume: Number(c.volume || 100)
+          }));
+        }
+      }
+      if (primaryTf === 'M1') {
+        const m5Controller = new AbortController();
+        const m5Timeout = setTimeout(() => m5Controller.abort(), 7000);
+        const m5Res = await fetch(
+          `/api/market/candles?symbol=${encodeURIComponent(symbol)}&timeframe=M5&count=400`,
+          { signal: m5Controller.signal }
+        );
+        clearTimeout(m5Timeout);
+        if (m5Res.ok) {
+          const m5Json = await m5Res.json();
+          if (m5Json?.ok && Array.isArray(m5Json.candles) && m5Json.candles.length > 0) {
+            return m5Json.candles.map((c: any) => ({
+              timestamp: Number(c.timestamp),
+              open: Number(c.open),
+              high: Number(c.high),
+              low: Number(c.low),
+              close: Number(c.close),
+              volume: Number(c.volume || 100)
+            }));
+          }
+        }
+      }
+    } catch {
+      // Fall through to Deriv WS
+    }
+
     return new Promise((resolve) => {
       try {
         const derivSymbol = DERIV_PAIR_MAP[symbol] || `frx${symbol.replace(/[^a-zA-Z]/g, '')}`;
-        const granMap: Record<Timeframe, number> = {
-          M5: 300,
-          M15: 900,
-          H1: 3600,
-          H4: 14400,
-          D1: 86400
-        };
-        const granularity = granMap[timeframe] || 900;
-        const startSec = Math.floor(startTimeMs / 1000) - granularity;
+        const granularity = ageMs > 20 * 3600 * 1000 ? 300 : 60;
+        const startSec = Math.floor(startTimeMs / 1000);
         const endSec = Math.floor(Date.now() / 1000);
 
         const ws = new WebSocket('wss://ws.derivws.com/websockets/v3?app_id=1089');
@@ -96,7 +138,7 @@ class OfflineGapReconciler {
   }
 
   /**
-   * Reconciles all active signals against both real-time session extremes and historical candles
+   * Reconciles all active signals against both real-time Bid/Ask quotes and post-entry M1/M5 candles
    */
   public async reconcileSignals(currentSignals: ForexSignal[]): Promise<ReconciliationReport> {
     if (this.isReconciling) {
@@ -120,13 +162,27 @@ class OfflineGapReconciler {
 
       for (let i = 0; i < updatedSignals.length; i++) {
         const sig = updatedSignals[i];
-        if (sig.status !== 'RUNNING' && sig.status !== 'PENDING') {
+        if (sig.status !== 'RUNNING') {
+          continue;
+        }
+        // Only skip brand-new signals less than 15 seconds old
+        if (sig.createdAtMs && Date.now() - sig.createdAtMs < 15000) {
           continue;
         }
 
         const sym = sig.pair.symbol;
         const isBuy = sig.type.startsWith('BUY');
         const ohlc = realPriceService.getOHLC(sym);
+        const typicalSpread = getTypicalPairSpread(sym);
+        const hasValidTvSpread = Boolean(
+          ohlc?.bid &&
+          ohlc?.ask &&
+          ohlc.ask > ohlc.bid &&
+          ohlc.ask - ohlc.bid <= typicalSpread * 4
+        );
+        const effectiveSpread = hasValidTvSpread
+          ? Math.max(typicalSpread * 0.65, ohlc.ask! - ohlc.bid!)
+          : typicalSpread;
 
         let slBreached = false;
         let tpBreached = false;
@@ -134,78 +190,91 @@ class OfflineGapReconciler {
         let breachExitPrice = 0;
         let reason = '';
 
-        // 1. First check: current live price from active feed
+        // 1. First check: current live Bid/Ask from active feed
         const liveNow = realPriceService.getPrice(sym);
         if (liveNow > 0) {
-          if ((isBuy && liveNow <= sig.stopLoss) || (!isBuy && liveNow >= sig.stopLoss)) {
-            slBreached = true;
-            breachExitPrice = sig.stopLoss;
-            breachTimestamp = Date.now();
-            reason = `Live quote ${liveNow} reached SL at ${sig.stopLoss}`;
-          } else if ((isBuy && liveNow >= sig.takeProfit1) || (!isBuy && liveNow <= sig.takeProfit1)) {
-            tpBreached = true;
-            breachExitPrice = sig.takeProfit1;
-            breachTimestamp = Date.now();
-            reason = `Live quote ${liveNow} reached TP1 at ${sig.takeProfit1}`;
+          const isJpy = sym.includes('JPY');
+          const isGold = sym.includes('XAU') || sym.includes('GOLD');
+          const isSilver = sym.includes('XAG') || sym.includes('SILVER');
+          const mult = isGold ? 10 : (isJpy || isSilver) ? 100 : 10000;
+
+          // Reject signals whose entry price is disconnected from current market reality (> 120p FX, > 250p Gold)
+          const entryDistPips = Math.abs(sig.entryPrice - liveNow) * mult;
+          const maxAllowedPips = isGold ? 250 : isJpy ? 180 : 120;
+          if (entryDistPips > maxAllowedPips) {
+            continue;
+          }
+
+          const maxOvershootPips = isGold ? 100 : isJpy ? 45 : 30;
+          const liveBid = ohlc?.bid && ohlc.bid > 0 ? ohlc.bid : liveNow;
+          const liveAsk =
+            ohlc?.ask && ohlc.ask > 0 && hasValidTvSpread
+              ? Math.max(ohlc.ask, liveBid + effectiveSpread * 0.65)
+              : liveBid + effectiveSpread;
+          const liveExitQuote = isBuy ? liveBid : liveAsk;
+
+          if ((isBuy && liveExitQuote <= sig.stopLoss) || (!isBuy && liveExitQuote >= sig.stopLoss)) {
+            const slOvershootPips = isBuy ? (sig.stopLoss - liveExitQuote) * mult : (liveExitQuote - sig.stopLoss) * mult;
+            if (slOvershootPips <= maxOvershootPips) {
+              slBreached = true;
+              breachExitPrice = sig.stopLoss;
+              breachTimestamp = Date.now();
+              reason = `Live ${isBuy ? 'Bid' : 'Ask'} ${liveExitQuote.toFixed(isJpy || isGold ? 3 : 5)} reached SL at ${sig.stopLoss}`;
+            }
+          } else if ((isBuy && liveExitQuote >= sig.takeProfit1) || (!isBuy && liveExitQuote <= sig.takeProfit1)) {
+            const tpOvershootPips = isBuy ? (liveExitQuote - sig.takeProfit1) * mult : (sig.takeProfit1 - liveExitQuote) * mult;
+            if (tpOvershootPips <= maxOvershootPips) {
+              tpBreached = true;
+              breachExitPrice = sig.takeProfit1;
+              breachTimestamp = Date.now();
+              reason = `Live ${isBuy ? 'Bid' : 'Ask'} ${liveExitQuote.toFixed(isJpy || isGold ? 3 : 5)} reached TP1 at ${sig.takeProfit1}`;
+            }
           }
         }
 
-        // 2. Second check: Verify real historical candles since createdAtMs immediately on app open/refresh
-        if (!slBreached && !tpBreached) {
-          let candles = await this.fetchCandlesForReconciliation(
+        // 2. Second check: Verify real historical M1/M5 candles strictly at/after entryStartMs
+        const entryStartMs = sig.executedAtMs || sig.createdAtMs || 0;
+        if (!slBreached && !tpBreached && entryStartMs > 0) {
+          const candles = await this.fetchCandlesForReconciliation(
             sym,
             sig.timeframe,
-            sig.createdAtMs || Date.now() - 30 * 24 * 3600 * 1000
+            entryStartMs
           );
 
-          if (candles.length === 0) {
-            candles = generateCandles(sig.pair, sig.timeframe, 300);
-          }
-
-          if (candles.length > 0) {
+          if (candles && candles.length > 0) {
             for (const c of candles) {
-              if (c.timestamp < (sig.createdAtMs || 0) - 2 * 3600 * 1000) continue;
+              if (c.timestamp < entryStartMs) continue;
 
-              // Check SL breach
-              if (!isBuy && c.high >= sig.stopLoss) {
+              // MT5: BUY closes on Bid (candle low/high); SELL closes on Ask (Bid + spread)
+              if (!isBuy && (c.high + effectiveSpread) >= sig.stopLoss) {
                 slBreached = true;
                 breachExitPrice = sig.stopLoss;
                 breachTimestamp = c.timestamp;
-                reason = `Historical candle high ${c.high} hit SL ${sig.stopLoss}`;
+                reason = `Ask wick ${(c.high + effectiveSpread).toFixed(3)} (Bid high ${c.high} + spread ${effectiveSpread}) hit SL ${sig.stopLoss}`;
                 break;
               } else if (isBuy && c.low <= sig.stopLoss) {
                 slBreached = true;
                 breachExitPrice = sig.stopLoss;
                 breachTimestamp = c.timestamp;
-                reason = `Historical candle low ${c.low} hit SL ${sig.stopLoss}`;
+                reason = `Candle Bid low ${c.low} hit SL ${sig.stopLoss}`;
                 break;
               }
 
-              // Check TP breach
-              if (!isBuy && c.low <= sig.takeProfit1) {
+              if (!isBuy && (c.low + effectiveSpread) <= sig.takeProfit1) {
                 tpBreached = true;
                 breachExitPrice = sig.takeProfit1;
                 breachTimestamp = c.timestamp;
-                reason = `Historical candle hit TP1 ${sig.takeProfit1}`;
+                reason = `Ask low ${(c.low + effectiveSpread).toFixed(3)} hit TP1 ${sig.takeProfit1}`;
                 break;
               } else if (isBuy && c.high >= sig.takeProfit1) {
                 tpBreached = true;
                 breachExitPrice = sig.takeProfit1;
                 breachTimestamp = c.timestamp;
-                reason = `Historical candle hit TP1 ${sig.takeProfit1}`;
+                reason = `Candle Bid high ${c.high} hit TP1 ${sig.takeProfit1}`;
                 break;
               }
             }
           }
-        }
-
-        // 3. Max active trade duration safeguard: If a trade has been running for > 5 days (e.g. 9 days), force close it as HIT_SL
-        const elapsedSinceCreated = Date.now() - (sig.createdAtMs || Date.now());
-        if (!slBreached && !tpBreached && elapsedSinceCreated > 5 * 24 * 3600 * 1000) {
-          slBreached = true;
-          breachExitPrice = sig.stopLoss;
-          breachTimestamp = (sig.createdAtMs || Date.now()) + (3 * 24 * 3600 * 1000);
-          reason = `Trade exceeded maximum active duration (>5 days), archived to Closed History`;
         }
 
         // If breached, transition signal to closed ledger
@@ -217,9 +286,9 @@ class OfflineGapReconciler {
             status: 'HIT_SL',
             currentPrice: finalExit,
             pips,
-            validityTimeLeft: 'Closed (SL Hit Offline)',
+            validityTimeLeft: `Closed (SL Hit: -${Math.abs(pips)}p)`,
             validityExpiresAt: `SL Hit at ${formatPrice(sig.pair, finalExit)}`,
-            closedAtMs: breachTimestamp || Date.now() - 3600000,
+            closedAtMs: breachTimestamp || Date.now(),
             isLiveSynced: true
           };
           updatedSignals[i] = closedSig;
@@ -242,9 +311,9 @@ class OfflineGapReconciler {
             status: 'HIT_TP',
             currentPrice: finalExit,
             pips,
-            validityTimeLeft: 'Closed (TP1 Hit Offline)',
+            validityTimeLeft: `Closed (TP1 Hit: +${pips}p)`,
             validityExpiresAt: `TP1 Hit at ${formatPrice(sig.pair, finalExit)}`,
-            closedAtMs: breachTimestamp || Date.now() - 3600000,
+            closedAtMs: breachTimestamp || Date.now(),
             isLiveSynced: true
           };
           updatedSignals[i] = closedSig;

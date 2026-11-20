@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ForexSignal, getSignalStrategy, STRATEGY_CONFIGS } from '../types';
 import {
   formatPrice,
@@ -62,28 +62,37 @@ export const BestTradeHeroCard: React.FC<Props> = ({
     return current > 0 ? current : (signal.pair.currentPrice || signal.entryPrice);
   });
   const [flashDir, setFlashDir] = useState<'up' | 'down' | null>(null);
+  const prevPriceRef = useRef<number>(livePrice);
+  const flashTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    prevPriceRef.current = livePrice;
+  }, [livePrice]);
 
   useEffect(() => {
     const current = realPriceService.getPrice(signal.pair.symbol);
-    if (current > 0) setLivePrice(current);
+    if (current > 0) {
+      setLivePrice(current);
+      prevPriceRef.current = current;
+    }
 
     const unsubscribe = realPriceService.onPrice((tick) => {
       if (tick.symbol === signal.pair.symbol && tick.price > 0) {
-        setLivePrice(prev => {
-          if (tick.price > prev) {
-            setFlashDir('up');
-            setTimeout(() => setFlashDir(null), 900);
-          } else if (tick.price < prev) {
-            setFlashDir('down');
-            setTimeout(() => setFlashDir(null), 900);
-          }
-          return tick.price;
-        });
+        const prev = prevPriceRef.current;
+        if (tick.price !== prev) {
+          const dir = tick.price > prev ? 'up' : 'down';
+          if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+          setFlashDir(dir);
+          flashTimerRef.current = setTimeout(() => setFlashDir(null), 900);
+          prevPriceRef.current = tick.price;
+        }
+        setLivePrice(tick.price);
       }
     });
 
     return () => {
       unsubscribe();
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     };
   }, [signal.pair.symbol]);
 
@@ -156,6 +165,15 @@ export const BestTradeHeroCard: React.FC<Props> = ({
           </button>
         </div>
       </div>
+
+      {/* Real MTF Confluence Breakdown */}
+      {(signal.confluenceBreakdown?.summaryText || signal.generationAudit?.confluenceBreakdown?.summaryText) && (
+        <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+          <span className="text-[9px] font-mono text-[#00E676] bg-[#00E676]/10 px-1.5 py-0.5 rounded border border-[#00E676]/25 leading-none">
+            {(signal.confluenceBreakdown || signal.generationAudit?.confluenceBreakdown)!.summaryText}
+          </span>
+        </div>
+      )}
 
       {/* Weekend Compact Notice */}
       {!marketOpen && (

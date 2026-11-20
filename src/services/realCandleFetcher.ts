@@ -28,6 +28,24 @@ export interface RealCandleFetchResult {
   };
 }
 
+export interface StrictCandleFetchResult {
+  ok: boolean;
+  symbol: string;
+  timeframe: Timeframe;
+  providerName: string;
+  candles: CandleStick[];
+  error?: string;
+  apiError?: string;
+  fetchLog?: string[];
+  dateRange?: {
+    start: string;
+    end: string;
+  };
+}
+
+const strictCandleCache = new Map<string, { result: StrictCandleFetchResult; cachedAtMs: number }>();
+const strictCandleInFlight = new Map<string, Promise<StrictCandleFetchResult>>();
+
 /**
  * Service to fetch 100% real historical candlestick data from live market APIs
  */
@@ -88,31 +106,337 @@ export const RealCandleFetcherService = {
     return { basePrice: liveStreamPrice || 1.12053, pipDigits: 5, cleanSymbol: formattedSym };
   },
 
+  clearStrictCache(): void {
+    strictCandleCache.clear();
+  },
+
+  /**
+   * STRICT REAL CANDLE FETCHER (NO SYNTHETIC FALLBACK EVER):
+   * 1) Server-side /api/market/candles proxy (pooled Yahoo query1/query2 with server cache)
+   * 2) Deriv Live WebSocket API fallback (if proxy fails or unavailable)
+   * 3) Twelve Data API (if API key configured)
+   *
+   * If all fail, returns:
+   *   { ok: false, error: 'DATA ERROR for <SYMBOL> - API returned <exact error>', candles: [] }
+   */
+  async fetchRealCandlesStrict(
+    symbol: string,
+    timeframe: Timeframe,
+    count: number = 120,
+    options?: {
+      derivAppId?: string;
+      derivToken?: string;
+      twelveDataKey?: string;
+      minBars?: number;
+      bypassCache?: boolean;
+    }
+  ): Promise<StrictCandleFetchResult> {
+    const minBars = options?.minBars ?? (timeframe === 'H4' ? 50 : 20);
+    const cacheKey = `${symbol.toUpperCase()}:${timeframe}:${count}`;
+    const cacheTtlMs = timeframe === 'H4' || timeframe === 'D1' ? 3 * 60 * 1000 : 45 * 1000;
+
+    if (!options?.bypassCache) {
+      const cached = strictCandleCache.get(cacheKey);
+      if (cached && Date.now() - cached.cachedAtMs < cacheTtlMs && cached.result.ok && cached.result.candles.length >= minBars) {
+        return cached.result;
+      }
+      const existingFlight = strictCandleInFlight.get(cacheKey);
+      if (existingFlight) {
+        return existingFlight;
+      }
+    }
+
+    const runPromise = (async (): Promise<StrictCandleFetchResult> => {
+      const apiErrors: string[] = [];
+      const fetchLog: string[] = [];
+
+      // 1. Primary: Server Proxy (/api/market/candles) when running in browser / proxy-capable env
+      if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
+        const t0 = Date.now();
+        const url = `/api/market/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&count=${encodeURIComponent(String(count))}`;
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 18000);
+          const res = await fetch(url, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          const elapsed = Date.now() - t0;
+
+          let json: any = null;
+          try {
+            json = await res.json();
+          } catch {
+            // non-json response
+          }
+
+          if (res.ok && json && json.ok && Array.isArray(json.candles) && json.candles.length >= minBars) {
+            const first = json.candles[0];
+            const last = json.candles[json.candles.length - 1];
+            fetchLog.push(`[OK] GET ${url} -> HTTP ${res.status} | ${json.candles.length} bars | ${json.providerName || 'Yahoo'} | ${elapsed}ms`);
+            const successRes: StrictCandleFetchResult = {
+              ok: true,
+              symbol,
+              timeframe,
+              providerName: json.providerName || 'Server Market Candles Proxy',
+              candles: json.candles,
+              fetchLog,
+              dateRange: {
+                start: first ? new Date(first.timestamp).toLocaleDateString() : '',
+                end: last ? new Date(last.timestamp).toLocaleDateString() : ''
+              }
+            };
+            strictCandleCache.set(cacheKey, { result: successRes, cachedAtMs: Date.now() });
+            return successRes;
+          }
+
+          const proxyErr =
+            json?.error ||
+            (res.ok
+              ? `returned ${Array.isArray(json?.candles) ? json.candles.length : 0} bars (need >= ${minBars})`
+              : `HTTP ${res.status} ${res.statusText || 'Error'}`);
+          apiErrors.push(`/api/market/candles: ${proxyErr}`);
+          fetchLog.push(`[FAIL] GET ${url} -> HTTP ${res.status} | ${proxyErr} | ${elapsed}ms`);
+        } catch (err: any) {
+          const elapsed = Date.now() - t0;
+          const errMsg = err?.name === 'AbortError' ? 'Timeout after 18000ms' : (err?.message || 'Network error');
+          apiErrors.push(`/api/market/candles: ${errMsg}`);
+          fetchLog.push(`[ERR] GET ${url} -> ${errMsg} | ${elapsed}ms`);
+        }
+      }
+
+      // 2. Secondary fallback: Deriv WebSocket strictly
+      if (typeof WebSocket !== 'undefined') {
+        const t0 = Date.now();
+        const derivAttempt = await this.fetchFromDerivStrict(
+          symbol,
+          timeframe,
+          count,
+          options?.derivAppId,
+          options?.derivToken
+        );
+        const elapsed = Date.now() - t0;
+        if (derivAttempt.result && derivAttempt.result.candles.length >= minBars) {
+          fetchLog.push(`[OK] Deriv WS (${derivAttempt.result.symbol}) -> ${derivAttempt.result.candles.length} bars | ${elapsed}ms`);
+          const successRes: StrictCandleFetchResult = {
+            ok: true,
+            symbol,
+            timeframe,
+            providerName: derivAttempt.result.providerName,
+            candles: derivAttempt.result.candles,
+            fetchLog,
+            dateRange: derivAttempt.result.dateRange
+          };
+          strictCandleCache.set(cacheKey, { result: successRes, cachedAtMs: Date.now() });
+          return successRes;
+        }
+        const derivErr = derivAttempt.error || 'insufficient bars';
+        apiErrors.push(`Deriv WS: ${derivErr}`);
+        fetchLog.push(`[FAIL] Deriv WS -> ${derivErr} | ${elapsed}ms`);
+      }
+
+      // 3. Tertiary fallback: Twelve Data ONLY if explicit user key configured
+      const storedTdKey =
+        options?.twelveDataKey ||
+        (typeof localStorage !== 'undefined' ? localStorage.getItem('fx_twelvedata_key') || '' : '');
+      if (storedTdKey.trim().length > 4) {
+        try {
+          const tdRes = await this.fetchFromTwelveData(symbol, timeframe, count, storedTdKey.trim());
+          if (tdRes.candles.length >= minBars) {
+            fetchLog.push(`[OK] TwelveData -> ${tdRes.candles.length} bars`);
+            const successRes: StrictCandleFetchResult = {
+              ok: true,
+              symbol,
+              timeframe,
+              providerName: tdRes.providerName,
+              candles: tdRes.candles,
+              fetchLog,
+              dateRange: tdRes.dateRange
+            };
+            strictCandleCache.set(cacheKey, { result: successRes, cachedAtMs: Date.now() });
+            return successRes;
+          }
+          apiErrors.push(`TwelveData: returned ${tdRes.candles.length} bars (< ${minBars})`);
+        } catch (err: any) {
+          apiErrors.push(`TwelveData: ${err?.message || 'request failed'}`);
+        }
+      }
+
+      const rawApiError = apiErrors.join('; ') || 'No live candle API responded';
+      return {
+        ok: false,
+        symbol,
+        timeframe,
+        providerName: 'NONE',
+        candles: [],
+        apiError: rawApiError,
+        fetchLog,
+        error: `DATA ERROR for ${symbol} - API returned ${rawApiError}`
+      };
+    })().finally(() => {
+      strictCandleInFlight.delete(cacheKey);
+    });
+
+    strictCandleInFlight.set(cacheKey, runPromise);
+    return runPromise;
+  },
+
+  async fetchFromDerivStrict(
+    symbol: string,
+    timeframe: Timeframe,
+    count: number = 120,
+    appId?: string,
+    token?: string
+  ): Promise<{ result: RealCandleFetchResult | null; error?: string }> {
+    if (typeof WebSocket === 'undefined') {
+      return { result: null, error: 'WebSocket unavailable' };
+    }
+    const lsAppId = typeof localStorage !== 'undefined' ? localStorage.getItem('fx_deriv_app_id') : '';
+    const lsToken = typeof localStorage !== 'undefined' ? localStorage.getItem('fx_deriv_token') : '';
+    const resolvedAppId = (appId || lsAppId || '1089').replace(/\D/g, '') || '1089';
+    const resolvedToken = (token || lsToken || '').trim();
+
+    const derivSymbol = DERIV_PAIR_MAP[symbol] || `frx${symbol.replace('/', '')}`;
+    const granMap: Record<Timeframe, number> = {
+      M5: 300,
+      M15: 900,
+      H1: 3600,
+      H4: 14400,
+      D1: 86400
+    };
+    const granularity = granMap[timeframe] || 14400;
+
+    return new Promise((resolve) => {
+      const wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${resolvedAppId}&l=EN`;
+      let ws: WebSocket | null = null;
+      let settled = false;
+      const done = (out: { result: RealCandleFetchResult | null; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve(out);
+      };
+
+      const timeoutId = setTimeout(() => {
+        if (ws) {
+          try { ws.close(); } catch {}
+        }
+        done({ result: null, error: `WebSocket timeout after 4500ms (${derivSymbol})` });
+      }, 4500);
+
+      try {
+        ws = new WebSocket(wsUrl);
+        const sendHistoryRequest = () => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          ws.send(
+            JSON.stringify({
+              ticks_history: derivSymbol,
+              adjust_start_time: 1,
+              count: Math.min(count, 5000),
+              end: 'latest',
+              start: 1,
+              style: 'candles',
+              granularity
+            })
+          );
+        };
+
+        ws.onopen = () => {
+          if (resolvedToken.length > 4) {
+            ws?.send(JSON.stringify({ authorize: resolvedToken }));
+          } else {
+            sendHistoryRequest();
+          }
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.msg_type === 'authorize') {
+              if (data.error) {
+                sendHistoryRequest();
+              } else {
+                sendHistoryRequest();
+              }
+              return;
+            }
+            if (data.msg_type === 'candles' && Array.isArray(data.candles) && data.candles.length > 0) {
+              try { ws?.close(); } catch {}
+              const candles: CandleStick[] = data.candles
+                .map((c: any) => ({
+                  timestamp: Number(c.epoch) * 1000,
+                  open: parseFloat(c.open),
+                  high: parseFloat(c.high),
+                  low: parseFloat(c.low),
+                  close: parseFloat(c.close),
+                  volume: 1000
+                }))
+                .filter((c: CandleStick) => Number.isFinite(c.close) && c.close > 0);
+              const first = candles[0];
+              const last = candles[candles.length - 1];
+              done({
+                result: {
+                  symbol: `Deriv:${derivSymbol}`,
+                  providerName: `Deriv Live WebSocket Feed (App ${resolvedAppId})`,
+                  candles,
+                  dateRange: {
+                    start: first ? new Date(first.timestamp).toLocaleDateString() : '',
+                    end: last ? new Date(last.timestamp).toLocaleDateString() : ''
+                  }
+                }
+              });
+            } else if (data.error) {
+              try { ws?.close(); } catch {}
+              done({
+                result: null,
+                error: data.error?.message || data.error?.code || 'Deriv API error'
+              });
+            }
+          } catch (err: any) {
+            try { ws?.close(); } catch {}
+            done({ result: null, error: err?.message || 'Deriv JSON parse error' });
+          }
+        };
+
+        ws.onerror = (ev: any) => {
+          done({ result: null, error: ev?.message || 'WebSocket connection / non-101 error' });
+        };
+      } catch (err: any) {
+        done({ result: null, error: err?.message || 'WebSocket init error' });
+      }
+    });
+  },
+
   /**
    * Fetches real historical candles based on options
    */
   async fetchCandles(options: RealCandleFetchOptions): Promise<RealCandleFetchResult> {
     const { source, symbol, timeframe, count = 5000 } = options;
 
-    if (source === 'DERIV_API' || !source) {
-      return this.fetchFromDeriv(
-        symbol,
-        timeframe,
-        count,
-        options.derivAppId,
-        options.derivToken
-      );
-    }
-
     if (source === 'TWELVE_DATA' && options.twelveDataKey) {
       return this.fetchFromTwelveData(symbol, timeframe, count, options.twelveDataKey);
     }
 
-    try {
-      return await this.fetchFromDeriv(symbol, timeframe, count);
-    } catch {
-      return this.fetchFromPublicFeed(symbol, timeframe, count);
+    const strict = await this.fetchRealCandlesStrict(symbol, timeframe, count, {
+      derivAppId: options.derivAppId,
+      derivToken: options.derivToken,
+      twelveDataKey: options.twelveDataKey,
+      minBars: 20
+    });
+    if (strict.ok) {
+      return {
+        symbol: strict.symbol,
+        providerName: strict.providerName,
+        candles: strict.candles,
+        dateRange: strict.dateRange || { start: '', end: '' }
+      };
     }
+
+    return this.fetchFromDeriv(
+      symbol,
+      timeframe,
+      count,
+      options.derivAppId,
+      options.derivToken
+    );
   },
 
   /**

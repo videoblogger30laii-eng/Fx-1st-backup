@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { ForexSignal, ForexPair, RefreshIntervalSeconds, MarketDataProvider, TradingSession, getAssetCategory, getSignalStrategy, STRATEGY_CONFIGS, StrategyType } from '../types';
-import { formatPrice, isSignalValidAndActive, createSyntheticSignalForPair, getTradeDurationMs } from '../services/marketData';
+import { ForexSignal, ForexPair, RefreshIntervalSeconds, MarketDataProvider, TradingSession, getAssetCategory, getSignalStrategy, STRATEGY_CONFIGS, StrategyType, computeNonRepeatedSignals } from '../types';
+import { formatPrice, isSignalValidAndActive, createSyntheticSignalForPair, getTradeDurationMs, matchesSignalSearch } from '../services/marketData';
 import { TradingSessionsClock } from '../components/TradingSessionsClock';
 import { BestTradeHeroCard } from '../components/BestTradeHeroCard';
 import { MultiTimeframeMatrix } from '../components/MultiTimeframeMatrix';
@@ -11,7 +11,9 @@ import {
   ClosedTradesControlBar,
   ClosedTimeRange,
   ClosedSortOption,
-  ClosedOutcomeFilter
+  ClosedOutcomeFilter,
+  ClosedTfFilter,
+  TimeframeStat
 } from '../components/ClosedTradesControlBar';
 import { PersistenceManager } from '../services/persistence';
 import {
@@ -47,6 +49,10 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { adaptiveSlLearningService } from '../services/adaptiveSlLearningService';
+import {
+  analyzeCurrencyConflicts,
+  ConflictFilterMode
+} from '../services/currencyConflictFilter';
 
 interface Props {
   signals: ForexSignal[];
@@ -100,6 +106,22 @@ interface Props {
   onToggleStrategyEnabled?: (strat: StrategyType) => void;
   onSelectAllStrategies?: () => void;
   onDeselectAllStrategies?: () => void;
+  onCloseTrade?: (sig: ForexSignal) => void;
+  onClearCooldown?: (pairSymbol: string) => void;
+  scannerStatus?: {
+    globalStatus: string | null;
+    blocked: { pairSymbol: string; status: string; reason: string }[];
+    lastScanAtMs?: number;
+  };
+  confluenceFilter?: 'ALL' | 'BELOW_60' | '60_PLUS' | '70_PLUS' | '80_PLUS';
+  onConfluenceFilterSelect?: (val: 'ALL' | 'BELOW_60' | '60_PLUS' | '70_PLUS' | '80_PLUS') => void;
+  confluenceCounts?: {
+    all: number;
+    below60: number;
+    plus60: number;
+    plus70: number;
+    plus80: number;
+  };
 }
 
 export const SignalsScreen: React.FC<Props> = ({
@@ -153,13 +175,70 @@ export const SignalsScreen: React.FC<Props> = ({
   enabledStrategies = ['ALL_STRATEGIES', 'GOLD_HUNTER', 'LONDON_KILLER', 'TREND_RIDER'],
   onToggleStrategyEnabled = () => {},
   onSelectAllStrategies = () => {},
-  onDeselectAllStrategies = () => {}
+  onDeselectAllStrategies = () => {},
+  onCloseTrade,
+  onClearCooldown,
+  scannerStatus,
+  confluenceFilter = 'ALL',
+  onConfluenceFilterSelect,
+  confluenceCounts
 }) => {
   const [isStrategyTogglesOpen, setIsStrategyTogglesOpen] = useState(false);
   const [selectedOutcomeSignal, setSelectedOutcomeSignal] = useState<ForexSignal | null>(null);
+  const [isAPlusDropdownOpen, setIsAPlusDropdownOpen] = useState(false);
+
+  // Currency Conflict Filter State (Default: Filter ON, Mode = STRICT)
+  const [isConflictFilterEnabled, setIsConflictFilterEnabled] = useState<boolean>(true);
+  const [conflictMode, setConflictMode] = useState<ConflictFilterMode>('STRICT');
+  const [isHiddenConflictsExpanded, setIsHiddenConflictsExpanded] = useState<boolean>(false);
+  const [acknowledgedConflictIds, setAcknowledgedConflictIds] = useState<Record<string, boolean>>({});
+
   // Strictly active, tradeable, non-expired, and non-invalidated signals
   const activeSignals = signals.filter(s => isSignalValidAndActive(s, nowClockMs));
-  const bestTrade = activeSignals.find(s => s.isBestTradeNow) || activeSignals[0];
+  const isAPlusNonRepeated = selectedFilter === 'A_PLUS_NON_REPEATED';
+  const bestTrade = isAPlusNonRepeated
+    ? (filteredSignals[0] || activeSignals.find(s => s.isBestTradeNow) || activeSignals[0])
+    : (activeSignals.find(s => s.isBestTradeNow) || activeSignals[0]);
+
+  // Step 1 & Step 3: Calculate Currency Bias from all current active signals & evaluate filteredSignals
+  const conflictAnalysis = useMemo(() => {
+    return analyzeCurrencyConflicts(activeSignals, filteredSignals);
+  }, [activeSignals, filteredSignals]);
+
+  const { cleanFilteredSignals, conflictingFilteredSignals } = useMemo(() => {
+    const clean: ForexSignal[] = [];
+    const conflicts: ForexSignal[] = [];
+    for (const sig of filteredSignals) {
+      if (conflictAnalysis.evaluationsById[sig.id]?.isConflict) {
+        conflicts.push(sig);
+      } else {
+        clean.push(sig);
+      }
+    }
+    return { cleanFilteredSignals: clean, conflictingFilteredSignals: conflicts };
+  }, [filteredSignals, conflictAnalysis]);
+
+  const displayedActiveSignals = useMemo(() => {
+    if (!isConflictFilterEnabled) {
+      return filteredSignals;
+    }
+    if (conflictMode === 'STRICT') {
+      return cleanFilteredSignals;
+    }
+    // WARNING mode: clean signals first, conflicting signals pushed to the bottom
+    return [...cleanFilteredSignals, ...conflictingFilteredSignals];
+  }, [isConflictFilterEnabled, conflictMode, filteredSignals, cleanFilteredSignals, conflictingFilteredSignals]);
+
+  const lockedBiasesList = useMemo(() => {
+    return Object.values(conflictAnalysis.biasMap).filter(b => b.isLocked || (b.buyCount > 0 && b.sellCount > 0));
+  }, [conflictAnalysis]);
+
+  const handleToggleAcknowledgeConflict = (signalId: string) => {
+    setAcknowledgedConflictIds(prev => ({
+      ...prev,
+      [signalId]: !prev[signalId]
+    }));
+  };
 
   // Closed Trades Timeframe, Sorting & Retention State
   const [closedTimeRange, setClosedTimeRange] = useState<ClosedTimeRange>(() =>
@@ -169,6 +248,7 @@ export const SignalsScreen: React.FC<Props> = ({
     (PersistenceManager.getClosedSortOption() as ClosedSortOption) || 'NEWEST_CLOSED'
   );
   const [closedOutcome, setClosedOutcome] = useState<ClosedOutcomeFilter>('ALL');
+  const [closedTimeframe, setClosedTimeframe] = useState<ClosedTfFilter>('ALL');
   const [customRange, setCustomRange] = useState(() => PersistenceManager.getClosedCustomRange());
   const [customStartDate, setCustomStartDate] = useState<string>(() => {
     const defaultStart = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().slice(0, 10);
@@ -208,21 +288,94 @@ export const SignalsScreen: React.FC<Props> = ({
 
   const allClosedSignals = useMemo(() => {
     const seen = new Set<string>();
+    const seenFp = new Set<string>();
     return signals.filter(s => {
       if (isSignalValidAndActive(s, nowClockMs)) return false;
-      const key = `${s.id}-${s.closedAtMs || s.createdAtMs || ''}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
+      const baseId = (s.id || '').replace(/-HIST-\d+/g, '').replace(/-HIT_TP-\d+/g, '').replace(/-HIT_SL-\d+/g, '');
+      const sym = (s.pair?.symbol || '').toUpperCase();
+      const entry = s.entryPrice || 0;
+
+      // Discard any phantom closed trade created with an outdated basePrice
+      if (
+        (sym === 'GBP/CAD' && entry < 1.85) ||
+        (sym === 'USD/CHF' && entry > 0.85) ||
+        (sym === 'CAD/JPY' && entry < 112.0) ||
+        (sym === 'GBP/AUD' && entry < 1.91) ||
+        (sym === 'USD/CAD' && entry > 1.41) ||
+        (sym === 'GBP/JPY' && entry < 210.0) ||
+        (sym === 'EUR/GBP' && entry > 0.842) ||
+        (sym === 'EUR/CAD' && entry < 1.568 && s.status === 'HIT_TP') ||
+        (s.id && s.id.includes('MW32VU'))
+      ) {
+        return false;
+      }
+
+      const pipsStr = Math.round((s.pips ?? 0) * 10) / 10;
+      const fingerprint = `${sym}-${s.status}-${pipsStr}`;
+
+      if (seen.has(s.id) || (baseId && seen.has(baseId)) || seenFp.has(fingerprint)) {
+        return false;
+      }
+      seen.add(s.id);
+      if (baseId) seen.add(baseId);
+      seenFp.add(fingerprint);
       return true;
     });
   }, [signals, nowClockMs]);
 
+  // Calculate win/loss rates per timeframe (ALL, M15, H1, H4) across current closed time range
+  const timeframeStats = useMemo<Record<ClosedTfFilter, TimeframeStat>>(() => {
+    const calc = (list: ForexSignal[]): TimeframeStat => {
+      const total = list.length;
+      const wins = list.filter(s => s.status === 'HIT_TP' || (s.pips ?? 0) > 0).length;
+      const losses = list.filter(s => (s.pips ?? 0) < 0).length;
+      const winRate = total > 0 ? Math.round((wins / total) * 100 * 10) / 10 : 0;
+      const netPips = Math.round(list.reduce((acc, s) => acc + (s.pips ?? 0), 0) * 10) / 10;
+      return { total, wins, losses, winRate, netPips };
+    };
+
+    const getTfKey = (s: ForexSignal): 'M15' | 'H1' | 'H4' | 'OTHER' => {
+      const tf = (s.winningTf || s.tfScores?.winningTf || s.timeframe || '').toUpperCase();
+      if (tf.includes('15') || tf === 'M15') return 'M15';
+      if (tf.includes('1H') || tf === 'H1') return 'H1';
+      if (tf.includes('4H') || tf === 'H4') return 'H4';
+      return 'OTHER';
+    };
+
+    const now = nowClockMs || Date.now();
+    const timeRangeFiltered = allClosedSignals.filter(s => {
+      const closedTime = s.closedAtMs || s.createdAtMs || now;
+      if (closedTimeRange === '24H') return closedTime >= now - 24 * 3600 * 1000;
+      if (closedTimeRange === '48H') return closedTime >= now - 48 * 3600 * 1000;
+      if (closedTimeRange === '1W') return closedTime >= now - 7 * 24 * 3600 * 1000;
+      if (closedTimeRange === '1M') return closedTime >= now - 30 * 24 * 3600 * 1000;
+      if (closedTimeRange === 'CUSTOM') {
+        const startMs = customStartDate ? new Date(customStartDate).setHours(0, 0, 0, 0) : 0;
+        const endMs = customEndDate ? new Date(customEndDate).setHours(23, 59, 59, 999) : Number.MAX_SAFE_INTEGER;
+        return closedTime >= startMs && closedTime <= endMs;
+      }
+      return true;
+    });
+
+    return {
+      ALL: calc(timeRangeFiltered),
+      M15: calc(timeRangeFiltered.filter(s => getTfKey(s) === 'M15')),
+      H1: calc(timeRangeFiltered.filter(s => getTfKey(s) === 'H1')),
+      H4: calc(timeRangeFiltered.filter(s => getTfKey(s) === 'H4')),
+    };
+  }, [allClosedSignals, closedTimeRange, customStartDate, customEndDate, nowClockMs]);
+
   // Dynamically filtered and sorted closed trades for the Closed / History tab
   const displayedClosedSignals = useMemo(() => {
     const now = nowClockMs || Date.now();
+    const isSearchActive = Boolean(searchQuery && searchQuery.trim());
 
     // 1. Time Range Filter
+    // When a search query is typed, search across all closed history so matching trades (such as yesterday's GBP/AUD) are never hidden
     let list = allClosedSignals.filter(s => {
+      if (isSearchActive) {
+        return true;
+      }
       const closedTime = s.closedAtMs || s.createdAtMs || now;
       if (closedTimeRange === '24H') {
         return closedTime >= now - 24 * 3600 * 1000;
@@ -244,32 +397,36 @@ export const SignalsScreen: React.FC<Props> = ({
       return true; // 'ALL'
     });
 
-    // 2. Outcome Filter
-    if (closedOutcome === 'WINS') {
-      list = list.filter(s => s.status === 'HIT_TP' || (s.pips ?? 0) > 0);
-    } else if (closedOutcome === 'LOSSES') {
-      list = list.filter(s => s.status === 'HIT_SL' || (s.pips ?? 0) < 0);
+    // 1b. Timeframe Filter (M15, H1, H4, or ALL)
+    if (closedTimeframe !== 'ALL') {
+      const getTfKey = (s: ForexSignal): 'M15' | 'H1' | 'H4' | 'OTHER' => {
+        const tf = (s.winningTf || s.tfScores?.winningTf || s.timeframe || '').toUpperCase();
+        if (tf.includes('15') || tf === 'M15') return 'M15';
+        if (tf.includes('1H') || tf === 'H1') return 'H1';
+        if (tf.includes('4H') || tf === 'H4') return 'H4';
+        return 'OTHER';
+      };
+      list = list.filter(s => getTfKey(s) === closedTimeframe);
     }
 
-    // 3. Search Filter
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      const qClean = q.replace(/[^a-z0-9]/g, '');
-      list = list.filter(sig => {
-        const symLower = sig.pair.symbol.toLowerCase();
-        const symClean = symLower.replace(/[^a-z0-9]/g, '');
-        const nameLower = sig.pair.name.toLowerCase();
-        const nameClean = nameLower.replace(/[^a-z0-9]/g, '');
-        return (
-          symLower.includes(q) ||
-          (qClean.length > 0 && symClean.includes(qClean)) ||
-          nameLower.includes(q) ||
-          (qClean.length > 0 && nameClean.includes(qClean)) ||
-          sig.rationale.toLowerCase().includes(q) ||
-          sig.killzone.toLowerCase().includes(q) ||
-          sig.type.toLowerCase().replace('_', ' ').includes(q)
-        );
-      });
+    // 2. Search Filter (matches symbol, pair name, timeframe e.g. "1hr"/"h1", outcome e.g. "sl"/"loss", strategy, etc.)
+    if (isSearchActive) {
+      list = list.filter(sig => matchesSignalSearch(sig, searchQuery));
+
+      // 3. Outcome Filter: if search produced results, respect outcome only if it doesn't wipe them out
+      if (closedOutcome === 'WINS') {
+        const winsOnly = list.filter(s => s.status === 'HIT_TP' || (s.pips ?? 0) > 0);
+        if (winsOnly.length > 0) list = winsOnly;
+      } else if (closedOutcome === 'LOSSES') {
+        const lossesOnly = list.filter(s => s.status === 'HIT_SL' || (s.pips ?? 0) < 0);
+        if (lossesOnly.length > 0) list = lossesOnly;
+      }
+    } else {
+      if (closedOutcome === 'WINS') {
+        list = list.filter(s => s.status === 'HIT_TP' || (s.pips ?? 0) > 0);
+      } else if (closedOutcome === 'LOSSES') {
+        list = list.filter(s => s.status === 'HIT_SL' || (s.pips ?? 0) < 0);
+      }
     }
 
     // 4. Sorting
@@ -306,15 +463,23 @@ export const SignalsScreen: React.FC<Props> = ({
     });
 
     return sorted;
-  }, [allClosedSignals, closedTimeRange, closedOutcome, searchQuery, closedSortOption, customStartDate, customEndDate, nowClockMs]);
+  }, [allClosedSignals, closedTimeRange, closedOutcome, closedTimeframe, searchQuery, closedSortOption, customStartDate, customEndDate, nowClockMs]);
 
+  const tfSuffix = closedTimeframe === 'M15' ? ' · 15 Min (M15)' : closedTimeframe === 'H1' ? ' · 1 Hour (H1)' : closedTimeframe === 'H4' ? ' · 4 Hours (H4)' : '';
   const activeTimeframeLabel =
-    closedTimeRange === '24H' ? '24 Hours' :
-    closedTimeRange === '48H' ? '48 Hours' :
-    closedTimeRange === '1W' ? '1 Week' :
-    closedTimeRange === '1M' ? '1 Month' :
-    closedTimeRange === 'CUSTOM' ? `Custom (${customStartDate} → ${customEndDate})` :
-    'All History';
+    (searchQuery.trim()
+      ? `Search: "${searchQuery}" in All Closed History`
+      : closedTimeRange === '24H'
+      ? '24 Hours'
+      : closedTimeRange === '48H'
+      ? '48 Hours'
+      : closedTimeRange === '1W'
+      ? '1 Week'
+      : closedTimeRange === '1M'
+      ? '1 Month'
+      : closedTimeRange === 'CUSTOM'
+      ? `Custom (${customStartDate} → ${customEndDate})`
+      : 'All History') + tfSuffix;
 
   // Selected Asset in Live Explorer for Instant Analysis (synced with live allPairs)
   const [selectedAssetPairState, setSelectedAssetPair] = useState<ForexPair | null>(allPairs[0] || null);
@@ -335,13 +500,27 @@ export const SignalsScreen: React.FC<Props> = ({
   ];
 
   // Execution & Strategy Tabs
+  const tradeableActiveSignals = useMemo(() => {
+    return activeSignals.filter(s => (s.status === 'RUNNING' || s.status === 'PENDING') && !s.isDemotedFromActive);
+  }, [activeSignals]);
+  const tradeableActiveCount = tradeableActiveSignals.length;
+
+  const nonRepeatedActiveSignals = useMemo(() => {
+    return computeNonRepeatedSignals(tradeableActiveSignals);
+  }, [tradeableActiveSignals]);
+  const nonRepeatedCount = nonRepeatedActiveSignals.length;
+
+  const standbyCount = activeSignals.filter(s => s.status === 'STANDBY').length;
+  const runningCount = activeSignals.filter(s => s.status === 'RUNNING').length;
+
   const strategyFilterTabs = [
     { key: 'ALL', label: `All (${activeSignals.length})` },
-    { key: 'ALL_ACTIVE', label: `All Trade (${activeSignals.filter(s => s.status === 'RUNNING' || s.status === 'PENDING').length})` },
-    { key: 'VIP', label: `🔥 A+ VIP (${activeSignals.filter(s => s.confluenceScore >= 90).length})` },
-    { key: 'RUNNING', label: `Running (${activeSignals.filter(s => s.status === 'RUNNING').length})` },
+    { key: 'ALL_ACTIVE', label: `🎯 A+ Active (${tradeableActiveCount})` },
+    { key: 'STANDBY', label: `⏳ Standby (${standbyCount})` },
+    { key: 'VIP', label: `🔥 85%+ VIP (${activeSignals.filter(s => s.confluenceScore >= 85 && !s.isDemotedFromActive).length})` },
+    { key: 'RUNNING', label: `Running (${runningCount})` },
     { key: 'PENDING', label: `Pending (${activeSignals.filter(s => s.status === 'PENDING').length})` },
-    { key: 'FAVORITES', label: `Watchlist (${activeSignals.filter(s => s.isFavorite).length})` },
+    { key: 'FAVORITES', label: `⭐ Saved (${activeSignals.filter(s => s.isFavorite).length})` },
     { key: 'HISTORY', label: `Closed (${displayedClosedSignals.length}${displayedClosedSignals.length !== allClosedSignals.length ? `/${allClosedSignals.length}` : ''})` },
   ];
 
@@ -388,7 +567,7 @@ export const SignalsScreen: React.FC<Props> = ({
   }, [activeSignals]);
 
   return (
-    <div className="space-y-2.5 max-w-md mx-auto pb-16 px-4">
+    <div className="space-y-2.5 max-w-md mx-auto pb-36 px-4">
       {/* 1. Unified Institutional Command & Telemetry Bar (Compact 2-Row Header) */}
       <div className="bg-[#101522] border border-[#222F47] rounded-xl p-2 space-y-1.5 shadow-sm terminal-card">
         {/* Top Row: View Mode Switcher + Quick Institutional Actions */}
@@ -560,8 +739,11 @@ export const SignalsScreen: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Strategy Filters & Toggles Desk (Check / Uncheck 9 Strategies) */}
-      <div className="bg-[#101522] border border-[#222F47] rounded-xl px-3 py-2 space-y-2">
+      {/* Active Strategy Suite & Live Explorer (Only shown for Active Signals Feed) */}
+      {selectedFilter !== 'HISTORY' && (
+        <>
+          {/* Strategy Filters & Toggles Desk (Check / Uncheck 9 Strategies) */}
+          <div className="bg-[#101522] border border-[#222F47] rounded-xl px-3 py-2 space-y-2">
         {/* Anti-Loss Mistake Elimination Guard Status */}
         <div className="flex items-center justify-between text-[10.5px] bg-[#00E676]/10 border border-[#00E676]/30 px-2.5 py-1 rounded-lg flex-wrap gap-1.5">
           <div className="flex items-center gap-1.5">
@@ -869,6 +1051,8 @@ export const SignalsScreen: React.FC<Props> = ({
       {(mobileSubView === 'QUOTES' || mobileSubView === 'ALL') && (
         <MultiTimeframeMatrix />
       )}
+        </>
+      )}
 
       {/* Signals Feed Section (Shown in SIGNALS or ALL view) */}
       {(mobileSubView === 'SIGNALS' || mobileSubView === 'ALL') && (
@@ -919,7 +1103,8 @@ export const SignalsScreen: React.FC<Props> = ({
                   >
                     <ArrowUpDown className="w-3 h-3 text-[#2979FF]" />
                     <span>
-                      {sortOption === 'LATEST' || sortOption === 'RECENT' ? 'Latest' :
+                      {sortOption === 'CHANGED' ? '⚠️ Changed / Recalc' :
+                       sortOption === 'LATEST' || sortOption === 'RECENT' ? 'Latest' :
                        sortOption === 'OLDEST' ? 'Oldest' :
                        sortOption === 'SMALL_TF' ? 'Small TF' :
                        sortOption === 'HIGH_TF' ? 'High TF' :
@@ -944,6 +1129,7 @@ export const SignalsScreen: React.FC<Props> = ({
                         </div>
                         <div className="py-1">
                           {[
+                            { key: 'CHANGED', label: 'Recalculated / Changed First', icon: '⚠️' },
                             { key: 'CONFLUENCE', label: 'Confluence Score (High → Low)', icon: '🔥' },
                             { key: 'LATEST', label: 'Latest (Newest First)', icon: '⏱️' },
                             { key: 'OLDEST', label: 'Oldest First', icon: '⏳' },
@@ -1065,10 +1251,130 @@ export const SignalsScreen: React.FC<Props> = ({
             {/* Row 3: Order State Filter Strip */}
             <div className="flex items-center gap-1 pt-1.5 border-t border-[#222F47]/60 overflow-x-auto no-scrollbar">
               {strategyFilterTabs.map(t => {
+                if (t.key === 'ALL_ACTIVE') {
+                  const isAPlusActive = selectedFilter === 'ALL_ACTIVE' || selectedFilter === 'A_PLUS_NON_REPEATED';
+                  const isNonRepeated = selectedFilter === 'A_PLUS_NON_REPEATED';
+                  return (
+                    <div key={t.key} className="relative shrink-0">
+                      <div className={`inline-flex items-center rounded-lg border transition-all ${
+                        isAPlusActive
+                          ? (isNonRepeated
+                              ? 'bg-[#2979FF] border-[#2979FF] text-white shadow-xs'
+                              : 'bg-[#00E676] border-[#00E676] text-[#080B11] shadow-xs')
+                          : 'bg-[#080B11] border-[#222F47] text-[#94A3B8] hover:text-[#F1F5F9]'
+                      }`}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!isAPlusActive) {
+                              onFilterSelect('ALL_ACTIVE');
+                            } else {
+                              setIsAPlusDropdownOpen(!isAPlusDropdownOpen);
+                            }
+                          }}
+                          className={`text-[10px] font-bold pl-2.5 pr-1 py-1 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                            isAPlusActive ? 'font-black' : ''
+                          }`}
+                        >
+                          <span>
+                            {isNonRepeated
+                              ? `⭐ A+ Non-Repeated (${nonRepeatedCount})`
+                              : `🎯 A+ Active (${tradeableActiveCount})`}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsAPlusDropdownOpen(!isAPlusDropdownOpen);
+                          }}
+                          className={`px-1.5 py-1 border-l transition-all cursor-pointer flex items-center justify-center ${
+                            isAPlusActive
+                              ? 'border-black/20 hover:bg-black/10'
+                              : 'border-[#222F47] hover:bg-[#182033]'
+                          }`}
+                          title="Open A+ Active Sort Menu (A+ Active All or A+ Non-Repeated)"
+                          aria-label="Toggle A+ Active dropdown menu"
+                        >
+                          <ChevronDown className={`w-3 h-3 transition-transform ${isAPlusDropdownOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                      </div>
+
+                      {/* Dropdown Menu under A+ Active Card */}
+                      {isAPlusDropdownOpen && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-40"
+                            onClick={() => setIsAPlusDropdownOpen(false)}
+                          />
+                          <div className="absolute left-0 top-full mt-1.5 w-64 bg-[#141B2D] border border-[#2979FF]/50 rounded-xl shadow-2xl z-50 py-1 divide-y divide-[#222F47]/60">
+                            <div className="px-3 py-1.5 text-[9.5px] font-bold text-[#94A3B8] uppercase tracking-wider flex items-center justify-between">
+                              <span>A+ Active Options</span>
+                              <span className="text-[#00E676] font-mono">Select 1 of 2</span>
+                            </div>
+                            <div className="py-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onFilterSelect('ALL_ACTIVE');
+                                  setIsAPlusDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-[11px] font-bold flex items-center justify-between transition-colors cursor-pointer ${
+                                  selectedFilter === 'ALL_ACTIVE'
+                                    ? 'bg-[#00E676]/20 text-[#00E676]'
+                                    : 'text-[#94A3B8] hover:bg-[#1C263B] hover:text-[#F1F5F9]'
+                                }`}
+                              >
+                                <div className="min-w-0 pr-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <span>🎯</span>
+                                    <span className="text-[#F1F5F9]">A+ Active All</span>
+                                    <span className="text-[9px] font-mono text-[#00E676]">({tradeableActiveCount})</span>
+                                  </div>
+                                  <div className="text-[9.5px] text-[#94A3B8] font-normal mt-0.5">
+                                    All active & running A+ institutional setups
+                                  </div>
+                                </div>
+                                {selectedFilter === 'ALL_ACTIVE' && <Check className="w-3.5 h-3.5 text-[#00E676] shrink-0" />}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onFilterSelect('A_PLUS_NON_REPEATED');
+                                  setIsAPlusDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-[11px] font-bold flex items-center justify-between transition-colors cursor-pointer ${
+                                  selectedFilter === 'A_PLUS_NON_REPEATED'
+                                    ? 'bg-[#2979FF]/20 text-[#60A5FA]'
+                                    : 'text-[#94A3B8] hover:bg-[#1C263B] hover:text-[#F1F5F9]'
+                                }`}
+                              >
+                                <div className="min-w-0 pr-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <span>⭐</span>
+                                    <span className="text-[#F1F5F9]">A+ Non-Repeated</span>
+                                    <span className="text-[9px] font-mono text-[#60A5FA]">({nonRepeatedCount})</span>
+                                  </div>
+                                  <div className="text-[9.5px] text-[#94A3B8] font-normal mt-0.5">
+                                    Best A+ Forex & Metals with 0 currency overlap
+                                  </div>
+                                </div>
+                                {selectedFilter === 'A_PLUS_NON_REPEATED' && <Check className="w-3.5 h-3.5 text-[#2979FF] shrink-0" />}
+                              </button>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                }
+
                 const isSelected = selectedFilter === t.key;
                 return (
                   <button
                     key={t.key}
+                    type="button"
                     onClick={() => onFilterSelect(t.key)}
                     className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border whitespace-nowrap transition-all cursor-pointer ${
                       isSelected
@@ -1081,6 +1387,96 @@ export const SignalsScreen: React.FC<Props> = ({
                 );
               })}
             </div>
+
+            {/* Row 4: Confluence Score Filter Buttons (All, 60+, 70+, 80+, <60) */}
+            {selectedFilter !== 'HISTORY' && onConfluenceFilterSelect && (
+              <div className="flex items-center justify-between gap-1.5 pt-1.5 border-t border-[#222F47]/60 flex-wrap">
+                <span className="text-[9.5px] font-bold text-[#94A3B8] uppercase tracking-wider shrink-0">
+                  Confluence:
+                </span>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {[
+                    { key: 'ALL' as const, label: 'All', count: confluenceCounts?.all },
+                    { key: '60_PLUS' as const, label: '60+', count: confluenceCounts?.plus60 },
+                    { key: '70_PLUS' as const, label: '70+', count: confluenceCounts?.plus70 },
+                    { key: '80_PLUS' as const, label: '80+', count: confluenceCounts?.plus80 },
+                    { key: 'BELOW_60' as const, label: '<60', count: confluenceCounts?.below60 }
+                  ].map(btn => {
+                    const isActive = confluenceFilter === btn.key;
+                    const activeColors =
+                      btn.key === '80_PLUS'
+                        ? 'bg-[#00E676] border-[#00E676] text-[#080B11] font-black shadow-xs'
+                        : btn.key === '70_PLUS'
+                        ? 'bg-[#2979FF] border-[#2979FF] text-white font-black shadow-xs'
+                        : btn.key === '60_PLUS'
+                        ? 'bg-[#FFD700] border-[#FFD700] text-[#080B11] font-black shadow-xs'
+                        : btn.key === 'BELOW_60'
+                        ? 'bg-[#FF9100] border-[#FF9100] text-[#080B11] font-black shadow-xs'
+                        : 'bg-[#F1F5F9] border-[#F1F5F9] text-[#080B11] font-black shadow-xs';
+                    return (
+                      <button
+                        key={btn.key}
+                        type="button"
+                        onClick={() => onConfluenceFilterSelect(btn.key)}
+                        className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border whitespace-nowrap transition-all cursor-pointer flex items-center gap-1 active:scale-95 ${
+                          isActive
+                            ? activeColors
+                            : 'bg-[#080B11] border-[#222F47] text-[#94A3B8] hover:text-[#F1F5F9] hover:border-[#334155]'
+                        }`}
+                      >
+                        <span>{btn.label}</span>
+                        {typeof btn.count === 'number' && (
+                          <span className={`font-mono text-[9px] ${isActive ? 'opacity-80' : 'text-[#64748B]'}`}>
+                            ({btn.count})
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* A+ Active Sub-Menu Strip: 2 Direct Options Under the A+ Active Card */}
+            {(selectedFilter === 'ALL_ACTIVE' || selectedFilter === 'A_PLUS_NON_REPEATED') && (
+              <div className="flex items-center justify-between gap-1.5 p-1 bg-[#080B11] border border-[#222F47] rounded-lg">
+                <div className="flex items-center gap-1 min-w-0">
+                  <span className="text-[9.5px] font-bold text-[#94A3B8] px-1.5 uppercase tracking-wider flex items-center gap-1 shrink-0">
+                    <span>🎯</span>
+                    <span>A+ Mode:</span>
+                  </span>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => onFilterSelect('ALL_ACTIVE')}
+                      className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                        selectedFilter === 'ALL_ACTIVE'
+                          ? 'bg-[#00E676] text-[#080B11] font-black shadow-xs'
+                          : 'text-[#94A3B8] hover:text-[#F1F5F9] hover:bg-[#182033]'
+                      }`}
+                    >
+                      <span>🎯 A+ Active All</span>
+                      <span className="font-mono text-[9px] opacity-80">({tradeableActiveCount})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onFilterSelect('A_PLUS_NON_REPEATED')}
+                      className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                        selectedFilter === 'A_PLUS_NON_REPEATED'
+                          ? 'bg-[#2979FF] text-white font-black shadow-xs'
+                          : 'text-[#94A3B8] hover:text-[#F1F5F9] hover:bg-[#182033]'
+                      }`}
+                    >
+                      <span>⭐ A+ Non-Repeated</span>
+                      <span className="font-mono text-[9px] opacity-80">({nonRepeatedCount})</span>
+                    </button>
+                  </div>
+                </div>
+                <span className="text-[9px] font-mono text-[#64748B] hidden sm:inline px-1">
+                  {selectedFilter === 'A_PLUS_NON_REPEATED' ? 'Zero Overlap Active' : 'All Tradeable Setups'}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Closed Trades Control Bar & Win/Loss Summary Widget (Displayed at the top of the HISTORY tab) */}
@@ -1093,6 +1489,9 @@ export const SignalsScreen: React.FC<Props> = ({
                 onChangeSortOption={handleSortOptionChange}
                 selectedOutcome={closedOutcome}
                 onChangeOutcome={setClosedOutcome}
+                selectedTimeframe={closedTimeframe}
+                onChangeTimeframe={setClosedTimeframe}
+                timeframeStats={timeframeStats}
                 customStartDate={customStartDate}
                 customEndDate={customEndDate}
                 onChangeCustomDates={handleCustomDatesChange}
@@ -1108,7 +1507,118 @@ export const SignalsScreen: React.FC<Props> = ({
                 filteredCount={displayedClosedSignals.length}
                 searchQuery={searchQuery}
                 timeframeLabel={activeTimeframeLabel}
+                selectedTimeframe={closedTimeframe}
+                onSelectTimeframe={setClosedTimeframe}
+                timeframeStats={timeframeStats}
               />
+            </div>
+          )}
+
+          {/* Step 2: Currency Conflict Filter Bar at Top of Signal List (STRICT + WARNING Modes) */}
+          {selectedFilter !== 'HISTORY' && (
+            <div className="bg-[#101522] border border-[#222F47] rounded-xl p-2.5 space-y-2 shadow-sm terminal-card">
+              <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                {/* 3 Required Mode Switch Buttons: [Conflict Filter: ON/OFF] + [Mode: STRICT | WARNING] */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setIsConflictFilterEnabled(prev => !prev)}
+                    className={`flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
+                      isConflictFilterEnabled
+                        ? 'bg-[#00E676]/15 border-[#00E676]/50 text-[#00E676]'
+                        : 'bg-[#080B11] border-[#334155] text-[#94A3B8] hover:text-[#F1F5F9]'
+                    }`}
+                  >
+                    {isConflictFilterEnabled ? (
+                      <ShieldCheck className="w-3.5 h-3.5 text-[#00E676]" />
+                    ) : (
+                      <ShieldAlert className="w-3.5 h-3.5 text-[#64748B]" />
+                    )}
+                    <span>Conflict Filter: {isConflictFilterEnabled ? 'ON' : 'OFF'}</span>
+                  </button>
+
+                  <div className="inline-flex items-center bg-[#080B11] border border-[#222F47] rounded-lg p-0.5">
+                    <span className="text-[9px] font-bold text-[#64748B] px-1.5 uppercase tracking-wider">
+                      Mode:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsConflictFilterEnabled(true);
+                        setConflictMode('STRICT');
+                      }}
+                      className={`text-[10px] font-black px-2 py-1 rounded-md transition-all cursor-pointer ${
+                        isConflictFilterEnabled && conflictMode === 'STRICT'
+                          ? 'bg-[#2979FF] text-white shadow-xs'
+                          : 'text-[#94A3B8] hover:text-[#F1F5F9]'
+                      }`}
+                    >
+                      STRICT
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsConflictFilterEnabled(true);
+                        setConflictMode('WARNING');
+                      }}
+                      className={`text-[10px] font-black px-2 py-1 rounded-md transition-all cursor-pointer ${
+                        isConflictFilterEnabled && conflictMode === 'WARNING'
+                          ? 'bg-[#FF9100] text-[#080B11] shadow-xs'
+                          : 'text-[#94A3B8] hover:text-[#F1F5F9]'
+                      }`}
+                    >
+                      WARNING
+                    </button>
+                  </div>
+                </div>
+
+                {/* Live Clean / Conflicts Counter */}
+                <div className="text-[10px] font-mono font-bold px-2 py-1 rounded-md bg-[#080B11] border border-[#1E293B] text-[#E2E8F0]">
+                  {isConflictFilterEnabled ? (
+                    <>
+                      <span>Showing </span>
+                      <span className="text-[#00E676] font-black">{cleanFilteredSignals.length} Clean Signals</span>
+                      <span className="text-[#64748B]"> | </span>
+                      <span className={conflictingFilteredSignals.length > 0 ? 'text-[#FF5252] font-black' : 'text-[#94A3B8]'}>
+                        {conflictingFilteredSignals.length} Conflicts
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-[#94A3B8]">
+                      Filter OFF · Showing all {filteredSignals.length} signals normally
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Active Locked Currency Bias Summary Strip (shown when Filter is ON) */}
+              {isConflictFilterEnabled && lockedBiasesList.length > 0 && (
+                <div className="flex items-center gap-1 flex-wrap pt-1.5 border-t border-[#222F47]/60">
+                  <span className="text-[8.5px] font-bold text-[#64748B] uppercase tracking-wider mr-0.5">
+                    Locked Bias:
+                  </span>
+                  {lockedBiasesList.map(item => (
+                    <span
+                      key={item.currency}
+                      className={`text-[8.5px] font-mono font-black px-1.5 py-0.5 rounded border leading-none ${
+                        item.bias === 'BULLISH'
+                          ? 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/30'
+                          : item.bias === 'BEARISH'
+                          ? 'bg-[#FF3366]/10 text-[#FF5252] border-[#FF3366]/30'
+                          : 'bg-[#FF9100]/10 text-[#FF9100] border-[#FF9100]/30'
+                      }`}
+                      title={`BUY: ${item.buyPairs.join(', ') || 'None'} | SELL: ${item.sellPairs.join(', ') || 'None'}`}
+                    >
+                      {item.displayName}{' '}
+                      {item.bias === 'BULLISH'
+                        ? `▲ BULL (${item.buyCount})`
+                        : item.bias === 'BEARISH'
+                        ? `▼ BEAR (${item.sellCount})`
+                        : `⚖ SPLIT (${item.buyCount}/${item.sellCount})`}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -1122,13 +1632,118 @@ export const SignalsScreen: React.FC<Props> = ({
             <span className="text-[#94A3B8] font-mono">
               {selectedFilter === 'HISTORY'
                 ? `${displayedClosedSignals.length} of ${allClosedSignals.length} Closed`
+                : isConflictFilterEnabled
+                ? `${displayedActiveSignals.length} Shown (${cleanFilteredSignals.length} Clean · ${conflictingFilteredSignals.length} Conflicts)`
                 : `${filteredSignals.length} Active Setups`}
             </span>
           </div>
 
+      {/* 15-Minute Close Cooldown Indicator */}
+      {selectedFilter !== 'HISTORY' && (() => {
+        const cooldowns = PersistenceManager.getUserClosedCooldowns();
+        const list = Object.values(cooldowns);
+        if (list.length === 0) return null;
+        return (
+          <div className="p-2.5 rounded-xl bg-[#161F33]/90 border border-[#FF3366]/30 flex items-center justify-between gap-2 text-[10.5px]">
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+              <Clock className="w-3.5 h-3.5 text-[#FF9100] shrink-0" />
+              <span className="font-bold text-[#F8FAFC]">15m Resting Cooldown:</span>
+              {list.map(c => {
+                const remSec = Math.max(0, Math.floor((c.cooldownExpiresAtMs - nowClockMs) / 1000));
+                const remMin = Math.floor(remSec / 60);
+                const remSecLeft = remSec % 60;
+                return (
+                  <span key={c.pairSymbol} className="font-mono px-1.5 py-0.5 rounded bg-[#FF3366]/20 text-[#FF5252] border border-[#FF3366]/40 text-[9.5px] font-black">
+                    {c.pairSymbol} ({remMin}m {remSecLeft}s)
+                  </span>
+                );
+              })}
+            </div>
+            {onClearCooldown && (
+              <button
+                type="button"
+                onClick={() => {
+                  list.forEach(c => onClearCooldown(c.pairSymbol));
+                }}
+                className="text-[9.5px] font-black text-[#60A5FA] hover:text-[#93C5FD] px-2 py-1 rounded-md bg-[#2979FF]/20 border border-[#2979FF]/40 transition-all shrink-0 cursor-pointer active:scale-95"
+                title="Resume and rescan paused pairs immediately"
+              >
+                Rescan Now
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* A+ Non-Repeated Currencies & Metals Portfolio Banner */}
+      {selectedFilter === 'A_PLUS_NON_REPEATED' && (
+        <div className="bg-[#101522] border border-[#2979FF]/50 rounded-xl p-3 shadow-md space-y-1 terminal-card">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-base shrink-0">⭐</span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs font-black text-[#F1F5F9]">A+ Non-Repeated Currencies & Metals</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40">
+                    Zero Currency Overlap
+                  </span>
+                </div>
+                <p className="text-[10px] text-[#94A3B8] mt-0.5">
+                  Best possible A+ setups selected across Forex & Metals. Every single trade contains 0 common base or quote currencies with any other trade shown.
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] font-mono font-black text-[#60A5FA] bg-[#2979FF]/20 px-2 py-1 rounded-md border border-[#2979FF]/40 shrink-0">
+              {filteredSignals.length} Setups
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Real-Data Scanner Diagnostics Banner (NO DATA / NO CANDLES / H4 EMA Trend Blocks / Conflict Blocks) */}
+      {selectedFilter !== 'HISTORY' && (scannerStatus?.globalStatus || (scannerStatus?.blocked && scannerStatus.blocked.length > 0)) && (
+        <div className="bg-[#101522] rounded-xl border border-[#222F47] p-3 space-y-2">
+          {scannerStatus.globalStatus && (
+            <div className="flex items-center justify-between gap-2 bg-[#FF5252]/10 border border-[#FF5252]/40 rounded-lg px-3 py-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertTriangle className="w-4 h-4 text-[#FF5252] shrink-0" />
+                <span className="text-[11px] font-mono font-bold text-[#FCA5A5]">
+                  {scannerStatus.globalStatus}
+                </span>
+              </div>
+            </div>
+          )}
+          {scannerStatus.blocked.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] font-mono text-[#94A3B8]">
+                <span className="font-bold text-[#E2E8F0]">
+                  Scanner Real-Data Gate ({scannerStatus.blocked.length} pairs filtered)
+                </span>
+                {scannerStatus.lastScanAtMs && (
+                  <span>{new Date(scannerStatus.lastScanAtMs).toISOString().slice(11, 19)} UTC</span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-32 overflow-y-auto pr-1">
+                {scannerStatus.blocked.map((b) => (
+                  <div
+                    key={`${b.pairSymbol}-${b.status}`}
+                    className="flex items-start justify-between gap-2 text-[10px] font-mono bg-[#0B0F1A] border border-[#1E293B] rounded px-2 py-1"
+                  >
+                    <span className="font-bold text-[#F1F5F9] shrink-0">{b.pairSymbol}</span>
+                    <span className="text-[#94A3B8] text-right truncate" title={b.reason}>
+                      {b.reason}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Signal Cards */}
       <div className="space-y-2">
-        {(selectedFilter === 'HISTORY' ? displayedClosedSignals : filteredSignals).map((sig, idx) => (
+        {(selectedFilter === 'HISTORY' ? displayedClosedSignals : displayedActiveSignals).map((sig, idx) => (
           <SignalCard
             key={`${sig.id}-${sig.status}-${sig.createdAtMs || idx}`}
             signal={sig}
@@ -1140,16 +1755,24 @@ export const SignalsScreen: React.FC<Props> = ({
             onOpenBacktest={() => onOpenBacktest(sig)}
             onOpenElev8Order={onOpenElev8Order ? () => onOpenElev8Order(sig) : undefined}
             onOpenOutcomeAnalysis={(s) => setSelectedOutcomeSignal(s)}
+            onCloseTrade={onCloseTrade}
             nowClockMs={nowClockMs}
             isMarketOpen={isMarketOpen}
+            conflictFilterActive={selectedFilter !== 'HISTORY' && isConflictFilterEnabled}
+            conflictMode={conflictMode}
+            conflictInfo={selectedFilter !== 'HISTORY' ? conflictAnalysis.evaluationsById[sig.id] : undefined}
+            isConflictAcknowledged={Boolean(acknowledgedConflictIds[sig.id])}
+            onAcknowledgeConflict={handleToggleAcknowledgeConflict}
           />
         ))}
 
-        {(selectedFilter === 'HISTORY' ? displayedClosedSignals : filteredSignals).length === 0 && (
+        {(selectedFilter === 'HISTORY' ? displayedClosedSignals : displayedActiveSignals).length === 0 && (
           <div className="p-8 text-center bg-[#101522] rounded-xl border border-[#222F47] space-y-3">
             <p className="text-xs text-[#94A3B8]">
               {selectedFilter === 'HISTORY'
                 ? `No closed trades found matching "${activeTimeframeLabel}". Try switching to 48 Hours, 1 Week, 1 Month, or All History.`
+                : isConflictFilterEnabled && conflictMode === 'STRICT' && conflictingFilteredSignals.length > 0
+                ? `All ${conflictingFilteredSignals.length} matching signals are hidden due to Currency Conflicts. Tap the grey box below to view reasons or switch to WARNING mode.`
                 : 'No active signals found matching your current filter.'}
             </p>
             {selectedFilter !== 'HISTORY' && onScanAndFormSignals && (
@@ -1164,6 +1787,78 @@ export const SignalsScreen: React.FC<Props> = ({
           </div>
         )}
       </div>
+
+      {/* Step 3A: STRICT MODE Bottom Grey Collapsed Box for Hidden Conflicting Signals */}
+      {selectedFilter !== 'HISTORY' &&
+        isConflictFilterEnabled &&
+        conflictMode === 'STRICT' &&
+        conflictingFilteredSignals.length > 0 && (
+          <div className="bg-[#161B22] border border-[#334155]/80 rounded-xl overflow-hidden shadow-sm">
+            <button
+              type="button"
+              onClick={() => setIsHiddenConflictsExpanded(prev => !prev)}
+              className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left bg-[#1A212C] hover:bg-[#222B3A] transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <ShieldAlert className="w-4 h-4 text-[#94A3B8] shrink-0" />
+                <span className="text-[11px] font-black text-[#CBD5E1] truncate">
+                  Hidden - Conflicting Signals ({conflictingFilteredSignals.length}) - Tap to view
+                </span>
+              </div>
+              <ChevronDown
+                className={`w-4 h-4 text-[#94A3B8] shrink-0 transition-transform ${
+                  isHiddenConflictsExpanded ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+
+            {isHiddenConflictsExpanded && (
+              <div className="p-2.5 space-y-2 border-t border-[#293445] bg-[#11151C]">
+                {conflictingFilteredSignals.map(sig => {
+                  const evalInfo = conflictAnalysis.evaluationsById[sig.id];
+                  const isBuy = sig.type.startsWith('BUY');
+                  return (
+                    <div
+                      key={`hidden-conflict-${sig.id}`}
+                      onClick={() => onInspectSignal(sig)}
+                      className="p-2.5 rounded-lg bg-[#1A202B] border border-[#334155]/80 hover:border-[#64748B] transition-colors cursor-pointer space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-black text-[#E2E8F0]">
+                            {sig.pair.symbol}
+                          </span>
+                          <span
+                            className={`text-[9.5px] font-black px-1.5 py-0.5 rounded leading-none ${
+                              isBuy
+                                ? 'bg-[#00E676]/15 text-[#00E676] border border-[#00E676]/35'
+                                : 'bg-[#FF3366]/15 text-[#FF5252] border border-[#FF3366]/35'
+                            }`}
+                          >
+                            {isBuy ? 'BUY' : 'SELL'}
+                          </span>
+                          <span className="text-[9.5px] font-mono text-[#94A3B8]">
+                            [{sig.winningTf || sig.timeframe}] · {sig.confluenceScore}/100
+                          </span>
+                        </div>
+                        <span className="text-[9px] font-bold text-[#94A3B8] underline underline-offset-2 shrink-0">
+                          Inspect →
+                        </span>
+                      </div>
+
+                      <p className="text-[10.5px] font-medium text-[#CBD5E1] leading-relaxed bg-[#0F141B] px-2.5 py-1.5 rounded border border-[#293445]">
+                        {evalInfo?.strictHiddenReason || `${sig.pair.symbol} hidden due to conflicting currency bias.`}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+      {/* Mobile Safe Area Bottom Navigation Clearance Spacer */}
+      <div className="h-20 w-full shrink-0" aria-hidden="true" />
         </>
       )}
 

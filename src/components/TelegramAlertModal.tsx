@@ -141,12 +141,23 @@ export const TelegramAlertModal: React.FC<TelegramAlertModalProps> = ({
               type="text"
               value={config.botToken}
               onChange={e => setConfig({ ...config, botToken: e.target.value })}
-              placeholder="e.g. 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+              placeholder="Paste token from @BotFather (e.g. 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)"
               className="w-full bg-[#161D2E] border border-[#222F47] rounded-lg px-3 py-2 text-[#F1F5F9] focus:outline-none focus:border-[#38bdf8] font-mono text-xs"
             />
-            <p className="text-[10px] text-[#94A3B8]">
-              Create a bot via <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-[#38bdf8] underline">@BotFather</a> on Telegram and paste the HTTP API token here.
-            </p>
+            <div className="bg-[#182033] border border-[#222F47] rounded-lg p-2.5 text-[11px] text-[#94A3B8] space-y-1">
+              <span className="font-bold text-[#38bdf8] block">How to get your Bot Token in 3 taps:</span>
+              <ol className="list-decimal pl-4 space-y-0.5 text-[10.5px]">
+                <li>Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-[#38bdf8] underline font-bold">@BotFather</a> in Telegram</li>
+                <li>Send command: <code className="bg-[#0D1117] text-[#00E676] px-1 py-0.5 rounded font-mono">/mybots</code></li>
+                <li>Tap your bot (<strong className="text-white">My forex alert</strong>) → tap <strong className="text-white">API Token</strong></li>
+                <li>Copy that token and paste it into the box above, then click <strong>Auto-Detect Chat ID</strong> below!</li>
+              </ol>
+            </div>
+            {config.botToken.includes('8750503064') && (
+              <p className="text-[10.5px] text-[#f87171] bg-[#ef4444]/10 border border-[#ef4444]/30 rounded-lg p-2 font-sans leading-relaxed">
+                ⚠️ <strong>Old placeholder token detected:</strong> This is not your real bot token. Please replace it with the HTTP API token from <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="underline font-bold text-[#38bdf8]">@BotFather</a>!
+              </p>
+            )}
           </div>
 
           {/* Chat ID Input */}
@@ -173,8 +184,13 @@ export const TelegramAlertModal: React.FC<TelegramAlertModalProps> = ({
               placeholder="e.g. 987654321 or -1001234567890"
               className="w-full bg-[#161D2E] border border-[#222F47] rounded-lg px-3 py-2 text-[#F1F5F9] focus:outline-none focus:border-[#38bdf8] font-mono text-xs"
             />
+            {config.chatId.startsWith('@') && (
+              <p className="text-[10.5px] text-[#fbbf24] bg-[#f59e0b]/10 border border-[#f59e0b]/30 rounded-lg p-2 font-sans leading-relaxed">
+                💡 <strong>Notice:</strong> <code>{config.chatId}</code> is a bot/channel username. Your personal Chat ID is a <strong>number</strong> (e.g. <code>582910482</code>). Tap <strong>Auto-Detect Chat ID</strong> above to automatically detect and fill your numeric Chat ID!
+              </p>
+            )}
             <p className="text-[10px] text-[#94A3B8]">
-              Your personal chat ID, group chat ID, or channel ID (with minus prefix). Send any message to your bot first, then click Auto-Detect.
+              Your personal numeric chat ID. Send any message to your bot on Telegram first, then tap Auto-Detect Chat ID.
             </p>
           </div>
 

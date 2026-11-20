@@ -25,12 +25,14 @@ import {
   Filter
 } from 'lucide-react';
 import { BacktestTrade, BacktestSummary } from '../types';
+import { BacktestEngine } from '../services/backtestEngine';
 
 interface Props {
   equityPoints?: number[];
   initialBalance?: number;
   trades?: BacktestTrade[];
   summary?: BacktestSummary;
+  gateBreakevenArm?: boolean;
 }
 
 type ChartMetric = 'PNL' | 'EQUITY' | 'PIPS' | 'DRAWDOWN';
@@ -40,12 +42,13 @@ export const RealEquityCurveChart: React.FC<Props> = ({
   equityPoints = [10000],
   initialBalance = 10000,
   trades = [],
-  summary
+  summary,
+  gateBreakevenArm = true
 }) => {
   const [metric, setMetric] = useState<ChartMetric>('PNL');
   const [timeRange, setTimeRange] = useState<TimeRange>('ALL');
 
-  // Build high-resolution data points for Recharts from actual trades sequence
+  // Build high-resolution data points for Recharts from actual trades sequence (sorted chronologically ascending)
   const chartData = useMemo(() => {
     let runningPnl = 0;
     let runningPips = 0;
@@ -74,14 +77,38 @@ export const RealEquityCurveChart: React.FC<Props> = ({
     ];
 
     if (trades && trades.length > 0) {
-      trades.forEach((trade, idx) => {
-        const isWin = trade.outcome === 'WIN';
-        const tradePnlDollar = isWin ? 150 : -100;
-        const tradePips = trade.pips;
+      const chronologicalTrades = [...trades].sort((a, b) => {
+        const tsA = typeof a.timestamp === 'number' && a.timestamp > 0 ? a.timestamp : (Date.parse(a.entryTime || '') || 0);
+        const tsB = typeof b.timestamp === 'number' && b.timestamp > 0 ? b.timestamp : (Date.parse(b.entryTime || '') || 0);
+        return tsA - tsB;
+      });
 
-        runningPnl += tradePnlDollar;
+      chronologicalTrades.forEach((trade, idx) => {
+        const isBeProtected = trade.tpStage === 'TP1_BE';
+        const isWin = isBeProtected ? Boolean(gateBreakevenArm) : trade.outcome === 'WIN';
+        const rawDollar = BacktestEngine.getTradeDollarPnl(trade);
+        const rawPips = typeof trade.pips === 'number' && !isNaN(trade.pips) ? trade.pips : 0;
+
+        let tradePnlDollar = rawDollar;
+        let tradePips = rawPips;
+
+        if (isBeProtected) {
+          if (gateBreakevenArm) {
+            tradePnlDollar = 10;
+            tradePips = 1.0;
+          } else {
+            tradePnlDollar = -100;
+            tradePips = -Math.max(10, Math.abs(rawPips || 20));
+          }
+        } else if (isWin) {
+          tradePnlDollar = Math.max(10, Math.round(rawDollar * 100) / 100);
+        } else {
+          tradePnlDollar = -Math.abs(Math.round((rawDollar || 100) * 100) / 100);
+        }
+
+        runningPnl = Math.round((runningPnl + tradePnlDollar) * 100) / 100;
         runningPips += tradePips;
-        runningBalance += tradePnlDollar;
+        runningBalance = Math.round((runningBalance + tradePnlDollar) * 100) / 100;
 
         if (runningBalance > peakBalance) {
           peakBalance = runningBalance;
@@ -98,7 +125,7 @@ export const RealEquityCurveChart: React.FC<Props> = ({
           date: trade.entryTime || `Trade ${idx + 1}`,
           symbol: trade.pairSymbol,
           direction: trade.direction,
-          outcome: trade.outcome,
+          outcome: isBeProtected ? (gateBreakevenArm ? 'TP1 BE' : 'LOSS') : trade.outcome,
           pnlDollar: tradePnlDollar,
           tradePips: tradePips,
           cumulativePnl: runningPnl,
@@ -173,7 +200,7 @@ export const RealEquityCurveChart: React.FC<Props> = ({
     const data = payload[0].payload;
     if (!data) return null;
 
-    const isTradeWin = data.outcome === 'WIN';
+    const isTradeWin = data.pnlDollar >= 0;
     const isBaseline = data.tradeNum === 0;
 
     return (
@@ -512,15 +539,17 @@ export const RealEquityCurveChart: React.FC<Props> = ({
       {/* Strategy Performance Matrix Badges below Chart */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-left">
         <div className="bg-[#090d16] border border-[#222F47] rounded-xl p-2.5">
-          <div className="text-[9px] text-[#64748B] uppercase font-bold">Fixed Payout Model</div>
-          <div className="text-xs font-bold text-[#2979FF] mt-0.5">1:1.5R Fixed ATR</div>
-          <div className="text-[9.5px] text-[#94A3B8] mt-0.5">Win: +$150 | Loss: -$100</div>
+          <div className="text-[9px] text-[#64748B] uppercase font-bold">Risk / Reward Model</div>
+          <div className="text-xs font-bold text-[#2979FF] mt-0.5 truncate">
+            {summary?.avgRiskReward || '1% Risk ($100/1R)'}
+          </div>
+          <div className="text-[9.5px] text-[#94A3B8] mt-0.5">ATR SL/TP · Auto BE (+1p)</div>
         </div>
 
         <div className="bg-[#090d16] border border-[#222F47] rounded-xl p-2.5">
           <div className="text-[9px] text-[#64748B] uppercase font-bold">Profit Factor</div>
           <div className="text-xs font-bold text-[#F1F5F9] mt-0.5">
-            {summary ? summary.profitFactor : '2.45'}
+            {summary ? summary.profitFactor.toFixed(2) : '0.00'}
           </div>
           <div className="text-[9.5px] text-[#00E676] mt-0.5">Gross Wins / Losses</div>
         </div>
@@ -537,7 +566,7 @@ export const RealEquityCurveChart: React.FC<Props> = ({
           <div className="text-[9px] text-[#64748B] uppercase font-bold">Strategy Status</div>
           <div className="text-xs font-bold text-[#00E676] mt-0.5 flex items-center gap-1">
             <CheckCircle2 className="w-3.5 h-3.5 text-[#00E676]" />
-            <span>{isProfitable ? 'Positive Edge' : 'Consolidating'}</span>
+            <span>{isProfitable ? 'Positive Edge' : 'Drawdown'}</span>
           </div>
           <div className="text-[9.5px] text-[#94A3B8] mt-0.5">Real Candles Verified</div>
         </div>

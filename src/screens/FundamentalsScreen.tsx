@@ -205,21 +205,27 @@ export const FundamentalsScreen: React.FC<Props> = ({
           </span>
         </div>
 
-        <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-10 gap-2 text-center">
-          {currencyStrengths.map(c => (
-            <div key={c.currency} className="bg-[#182033] p-2 rounded-lg border border-[#222F47]">
-              <div className="text-xs font-bold text-[#F1F5F9]">{c.currency}</div>
-              <div
-                className={`text-base font-black font-mono my-0.5 ${
-                  c.score >= 65 ? 'text-[#00E676]' : c.score <= 45 ? 'text-[#FF3366]' : 'text-[#FFD700]'
-                }`}
-              >
-                {(c.score / 10).toFixed(1)}
+        {currencyStrengths.length === 0 ? (
+          <div className="p-4 rounded-lg bg-[#182033] border border-[#FF3366]/40 text-center text-xs font-bold text-[#FF5252]">
+            NO DATA - CANNOT GENERATE SIGNAL (Awaiting live 24h FX price changes)
+          </div>
+        ) : (
+          <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-10 gap-2 text-center">
+            {currencyStrengths.map(c => (
+              <div key={c.currency} className="bg-[#182033] p-2 rounded-lg border border-[#222F47]">
+                <div className="text-xs font-bold text-[#F1F5F9]">{c.currency}</div>
+                <div
+                  className={`text-base font-black font-mono my-0.5 ${
+                    c.score >= 65 ? 'text-[#00E676]' : c.score <= 45 ? 'text-[#FF3366]' : 'text-[#FFD700]'
+                  }`}
+                >
+                  {(c.score / 10).toFixed(1)}
+                </div>
+                <div className="text-[9px] text-[#94A3B8]">{c.change24h}</div>
               </div>
-              <div className="text-[9px] text-[#94A3B8]">{c.change24h}</div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Section 6: Upcoming High-Impact Releases */}

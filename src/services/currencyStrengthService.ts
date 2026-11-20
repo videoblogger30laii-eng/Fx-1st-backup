@@ -1,59 +1,135 @@
-import { CurrencyStrengthItem, BestPairingRecommendation, PairStrengthItem } from '../types';
+import {
+  CurrencyStrengthItem,
+  CurrencyStrengthSnapshot,
+  BestPairingRecommendation,
+  PairStrengthItem
+} from '../types';
 import { realPriceService } from './RealPriceService';
 import { ALL_PAIRS } from './marketData';
 
+const FX_MAJOR_CURRENCIES = ['EUR', 'GBP', 'USD', 'JPY', 'CHF', 'AUD', 'CAD', 'NZD'] as const;
+
+const CURRENCY_META: Record<string, { name: string; primaryPair: string }> = {
+  USD: { name: 'US Dollar (USD)', primaryPair: 'USD/JPY' },
+  EUR: { name: 'Euro (EUR)', primaryPair: 'EUR/USD' },
+  GBP: { name: 'British Pound (GBP)', primaryPair: 'GBP/USD' },
+  JPY: { name: 'Japanese Yen (JPY)', primaryPair: 'USD/JPY' },
+  CHF: { name: 'Swiss Franc (CHF)', primaryPair: 'USD/CHF' },
+  AUD: { name: 'Australian Dollar (AUD)', primaryPair: 'AUD/USD' },
+  CAD: { name: 'Canadian Dollar (CAD)', primaryPair: 'USD/CAD' },
+  NZD: { name: 'New Zealand Dollar (NZD)', primaryPair: 'NZD/USD' },
+  XAU: { name: 'Spot Gold (XAU/USD)', primaryPair: 'XAU/USD' },
+  XAG: { name: 'Spot Silver (XAG/USD)', primaryPair: 'XAG/USD' },
+  USOIL: { name: 'WTI Crude Oil', primaryPair: 'USOIL' },
+  UKOIL: { name: 'Brent Crude Oil', primaryPair: 'UKOIL' }
+};
+
+export interface LiveQuoteInput {
+  price: number;
+  changePercent: number;
+}
+
 class CurrencyStrengthService {
   /**
-   * Returns all 20 institutional assets in the Strength Meter:
-   * - 8 FX Majors (USD, GBP, EUR, CHF, AUD, CAD, NZD, JPY)
-   * - Precious Metals (XAU Gold, XAG Silver)
-   * - Energy Commodities (USOIL WTI, UKOIL Brent)
-   * - Global Indices (US30, NAS100, SPX500, GER40)
-   * - Digital Assets (BTC, ETH, SOL, XRP)
+   * Computes currency strength strictly LIVE from actual 24h % price changes across all live majors & crosses.
+   * ZERO hardcoded scores (NO EUR 6.2, NO JPY 2.4, NO XAU 9.2, NO static change24h).
+   *
+   * Strongest = highest relative 24h % change vs all other majors.
+   * Weakest = lowest relative 24h % change vs all other majors.
+   * If live prices / 24h changes cannot be fetched, returns:
+   *   { hasLiveData: false, error: 'NO DATA - CANNOT GENERATE SIGNAL', items: [] }
    */
-  public getCurrencyStrengths(): CurrencyStrengthItem[] {
-    // Live interbank & broker prices
-    const eurUsd = realPriceService.getPrice('EUR/USD') || 1.1205;
-    const gbpUsd = realPriceService.getPrice('GBP/USD') || 1.3227;
-    const usdJpy = realPriceService.getPrice('USD/JPY') || 157.84;
-    const audUsd = realPriceService.getPrice('AUD/USD') || 0.6962;
-    const usdCad = realPriceService.getPrice('USD/CAD') || 1.4247;
-    const usdChf = realPriceService.getPrice('USD/CHF') || 0.8297;
-    const nzdUsd = realPriceService.getPrice('NZD/USD') || 0.5592;
+  public getLiveCurrencyStrengthSnapshot(
+    overrideQuotes?: Record<string, LiveQuoteInput>
+  ): CurrencyStrengthSnapshot {
+    const now = Date.now();
+    const changeTotals: Record<string, number> = {};
+    const sampleCounts: Record<string, number> = {};
+    FX_MAJOR_CURRENCIES.forEach(c => {
+      changeTotals[c] = 0;
+      sampleCounts[c] = 0;
+    });
 
-    const xauUsd = realPriceService.getPrice('XAU/USD') || 4138.50;
-    const xagUsd = realPriceService.getPrice('XAG/USD') || 60.37;
-    const usOil = realPriceService.getPrice('USOIL') || 71.40;
-    const ukOil = realPriceService.getPrice('UKOIL') || 75.20;
+    const getQuote = (sym: string): LiveQuoteInput | null => {
+      if (overrideQuotes && overrideQuotes[sym]) {
+        const q = overrideQuotes[sym];
+        if (q.price > 0 && Number.isFinite(q.changePercent)) {
+          return q;
+        }
+      }
+      if (!overrideQuotes && realPriceService.hasLivePrice(sym) && realPriceService.hasLive24hChange(sym)) {
+        const price = realPriceService.getPrice(sym);
+        const ohlc = realPriceService.getOHLC(sym);
+        if (price > 0 && Number.isFinite(ohlc.changePercent)) {
+          return { price, changePercent: ohlc.changePercent };
+        }
+      }
+      return null;
+    };
 
-    // Relative scoring logic (0.0 to 10.0) based on FX triangulation & live price action
-    let usdScore = 7.8;
-    let eurScore = 6.2;
-    let gbpScore = 7.1;
-    let jpyScore = 2.4;
-    let audScore = 5.8;
-    let cadScore = 5.2;
-    let chfScore = 6.0;
-    let nzdScore = 4.6;
+    // Aggregate pairwise 24h % changes across all live 6-letter FX pairs
+    const fxPairSymbols = ALL_PAIRS.filter(
+      p => p.category === 'MAJORS' || p.category === 'MINORS'
+    ).map(p => p.symbol);
 
-    // Precious Metals & Commodities scores
-    let xauScore = 9.2;
-    let xagScore = 8.8;
-    let usOilScore = 6.4;
-    let ukOilScore = 6.6;
+    let liveFxPairsCount = 0;
+    for (const sym of fxPairSymbols) {
+      const q = getQuote(sym);
+      if (!q) continue;
 
-    // Dynamic live adjustments
-    if (usdJpy > 156.0) {
-      usdScore += 0.8;
-      jpyScore -= 0.8;
+      const [base, quote] = sym.split('/');
+      if (!base || !quote) continue;
+      if (changeTotals[base] === undefined || changeTotals[quote] === undefined) continue;
+
+      changeTotals[base] += q.changePercent;
+      sampleCounts[base] += 1;
+
+      changeTotals[quote] -= q.changePercent;
+      sampleCounts[quote] += 1;
+      liveFxPairsCount += 1;
     }
-    if (eurUsd > 1.088) eurScore += 0.5;
-    if (gbpUsd > 1.300) gbpScore += 0.6;
-    if (audUsd > 0.675) audScore += 0.4;
-    if (xauUsd > 4100) xauScore += 0.3;
-    if (xagUsd > 59.5) xagScore += 0.3;
 
-    const clamp = (num: number) => Math.max(1.0, Math.min(9.9, Math.round(num * 10) / 10));
+    const activeFxCurrencies = FX_MAJOR_CURRENCIES.filter(c => sampleCounts[c] > 0);
+    if (liveFxPairsCount === 0 || activeFxCurrencies.length < 2) {
+      return {
+        hasLiveData: false,
+        error: 'NO DATA - CANNOT GENERATE SIGNAL',
+        items: [],
+        updatedAtMs: now
+      };
+    }
+
+    const avgPctByCcy: Record<string, number> = {};
+    for (const ccy of activeFxCurrencies) {
+      avgPctByCcy[ccy] = changeTotals[ccy] / sampleCounts[ccy];
+    }
+
+    // Add Metals / Oil strictly if live quote + 24h change exist
+    const nonFxSymbols = ['XAU/USD', 'XAG/USD', 'USOIL', 'UKOIL'];
+    const activeNonFx: { code: string; sym: string; group: 'METALS' | 'COMMODITIES'; price: number; pct: number }[] = [];
+    for (const sym of nonFxSymbols) {
+      const q = getQuote(sym);
+      if (!q) continue;
+      const code = sym.includes('/') ? sym.split('/')[0] : sym;
+      const group = code === 'XAU' || code === 'XAG' ? 'METALS' : 'COMMODITIES';
+      activeNonFx.push({ code, sym, group, price: q.price, pct: q.changePercent });
+    }
+
+    const fxVals = activeFxCurrencies.map(c => avgPctByCcy[c]);
+    const minFxPct = Math.min(...fxVals);
+    const maxFxPct = Math.max(...fxVals);
+    const fxSpan = maxFxPct - minFxPct;
+
+    const toScore = (pct: number): number => {
+      if (fxSpan <= 0.0001) {
+        return 5.0;
+      }
+      // Pure linear normalization onto [1.0, 9.5] from live min -> live max 24h % change
+      const ratio = (pct - minFxPct) / fxSpan;
+      const scaled = 1.0 + ratio * 8.5;
+      return Math.max(0.5, Math.min(9.9, Math.round(scaled * 10) / 10));
+    };
+
     const getStatus = (score: number): CurrencyStrengthItem['status'] => {
       if (score >= 8.0) return 'VERY_STRONG';
       if (score >= 6.5) return 'STRONG';
@@ -62,173 +138,97 @@ class CurrencyStrengthService {
       return 'NEUTRAL';
     };
 
-    const items: CurrencyStrengthItem[] = [
-      // Precious Metals (Gold & Silver)
-      {
-        currency: 'XAU',
-        name: 'Spot Gold (XAU/USD)',
-        pairSymbol: 'XAU/USD',
-        group: 'METALS',
-        livePrice: xauUsd,
-        strength: clamp(xauScore),
-        status: getStatus(clamp(xauScore)),
-        change24h: +1.18,
-        momentum: 'RISING'
-      },
-      {
-        currency: 'XAG',
-        name: 'Spot Silver (XAG/USD)',
-        pairSymbol: 'XAG/USD',
-        group: 'METALS',
-        livePrice: xagUsd,
-        strength: clamp(xagScore),
-        status: getStatus(clamp(xagScore)),
-        change24h: +1.45,
-        momentum: 'RISING'
-      },
-      // 8 FX Majors
-      {
-        currency: 'USD',
-        name: 'US Dollar (DXY)',
-        pairSymbol: 'USD/JPY',
-        group: 'FX',
-        livePrice: usdJpy,
-        strength: clamp(usdScore),
-        status: getStatus(clamp(usdScore)),
-        change24h: +0.42,
-        momentum: 'RISING'
-      },
-      {
-        currency: 'GBP',
-        name: 'British Pound (GBP)',
-        pairSymbol: 'GBP/USD',
-        group: 'FX',
-        livePrice: gbpUsd,
-        strength: clamp(gbpScore),
-        status: getStatus(clamp(gbpScore)),
-        change24h: +0.28,
-        momentum: 'RISING'
-      },
-      {
-        currency: 'EUR',
-        name: 'Euro (EUR)',
-        pairSymbol: 'EUR/USD',
-        group: 'FX',
-        livePrice: eurUsd,
-        strength: clamp(eurScore),
-        status: getStatus(clamp(eurScore)),
-        change24h: +0.05,
-        momentum: 'STABLE'
-      },
-      {
-        currency: 'AUD',
-        name: 'Australian Dollar (AUD)',
-        pairSymbol: 'AUD/USD',
-        group: 'FX',
-        livePrice: audUsd,
-        strength: clamp(audScore),
-        status: getStatus(clamp(audScore)),
-        change24h: -0.15,
-        momentum: 'STABLE'
-      },
-      {
-        currency: 'CHF',
-        name: 'Swiss Franc (CHF)',
-        pairSymbol: 'USD/CHF',
-        group: 'FX',
-        livePrice: usdChf,
-        strength: clamp(chfScore),
-        status: getStatus(clamp(chfScore)),
-        change24h: -0.12,
-        momentum: 'STABLE'
-      },
-      {
-        currency: 'CAD',
-        name: 'Canadian Dollar (CAD)',
-        pairSymbol: 'USD/CAD',
-        group: 'FX',
-        livePrice: usdCad,
-        strength: clamp(cadScore),
-        status: getStatus(clamp(cadScore)),
-        change24h: -0.18,
-        momentum: 'FALLING'
-      },
-      {
-        currency: 'NZD',
-        name: 'New Zealand Dollar (NZD)',
-        pairSymbol: 'NZD/USD',
-        group: 'FX',
-        livePrice: nzdUsd,
-        strength: clamp(nzdScore),
-        status: getStatus(clamp(nzdScore)),
-        change24h: -0.45,
-        momentum: 'FALLING'
-      },
-      {
-        currency: 'JPY',
-        name: 'Japanese Yen (JPY)',
-        pairSymbol: 'USD/JPY',
-        group: 'FX',
-        livePrice: usdJpy,
-        strength: clamp(jpyScore),
-        status: getStatus(clamp(jpyScore)),
-        change24h: -0.84,
-        momentum: 'FALLING'
-      },
-      // Energy Commodities
-      {
-        currency: 'UKOIL',
-        name: 'Brent Crude Oil',
-        pairSymbol: 'USD/CAD',
-        group: 'COMMODITIES',
-        livePrice: ukOil,
-        strength: clamp(ukOilScore),
-        status: getStatus(clamp(ukOilScore)),
-        change24h: +0.34,
-        momentum: 'RISING'
-      },
-      {
-        currency: 'USOIL',
-        name: 'WTI Crude Oil',
-        pairSymbol: 'USD/CAD',
-        group: 'COMMODITIES',
-        livePrice: usOil,
-        strength: clamp(usOilScore),
-        status: getStatus(clamp(usOilScore)),
-        change24h: +0.29,
-        momentum: 'STABLE'
-      }
-    ];
+    const getMomentum = (pct: number): CurrencyStrengthItem['momentum'] => {
+      if (pct >= 0.1) return 'RISING';
+      if (pct <= -0.1) return 'FALLING';
+      return 'STABLE';
+    };
 
-    return items.sort((a, b) => b.strength - a.strength);
+    const items: CurrencyStrengthItem[] = [];
+
+    for (const ccy of activeFxCurrencies) {
+      const avgPct = Math.round(avgPctByCcy[ccy] * 100) / 100;
+      const score = toScore(avgPctByCcy[ccy]);
+      const meta = CURRENCY_META[ccy];
+      const primaryQuote = getQuote(meta.primaryPair);
+
+      items.push({
+        currency: ccy,
+        name: meta.name,
+        pairSymbol: meta.primaryPair,
+        group: 'FX',
+        livePrice: primaryQuote?.price,
+        strength: score,
+        status: getStatus(score),
+        change24h: avgPct,
+        momentum: getMomentum(avgPct)
+      });
+    }
+
+    for (const nf of activeNonFx) {
+      const score = toScore(nf.pct);
+      const meta = CURRENCY_META[nf.code] || { name: nf.code, primaryPair: nf.sym };
+      items.push({
+        currency: nf.code,
+        name: meta.name,
+        pairSymbol: nf.sym,
+        group: nf.group,
+        livePrice: nf.price,
+        strength: score,
+        status: getStatus(score),
+        change24h: Math.round(nf.pct * 100) / 100,
+        momentum: getMomentum(nf.pct)
+      });
+    }
+
+    items.sort((a, b) => b.change24h - a.change24h || b.strength - a.strength);
+
+    const fxSorted = items.filter(i => i.group === 'FX');
+    const strongestCurrency = fxSorted[0]?.currency;
+    const weakestCurrency = fxSorted[fxSorted.length - 1]?.currency;
+
+    return {
+      hasLiveData: true,
+      items,
+      strongestCurrency,
+      weakestCurrency,
+      updatedAtMs: now
+    };
+  }
+
+  public getCurrencyStrengths(overrideQuotes?: Record<string, LiveQuoteInput>): CurrencyStrengthItem[] {
+    return this.getLiveCurrencyStrengthSnapshot(overrideQuotes).items;
   }
 
   /**
-   * Computes relative strength and directional bias for all 30 tradable pairs
-   * (XAU/USD Gold, XAG/USD Silver, 7 FX Majors, and 21 FX Crosses)
+   * Computes relative strength and directional bias for all pairs strictly from live currency strength.
+   * Returns [] if NO DATA is available.
    */
-  public getAllPairStrengths(): PairStrengthItem[] {
-    const allStrengths = this.getCurrencyStrengths();
-    const map = new Map<string, CurrencyStrengthItem>();
-    allStrengths.forEach(item => map.set(item.currency, item));
+  public getAllPairStrengths(overrideQuotes?: Record<string, LiveQuoteInput>): PairStrengthItem[] {
+    const snapshot = this.getLiveCurrencyStrengthSnapshot(overrideQuotes);
+    if (!snapshot.hasLiveData || snapshot.items.length === 0) {
+      return [];
+    }
 
-    const results: PairStrengthItem[] = ALL_PAIRS.map(pair => {
+    const map = new Map<string, CurrencyStrengthItem>();
+    snapshot.items.forEach(item => map.set(item.currency, item));
+
+    const results: PairStrengthItem[] = [];
+
+    for (const pair of ALL_PAIRS) {
       const [base, quote] = pair.symbol.split('/');
       const baseItem = map.get(base);
       const quoteItem = map.get(quote);
+      const livePrice = overrideQuotes?.[pair.symbol]?.price ?? realPriceService.getPrice(pair.symbol);
 
-      const baseScore = baseItem ? baseItem.strength : 6.0;
-      // For Gold (XAU/USD) and Silver (XAG/USD), institutional bullion flow outpaces fiat
-      const effectiveQuoteScore =
-        base === 'XAU' || base === 'XAG'
-          ? 5.8
-          : quoteItem
-          ? quoteItem.strength
-          : 6.0;
+      if (!baseItem || !quoteItem || !livePrice || livePrice <= 0) {
+        continue;
+      }
 
-      const diff = Math.round((baseScore - effectiveQuoteScore) * 10) / 10;
+      const baseScore = baseItem.strength;
+      const quoteScore = quoteItem.strength;
+      const diff = Math.round((baseScore - quoteScore) * 10) / 10;
       const absDiff = Math.abs(diff);
-      const compositeScore = Math.max(1.0, Math.min(9.9, Math.round((5.0 + diff * 0.65) * 10) / 10));
 
       let bias: PairStrengthItem['bias'] = 'NEUTRAL';
       if (diff >= 2.2) bias = 'STRONG BUY';
@@ -236,63 +236,54 @@ class CurrencyStrengthService {
       else if (diff <= -2.2) bias = 'STRONG SELL';
       else if (diff <= -0.8) bias = 'SELL';
 
-      const livePrice = realPriceService.getPrice(pair.symbol) || pair.currentPrice || pair.basePrice;
       const ohlc = realPriceService.getOHLC(pair.symbol);
-      const change24h = ohlc?.changePercent ?? (diff * 0.12);
+      const change24h =
+        overrideQuotes?.[pair.symbol]?.changePercent ??
+        (realPriceService.hasLive24hChange(pair.symbol) ? ohlc.changePercent : (baseItem.change24h - quoteItem.change24h));
 
-      return {
+      results.push({
         pairSymbol: pair.symbol,
         name: pair.name,
         category: pair.category || 'MINORS',
         baseAsset: base,
         quoteAsset: quote,
         baseStrength: baseScore,
-        quoteStrength: quoteItem ? quoteItem.strength : 6.0,
+        quoteStrength: quoteScore,
         netStrengthDiff: diff,
         compositeScore: Math.max(1.5, Math.min(9.9, Math.round((5.0 + absDiff * 0.68) * 10) / 10)),
         bias,
         livePrice,
         change24h: Math.round(change24h * 100) / 100
-      };
-    });
+      });
+    }
 
     return results.sort((a, b) => Math.abs(b.netStrengthDiff) - Math.abs(a.netStrengthDiff));
   }
 
-  public getBestPairings(): BestPairingRecommendation[] {
-    const allItems = this.getCurrencyStrengths();
-    const fxList = allItems.filter(i => i.group === 'FX');
-    const xau = allItems.find(i => i.currency === 'XAU');
-    const xag = allItems.find(i => i.currency === 'XAG');
+  public getBestPairings(overrideQuotes?: Record<string, LiveQuoteInput>): BestPairingRecommendation[] {
+    const snapshot = this.getLiveCurrencyStrengthSnapshot(overrideQuotes);
+    if (!snapshot.hasLiveData) {
+      return [];
+    }
 
-    const strongestFx = fxList[0] || allItems[0];
-    const secondStrongestFx = fxList[1] || allItems[1];
-    const weakestFx = fxList[fxList.length - 1] || allItems[allItems.length - 1];
+    const fxList = snapshot.items.filter(i => i.group === 'FX');
+    if (fxList.length < 2) {
+      return [];
+    }
+
+    const strongestFx = fxList[0];
+    const secondStrongestFx = fxList[1];
+    const weakestFx = fxList[fxList.length - 1];
+    const secondWeakestFx = fxList.length > 2 ? fxList[fxList.length - 2] : weakestFx;
 
     const recs: BestPairingRecommendation[] = [
-      {
-        pair: 'XAU/USD',
-        action: 'BUY',
-        strongCurrency: 'XAU',
-        weakCurrency: 'FIAT',
-        strengthDiff: xau ? Math.round((xau.strength - 5.8) * 10) / 10 : 3.7,
-        confluenceReason: `Precious Metals Leader: Gold (${xau?.strength ?? 9.5}/10) sovereign accumulation & H1 demand block expansion.`
-      },
       {
         pair: `${strongestFx.currency}/${weakestFx.currency}`,
         action: 'BUY',
         strongCurrency: strongestFx.currency,
         weakCurrency: weakestFx.currency,
         strengthDiff: Math.round((strongestFx.strength - weakestFx.strength) * 10) / 10,
-        confluenceReason: `Extreme FX Divergence: ${strongestFx.currency} (${strongestFx.strength}/10) vs ${weakestFx.currency} (${weakestFx.strength}/10). High institutional probability.`
-      },
-      {
-        pair: 'XAG/USD',
-        action: 'BUY',
-        strongCurrency: 'XAG',
-        weakCurrency: 'FIAT',
-        strengthDiff: xag ? Math.round((xag.strength - 5.8) * 10) / 10 : 3.3,
-        confluenceReason: `Silver Breakout: XAG (${xag?.strength ?? 9.1}/10) industrial & bullion sympathy rally above $60.10.`
+        confluenceReason: `Live 24h FX Spread: ${strongestFx.currency} (${strongestFx.change24h >= 0 ? '+' : ''}${strongestFx.change24h}%) vs ${weakestFx.currency} (${weakestFx.change24h >= 0 ? '+' : ''}${weakestFx.change24h}%).`
       },
       {
         pair: `${secondStrongestFx.currency}/${weakestFx.currency}`,
@@ -300,78 +291,120 @@ class CurrencyStrengthService {
         strongCurrency: secondStrongestFx.currency,
         weakCurrency: weakestFx.currency,
         strengthDiff: Math.round((secondStrongestFx.strength - weakestFx.strength) * 10) / 10,
-        confluenceReason: `Strong Carry Momentum: ${secondStrongestFx.currency} (${secondStrongestFx.strength}/10) overpowering weak ${weakestFx.currency} (${weakestFx.strength}/10).`
+        confluenceReason: `Live Cross Momentum: ${secondStrongestFx.currency} (${secondStrongestFx.strength}/10) vs ${weakestFx.currency} (${weakestFx.strength}/10).`
       }
     ];
+
+    if (secondWeakestFx.currency !== weakestFx.currency && secondWeakestFx.currency !== strongestFx.currency) {
+      recs.push({
+        pair: `${strongestFx.currency}/${secondWeakestFx.currency}`,
+        action: 'BUY',
+        strongCurrency: strongestFx.currency,
+        weakCurrency: secondWeakestFx.currency,
+        strengthDiff: Math.round((strongestFx.strength - secondWeakestFx.strength) * 10) / 10,
+        confluenceReason: `Secondary FX Divergence: ${strongestFx.currency} (${strongestFx.strength}/10) vs ${secondWeakestFx.currency} (${secondWeakestFx.strength}/10).`
+      });
+    }
 
     return recs;
   }
 
   /**
-   * Validates if a signal direction (BUY vs SELL) aligns with the Currency Strength Meter.
+   * Step 4 Live Conflict Filter:
+   * - Requires live currency strength data; if unavailable, blocks with 'NO DATA - CANNOT GENERATE SIGNAL'.
+   * - If BUY signal AND (base is Weakest OR quote is Strongest) => BLOCKED.
+   * - If SELL signal AND (base is Strongest OR quote is Weakest) => BLOCKED.
    */
   public isSignalAlignedWithCurrencyStrength(
     pairSymbol: string,
-    signalType: string
-  ): { isAligned: boolean; reason?: string; meterBias: 'BUY' | 'SELL' | 'NEUTRAL' } {
-    const clean = pairSymbol.replace('/', '').toUpperCase();
-
-    // Commodities / Precious Metals / Indices / Crypto follow dedicated bullion/macro flow
-    if (
-      clean.startsWith('XAU') ||
-      clean.startsWith('XAG') ||
-      clean.startsWith('GOLD') ||
-      clean.startsWith('SILVER') ||
-      clean.startsWith('US30') ||
-      clean.startsWith('NAS') ||
-      clean.startsWith('SPX') ||
-      clean.startsWith('BTC') ||
-      clean.startsWith('ETH')
-    ) {
-      return { isAligned: true, meterBias: 'BUY' };
+    signalType: string,
+    providedSnapshot?: CurrencyStrengthSnapshot
+  ): {
+    isAligned: boolean;
+    blocked: boolean;
+    reason?: string;
+    meterBias: 'BUY' | 'SELL' | 'NEUTRAL';
+  } {
+    const snap = providedSnapshot || this.getLiveCurrencyStrengthSnapshot();
+    if (!snap.hasLiveData || snap.items.length === 0) {
+      return {
+        isAligned: false,
+        blocked: true,
+        meterBias: 'NEUTRAL',
+        reason: 'NO DATA - CANNOT GENERATE SIGNAL'
+      };
     }
 
+    const clean = pairSymbol.replace('/', '').toUpperCase();
     if (clean.length !== 6) {
-      return { isAligned: true, meterBias: 'NEUTRAL' };
+      return { isAligned: true, blocked: false, meterBias: 'NEUTRAL' };
     }
 
     const base = clean.substring(0, 3);
     const quote = clean.substring(3, 6);
 
-    const strengths = this.getCurrencyStrengths();
-    const baseItem = strengths.find(s => s.currency === base);
-    const quoteItem = strengths.find(s => s.currency === quote);
+    const baseItem = snap.items.find(s => s.currency === base);
+    const quoteItem = snap.items.find(s => s.currency === quote);
 
     if (!baseItem || !quoteItem) {
-      return { isAligned: true, meterBias: 'NEUTRAL' };
+      return {
+        isAligned: false,
+        blocked: true,
+        meterBias: 'NEUTRAL',
+        reason: `NO DATA - CANNOT GENERATE SIGNAL (${base}/${quote} missing live strength)`
+      };
+    }
+
+    const isBuySignal = signalType.toUpperCase().startsWith('BUY');
+    const isSellSignal = signalType.toUpperCase().startsWith('SELL');
+    const strongest = snap.strongestCurrency;
+    const weakest = snap.weakestCurrency;
+
+    // Hard Rule: Never BUY Weakest currency or SELL against Weakest/Strongest extremes
+    if (isBuySignal && (base === weakest || quote === strongest)) {
+      return {
+        isAligned: false,
+        blocked: true,
+        meterBias: 'SELL',
+        reason: `Conflict Filter Blocked BUY ${pairSymbol}: ${base === weakest ? `${base} is Weakest (${baseItem.change24h}%)` : `${quote} is Strongest (${quoteItem.change24h}%)`}`
+      };
+    }
+
+    if (isSellSignal && (base === strongest || quote === weakest)) {
+      return {
+        isAligned: false,
+        blocked: true,
+        meterBias: 'BUY',
+        reason: `Conflict Filter Blocked SELL ${pairSymbol}: ${base === strongest ? `${base} is Strongest (${baseItem.change24h}%)` : `${quote} is Weakest (${quoteItem.change24h}%)`}`
+      };
     }
 
     const diff = baseItem.strength - quoteItem.strength;
-    const isBuySignal = signalType.toUpperCase().startsWith('BUY');
-    const isSellSignal = signalType.toUpperCase().startsWith('SELL');
-
-    // Threshold of 1.5 points difference enforces cross-pair directional consistency against extreme divergences
     if (diff >= 1.5) {
       if (isSellSignal) {
         return {
           isAligned: false,
+          blocked: true,
           meterBias: 'BUY',
-          reason: `Currency Meter Mismatch: ${base} (${baseItem.strength}/10) is stronger than ${quote} (${quoteItem.strength}/10). Meter indicates BUY, rejecting ${signalType}.`
+          reason: `Conflict Filter Blocked SELL ${pairSymbol}: Live ${base} (${baseItem.strength}/10) stronger than ${quote} (${quoteItem.strength}/10)`
         };
       }
-      return { isAligned: true, meterBias: 'BUY' };
-    } else if (diff <= -1.5) {
+      return { isAligned: true, blocked: false, meterBias: 'BUY' };
+    }
+
+    if (diff <= -1.5) {
       if (isBuySignal) {
         return {
           isAligned: false,
+          blocked: true,
           meterBias: 'SELL',
-          reason: `Currency Meter Mismatch: ${quote} (${quoteItem.strength}/10) is stronger than ${base} (${baseItem.strength}/10). Meter indicates SELL, rejecting ${signalType}.`
+          reason: `Conflict Filter Blocked BUY ${pairSymbol}: Live ${quote} (${quoteItem.strength}/10) stronger than ${base} (${baseItem.strength}/10)`
         };
       }
-      return { isAligned: true, meterBias: 'SELL' };
+      return { isAligned: true, blocked: false, meterBias: 'SELL' };
     }
 
-    return { isAligned: true, meterBias: 'NEUTRAL' };
+    return { isAligned: true, blocked: false, meterBias: 'NEUTRAL' };
   }
 }
 

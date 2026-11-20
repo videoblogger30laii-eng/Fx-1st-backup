@@ -152,6 +152,14 @@ export const LiveChartModal: React.FC<Props> = ({
 
   const activeSignal = useMemo(() => {
     if (!signal) return null;
+    const isClosed = signal.status === 'HIT_TP' || signal.status === 'HIT_SL' || Boolean(signal.closedAtMs);
+
+    // CRITICAL: For CLOSED trades, NEVER recalculate or overwrite!
+    // Always preserve the exact historical entry, stop loss, take profit, and exit levels that were executed.
+    if (isClosed) {
+      return signal;
+    }
+
     const isMarket = signal.type === 'BUY_MARKET' || signal.type === 'SELL_MARKET' || signal.type === 'BUY' || signal.type === 'SELL';
     const sym = signal.pair.symbol;
     const isGold = sym.includes('XAU');
@@ -160,7 +168,7 @@ export const LiveChartModal: React.FC<Props> = ({
     const entryDrift = livePrice > 0 ? Math.abs(livePrice - signal.entryPrice) : 0;
     const maxAllowedDrift = Math.max(slDist * 1.25, isGold ? 4.0 : isJpy ? 0.35 : 0.0025);
 
-    // If ANALYZE- stand-by signal OR a market order whose entry is detached from live price (>25p / >1.25x SL due to stale basePrice)
+    // If ANALYZE- stand-by signal OR a live market order whose entry is detached from live price (>25p / >1.25x SL due to stale basePrice)
     if (livePrice > 0 && (signal.id.startsWith('ANALYZE-') || (isMarket && entryDrift > maxAllowedDrift))) {
       const pipOffset = signal.pair.pipDigits === 2 ? (signal.pair.isGoldOrCrypto ? 15.0 : 0.40) : (signal.pair.pipDigits === 1 ? 80.0 : 0.0040);
       const isBuy = signal.type.startsWith('BUY');
@@ -202,6 +210,7 @@ export const LiveChartModal: React.FC<Props> = ({
   const liveToEntryDiff = activeSignal ? (currentPrice - activeSignal.entryPrice) * pipMultiplier : 0;
   const liveToEntryPips = Math.round(Math.abs(liveToEntryDiff) * 10) / 10;
 
+  const isClosedOrder = activeSignal ? (activeSignal.status === 'HIT_TP' || activeSignal.status === 'HIT_SL' || Boolean(activeSignal.closedAtMs)) : false;
   const isPendingOrder = activeSignal ? (activeSignal.status === 'PENDING' || activeSignal.isPending) : false;
   const isMarketOrder = activeSignal ? (activeSignal.type === 'BUY_MARKET' || activeSignal.type === 'SELL_MARKET' || activeSignal.type === 'BUY' || activeSignal.type === 'SELL') : false;
   const isSigBuy = activeSignal ? activeSignal.type.startsWith('BUY') : true;
@@ -446,15 +455,27 @@ export const LiveChartModal: React.FC<Props> = ({
             </div>
           ) : (
             <div className="flex items-center gap-1.5 text-[10px] font-mono">
-              <span
-                className={`px-1.5 py-0.5 rounded font-black ${
-                  isBuy
-                    ? 'bg-[#00E676]/15 text-[#00E676] border border-[#00E676]/30'
-                    : 'bg-[#FF3366]/15 text-[#FF3366] border border-[#FF3366]/30'
-                }`}
-              >
-                {currentSig.type}
-              </span>
+              {isClosedOrder ? (
+                <span
+                  className={`px-1.5 py-0.5 rounded font-black ${
+                    activeSignal?.status === 'HIT_TP'
+                      ? 'bg-[#00E676]/20 text-[#00E676] border border-[#00E676]/40'
+                      : 'bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/40'
+                  }`}
+                >
+                  CLOSED ({activeSignal?.status === 'HIT_TP' ? 'TP HIT' : 'SL HIT'}) · {currentSig.type.replace('_MARKET', '').replace('_LIMIT', '')}
+                </span>
+              ) : (
+                <span
+                  className={`px-1.5 py-0.5 rounded font-black ${
+                    isBuy
+                      ? 'bg-[#00E676]/15 text-[#00E676] border border-[#00E676]/30'
+                      : 'bg-[#FF3366]/15 text-[#FF3366] border border-[#FF3366]/30'
+                  }`}
+                >
+                  {currentSig.type}
+                </span>
+              )}
 
               <span className="text-[#FFD700] bg-[#FFD700]/10 border border-[#FFD700]/30 px-1.5 py-0.5 rounded font-bold">
                 {currentSig.confluenceScore}% Conf
@@ -492,7 +513,11 @@ export const LiveChartModal: React.FC<Props> = ({
                 {formatPrice(currentSig.pair, currentSig.entryPrice)}
               </div>
               <div className="text-[9px] font-mono">
-                {isPendingOrder && !isMarketOrder ? (
+                {isClosedOrder ? (
+                  <span className={(currentSig.pips ?? 0) >= 0 ? 'text-[#00E676] font-bold' : 'text-[#FF3366] font-bold'}>
+                    Result: {(currentSig.pips ?? 0) >= 0 ? `+${currentSig.pips}` : currentSig.pips}p (Closed)
+                  </span>
+                ) : isPendingOrder && !isMarketOrder ? (
                   <span className="text-[#93c5fd]">
                     {liveToEntryDiff >= 0 ? '+' : ''}{liveToEntryPips}p to entry
                   </span>
@@ -593,6 +618,14 @@ export const LiveChartModal: React.FC<Props> = ({
                 <span>{formatPrice(currentSig.pair, currentSig.takeProfit1)}</span>
                 <span className="opacity-80">(+{tp1Pips}p)</span>
               </div>
+
+              {isClosedOrder && (
+                <div className={`${activeSignal?.status === 'HIT_TP' ? 'bg-[#00E676]' : 'bg-[#FF3366]'} text-[#080B11] font-mono font-black text-[9px] px-1.5 py-0.5 rounded shadow backdrop-blur-xs flex items-center gap-1`}>
+                  <span>EXIT:</span>
+                  <span>{formatPrice(currentSig.pair, currentSig.currentPrice || (activeSignal?.status === 'HIT_TP' ? currentSig.takeProfit1 : currentSig.stopLoss))}</span>
+                  <span>({(currentSig.pips ?? 0) >= 0 ? `+${currentSig.pips}` : currentSig.pips}p)</span>
+                </div>
+              )}
             </div>
           ) : (
             <div className="pointer-events-none absolute top-2 left-2 z-10 flex flex-wrap items-center gap-1 max-w-[95%]">

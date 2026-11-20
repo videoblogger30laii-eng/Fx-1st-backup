@@ -30,9 +30,17 @@ export function isMarketExecutionSignal(type: SignalType | string): boolean {
   return type === 'BUY_MARKET' || type === 'SELL_MARKET' || type === 'BUY' || type === 'SELL';
 }
 
-export type SignalStatus = 'PENDING' | 'RUNNING' | 'HIT_TP' | 'HIT_SL';
+export type SignalStatus = 'PENDING' | 'RUNNING' | 'STANDBY' | 'HIT_TP' | 'HIT_SL';
 
-export type SignalQuality = 'A_PLUS' | 'A' | 'B';
+export function isTradeableActiveSignal(sig: ForexSignal): boolean {
+  return sig.status === 'RUNNING' || sig.status === 'PENDING';
+}
+
+export function isStandbySignal(sig: ForexSignal): boolean {
+  return sig.status === 'STANDBY';
+}
+
+export type SignalQuality = 'A_PLUS' | 'A' | 'B' | 'C';
 
 export type Timeframe = 'M5' | 'M15' | 'H1' | 'H4' | 'D1';
 
@@ -112,6 +120,8 @@ export interface ForexSignal {
   executedAtFormatted?: string;
   closedAtMs?: number;
   isLiveSynced?: boolean;
+  isServerGenerated?: boolean;
+  origin?: 'SERVER_247' | 'CLIENT_SCAN';
   strategy?: StrategyType;
   winningTf?: 'M15' | 'H1' | 'H4';
   scoreBreakdownText?: string;
@@ -135,6 +145,112 @@ export interface ForexSignal {
   breakevenPrice?: number;
   spreadRiskWarning?: string;
   volumeExhaustionConfirmed?: boolean;
+  paramAudit?: SignalParameterAudit;
+  originalParams?: {
+    entryPrice: number;
+    stopLoss: number;
+    takeProfit1: number;
+    takeProfit2?: number;
+    takeProfit3?: number;
+    timeframe: Timeframe;
+    type: SignalType;
+    confluenceScore: number;
+    timestamp?: string;
+  };
+  recalculationNotice?: string;
+  standbyTriggerDetail?: string;
+  standbyObservedLevel?: string;
+  isCorrelationBlocked?: boolean;
+  correlationBlockReason?: string;
+  correlationExposureTag?: string;
+  isLiquiditySwept?: boolean;
+  liquiditySweepLevel?: number;
+  liquiditySweepType?: 'PDL' | 'PDH' | 'PWL' | 'PWH' | 'SWING_LOW' | 'SWING_HIGH';
+  liquiditySweepDetail?: string;
+  liquiditySweepStatusTag?: string;
+  isDemotedFromActive?: boolean;
+  demotionReason?: string;
+  demotedAtMs?: number;
+  demotionAudit?: {
+    reason: string;
+    actionableAdvice: string;
+    verdict: 'WATCH_OUT' | 'STOP_IMMEDIATELY' | 'SAFE_TO_HOLD';
+    details: string[];
+    demotedAtFormatted: string;
+    triggerFactor: 'CORRELATION_LIMIT' | 'SCORE_DROP' | 'LIQUIDITY_UNSWEPT' | 'COUNTER_TREND' | 'NEWS_VOLATILITY';
+  };
+  winPctSource?: string;
+  backtestTradeCount?: number;
+  confluenceBreakdown?: ConfluenceBreakdown;
+  generationAudit?: SignalGenerationAudit;
+}
+
+export interface ConfluenceBreakdown {
+  h4Score: number;          // 0 - 25 (Real H4 50/9 EMA trend, EMA spread, EMA9 distance)
+  h1M15Score: number;       // 0 - 25 (Real H1 50/9 EMA + H1 candle 0-15, Real M15 9/20 EMA + candle 0-10)
+  strengthScore: number;    // 0 - 20 (Continuous live currency strength delta)
+  d1LiquidityScore: number; // 0 - 15 (Real D1 20 EMA 0-8 + real PDH/PDL sweep/structure 0-7)
+  atrSpreadScore: number;   // 0 - 15 (Real True Range 14-bar ATR expansion 0-8 + spread efficiency 0-7)
+  newsPenalty: number;      // 0 or -25
+  total: number;            // 0 - 100 exact sum (no 95 cap)
+  summaryText: string;      // e.g. "H4:23 + H1/M15:18 + Strength:20 + D1/Liq:10 + ATR:13 = 84"
+  sources: {
+    h4Bars: number;
+    h1Bars: number;
+    m15Bars: number;
+    d1Bars: number;
+  };
+}
+
+export interface SignalGenerationAudit {
+  signalId: string;
+  pairSymbol: string;
+  direction: 'BUY' | 'SELL';
+  orderType: SignalType;
+  generatedAtMs: number;
+  generatedAtIso: string;
+  price: number;
+  timeframe: Timeframe;
+  h4TrendBias: 'BUY_ONLY' | 'SELL_ONLY' | 'NO_TRADE';
+  ema50: number;
+  ema9: number;
+  lastH4CandleTime?: number;
+  h4CandleCount: number;
+  baseCurrency: string;
+  quoteCurrency: string;
+  baseStrengthScore: number;
+  quoteStrengthScore: number;
+  strongestCurrency: string;
+  weakestCurrency: string;
+  currencyScoresSnapshot: Record<string, { score: number; change24hPct: number }>;
+  winPct: number | null;
+  grade: SignalQuality;
+  winPctSource: string;
+  backtestTradeCount: number;
+  conflictCheckPassed: boolean;
+  confluenceBreakdown?: ConfluenceBreakdown;
+}
+
+export interface SignalParameterAuditChange {
+  field: string;
+  original: string | number;
+  current: string | number;
+  changeType: 'SL' | 'TP' | 'ENTRY' | 'TIMEFRAME' | 'DIRECTION' | 'SCORE';
+}
+
+export interface SignalParameterAudit {
+  isRecalculated: boolean;
+  recalculatedAtMs?: number;
+  recalculatedAtFormatted?: string;
+  changeSummary: string;
+  reason: string;
+  changes: SignalParameterAuditChange[];
+  verdict: {
+    status: 'TRADE_RECOMMENDED' | 'TRADE_WITH_CAUTION' | 'STAND_DOWN';
+    headline: string;
+    actionableAdvice: string;
+    confluenceImpact: string;
+  };
 }
 
 export type SlMistakeCategory =
@@ -430,9 +546,8 @@ export const STRATEGY_CONFIGS: Record<StrategyType, StrategyConfig> = {
   GOLD_HUNTER: {
     title: 'Gold Hunter (Metals Only)',
     shortBadge: 'GOLD HUNTER',
-    description: 'H4 Trend Bias + M15 Pullback to H4 OB + FVG inside 50% Zone. London (07:00-10:00) & NY (13:00-16:00) Silver Bullet with 6 Institutional Risk Gates (85.6% Win Rate).',
+    description: 'H4 Trend Bias + M15 Pullback to H4 OB + FVG inside 50% Zone with Anti-Chase Guard. London (07:00-10:00) & NY (13:00-16:00) Silver Bullet with 6 Institutional Risk Gates.',
     modelRule: 'Sniper 1:2.5 RR (SL beyond H4 OB, TP 1:2.5, spread < 30 on Gold, Automated BE +1p at 1:1)',
-    defaultWinRate: 85.6,
     tierTag: 'UPGRADED',
     allowedPairs: ['XAU/USD', 'XAG/USD'],
     allowedCategories: ['METALS'],
@@ -442,9 +557,8 @@ export const STRATEGY_CONFIGS: Record<StrategyType, StrategyConfig> = {
   LONDON_KILLER: {
     title: 'London Killer (Forex Only)',
     shortBadge: 'LONDON KILLER',
-    description: 'D1 Previous Day Box + H1 Sweep of Asia/Prev Day extreme + M15 MSS+ & Pin Bar wick rejection (07:00-10:00 UTC) with 6 Institutional Risk Gates (84.2% Win Rate).',
+    description: 'D1 Previous Day Box + H1 Sweep of Asia/Prev Day extreme + M15 MSS+ & Pin Bar wick rejection (07:00-10:00 UTC) with Anti-Chase & 6 Institutional Risk Gates.',
     modelRule: 'Precision 1:2.0 RR (SL above/below sweep wick, TP 1:2.0 / opposite box side, Automated BE +1p at 1:1)',
-    defaultWinRate: 84.2,
     tierTag: 'UPGRADED',
     allowedPairs: ['EUR/USD', 'GBP/USD', 'GBP/JPY'],
     allowedCategories: ['MAJORS', 'MINORS'],
@@ -454,9 +568,8 @@ export const STRATEGY_CONFIGS: Record<StrategyType, StrategyConfig> = {
   TREND_RIDER: {
     title: 'Trend Rider (Forex + Metals)',
     shortBadge: 'TREND RIDER',
-    description: 'Trend Mandatory: H4 EMA 20>50>200 + H1 agreement + ADX > 25 & ATR Gate + M15 OB+FVG pullback. Trailing stop after 1:1 with 6 Institutional Risk Gates (83.5% Win Rate).',
+    description: 'Trend Mandatory: H4 EMA 20>50>200 + H1 agreement + ADX > 25 & ATR Gate + M15 OB+FVG pullback with Anti-Chase Guard. Trailing stop after 1:1 with 6 Institutional Risk Gates.',
     modelRule: 'Trend 1:3.0 RR (SL beyond OB, TP 1:3.0, Trailing Stop after 1:1, Automated BE +1p at 1:1)',
-    defaultWinRate: 83.5,
     tierTag: 'UPGRADED',
     allowedPairs: ['USD/JPY', 'USD/CAD', 'AUD/USD', 'XAU/USD'],
     allowedCategories: ['MAJORS', 'MINORS', 'METALS'],
@@ -466,9 +579,8 @@ export const STRATEGY_CONFIGS: Record<StrategyType, StrategyConfig> = {
   ALL_STRATEGIES: {
     title: 'All Trades (Master Desk Feed)',
     shortBadge: 'ALL TRADES',
-    description: 'Displays all valid active trades across all timeframes, metals, majors, and minors generated by all 3 upgraded institutional strategies with 6 Institutional Risk Gates active (84.8% Backtested Win Rate).',
+    description: 'Displays all valid active trades across all timeframes, metals, majors, and minors generated by all 3 institutional strategies with Anti-Chase & 6 Institutional Risk Gates active.',
     modelRule: 'Multi-Strategy Master Stream (All Timeframes & Asset Classes with 6-Gate Protection)',
-    defaultWinRate: 84.8,
     tierTag: 'ENSEMBLE',
     allowedPairs: [
       'XAU/USD', 'XAG/USD',
@@ -534,6 +646,79 @@ export function getCanonicalStrategyRiskReward(strategy: StrategyType): string {
   if (strategy === 'LONDON_KILLER') return '1:2.0';
   if (strategy === 'TREND_RIDER') return '1:3.0';
   return '1:2.5';
+}
+
+/**
+ * Extracts normalized [base, quote] currencies from any Forex or Metals pair symbol.
+ * Example: 'USD/JPY' -> ['USD', 'JPY'], 'XAU/USD' -> ['XAU', 'USD']
+ */
+export function extractCurrenciesFromSymbol(symbol: string): [string, string] | null {
+  if (!symbol) return null;
+  const clean = symbol.trim().toUpperCase();
+  if (clean.includes('/')) {
+    const parts = clean.split('/');
+    if (parts.length >= 2 && parts[0] && parts[1]) {
+      return [parts[0].trim(), parts[1].trim()];
+    }
+  }
+  if (clean.startsWith('XAU') || clean.startsWith('XAG')) {
+    return [clean.slice(0, 3), 'USD'];
+  }
+  if (clean.length === 6) {
+    return [clean.slice(0, 3), clean.slice(3, 6)];
+  }
+  return null;
+}
+
+/**
+ * Greedily selects non-repeating currency pairs from candidate setups.
+ * Prioritizes Best Trade Now, A+ quality tier, highest confluence score, win probability, R:R, and recency.
+ * Once a pair is selected (e.g. USD/JPY), neither USD nor JPY can appear in any subsequent trade.
+ * Supports Precious Metals (XAU, XAG) alongside Forex pairs.
+ */
+export function computeNonRepeatedSignals(candidates: ForexSignal[]): ForexSignal[] {
+  const sorted = [...candidates].sort((a, b) => {
+    if (a.isBestTradeNow && !b.isBestTradeNow) return -1;
+    if (!a.isBestTradeNow && b.isBestTradeNow) return 1;
+
+    const qScore = (q?: string) => (q === 'A_PLUS' ? 3 : q === 'A' ? 2 : 1);
+    const diffQ = qScore(b.quality) - qScore(a.quality);
+    if (diffQ !== 0) return diffQ;
+
+    if (b.confluenceScore !== a.confluenceScore) {
+      return b.confluenceScore - a.confluenceScore;
+    }
+
+    if ((b.winProbability || 0) !== (a.winProbability || 0)) {
+      return (b.winProbability || 0) - (a.winProbability || 0);
+    }
+
+    const rrA = parseFloat((a.riskReward || '1:1.5').split(':')[1] || '1');
+    const rrB = parseFloat((b.riskReward || '1:1.5').split(':')[1] || '1');
+    if (rrB !== rrA) return rrB - rrA;
+
+    return b.createdAtMs - a.createdAtMs;
+  });
+
+  const usedCurrencies = new Set<string>();
+  const result: ForexSignal[] = [];
+
+  for (const sig of sorted) {
+    const currencies = extractCurrenciesFromSymbol(sig.pair.symbol);
+    if (!currencies) {
+      result.push(sig);
+      continue;
+    }
+    const [base, quote] = currencies;
+
+    if (!usedCurrencies.has(base) && !usedCurrencies.has(quote)) {
+      usedCurrencies.add(base);
+      usedCurrencies.add(quote);
+      result.push(sig);
+    }
+  }
+
+  return result;
 }
 
 export type TradeOutcome = 'WIN' | 'LOSS';
@@ -880,6 +1065,15 @@ export interface CurrencyStrengthItem {
   status: 'VERY_STRONG' | 'STRONG' | 'NEUTRAL' | 'WEAK' | 'VERY_WEAK';
   change24h: number;
   momentum: 'RISING' | 'FALLING' | 'STABLE';
+}
+
+export interface CurrencyStrengthSnapshot {
+  hasLiveData: boolean;
+  error?: string;
+  items: CurrencyStrengthItem[];
+  strongestCurrency?: string;
+  weakestCurrency?: string;
+  updatedAtMs: number;
 }
 
 export interface PairStrengthItem {

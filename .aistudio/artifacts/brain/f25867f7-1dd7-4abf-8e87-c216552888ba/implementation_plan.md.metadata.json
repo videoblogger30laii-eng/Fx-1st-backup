@@ -1,6 +1,0 @@
-{
-  "summary":  "Fixed entry price calculation, market execution consistency, and stale base price calibration across all trade signals.",
-  "updatedAt":  "2026-10-24T07:44:33.036956781Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

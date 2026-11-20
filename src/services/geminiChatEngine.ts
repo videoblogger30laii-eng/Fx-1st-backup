@@ -2,6 +2,7 @@ import { AiPersona, CurrencyStrengthItem, ForexPair, ForexSignal } from '../type
 import { calculateSlPips, calculateLotSize, formatPrice, ALL_PAIRS, isSignalValidAndActive } from './marketData';
 import { economicCalendarService } from './economicCalendarService';
 import { currencyStrengthService } from './currencyStrengthService';
+import { PersistenceManager } from './persistence';
 
 export const GeminiChatEngine = {
   async generateResponse(
@@ -25,11 +26,14 @@ export const GeminiChatEngine = {
       imageBase64 = imageDataUrl.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
     }
 
-    // Try server-side Gemini 3.8 Flash endpoint (/api/gemini/chat) first
+    // Try server-side Gemini 3.8 Flash endpoint (/api/gemini/chat) first with 30s timeout
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
       const res = await fetch('/api/gemini/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           prompt,
           persona,
@@ -43,6 +47,7 @@ export const GeminiChatEngine = {
           imageMimeType
         })
       });
+      clearTimeout(timer);
       if (res.ok) {
         const data = await res.json();
         if (data && data.text && typeof data.text === 'string' && data.text.trim().length > 0) {
@@ -50,7 +55,7 @@ export const GeminiChatEngine = {
         }
       }
     } catch {
-      // Fallback to Universal Local Intelligence Engine below
+      // Fallback to Universal Local Intelligence Engine below immediately
     }
 
     return this.generateLocalInstitutionalAnalysis(
@@ -129,6 +134,20 @@ export const GeminiChatEngine = {
       );
     });
 
+    // 2b. Check for historical signal audit / "why did you say BUY/SELL yesterday" query
+    const isAuditQuery =
+      p.includes('yesterday') ||
+      p.includes('16 nov') ||
+      p.includes('why did you') ||
+      p.includes('audit') ||
+      p.includes('50 ema') ||
+      p.includes('9 ema') ||
+      p.includes('time machine');
+
+    if (isAuditQuery) {
+      return this.buildSavedSignalAuditResponse(prompt, matchedPair?.symbol);
+    }
+
     // 3. Check for RE-ENTRY query (e.g., "hit sl and thinking to re-enter. Will it be good to enter gbpcad now?")
     const isReEntryQuery =
       p.includes('re-enter') ||
@@ -185,10 +204,33 @@ export const GeminiChatEngine = {
       }
     }
 
-    // 6. Best Trade Now / VIP Signal inquiry
-    if (p.includes('best trade') || p.includes('vip') || p.includes('top signal') || p.includes('what should i trade')) {
-      const trade = bestTrade || signals.find(s => s.pair.symbol.includes('XAU')) || signals[0];
-      return this.buildDeepSignalAnalysis(trade, true);
+    // 6. Best Trade Now / VIP Signal / Multi-factor recommendation inquiry
+    const isBestTradeQuery =
+      p.includes('best trade') ||
+      p.includes('trade is best') ||
+      p.includes('best to trade') ||
+      p.includes('which trade') ||
+      p.includes('what trade') ||
+      p.includes('what should i trade') ||
+      p.includes('what to trade') ||
+      p.includes('which pair') ||
+      p.includes('top trade') ||
+      p.includes('top signal') ||
+      p.includes('top setup') ||
+      p.includes('best setup') ||
+      p.includes('vip') ||
+      p.includes('all factors') ||
+      p.includes('all factor') ||
+      (p.includes('trade') && (p.includes('best') || p.includes('recommend') || p.includes('now')));
+
+    if (isBestTradeQuery) {
+      const activeRunningOrPending = signals.filter(s => isSignalValidAndActive(s));
+      const trade =
+        bestTrade ||
+        activeRunningOrPending.find(s => s.isBestTradeNow) ||
+        activeRunningOrPending[0] ||
+        signals[0];
+      return this.buildDeepSignalAnalysis(trade, true, prompt);
     }
 
     // 7. General Stop Loss / Losing Streak Diagnostic (ONLY when NO specific pair was requested)
@@ -207,15 +249,18 @@ export const GeminiChatEngine = {
 
     // 8. Currency Strength / Strongest vs Weakest Currency inquiry
     if (p.includes('strength') || p.includes('strongest') || p.includes('weakest') || p.includes('currency meter') || p.includes('best pair')) {
+      if (strengths.length === 0) {
+        return `### ⚠️ Live Interbank Currency Strength\n\n**NO DATA - CANNOT GENERATE SIGNAL**\n\nLive 24h FX price changes are not currently available from the real-time feed. Wait for live prices to sync — hardcoded currency scores are disabled.`;
+      }
       const sorted = [...strengths].sort((a, b) => b.strength - a.strength);
       const top2 = sorted.slice(0, 2);
       const bottom2 = sorted.slice(-2);
       return `### 💪 Live Interbank Currency Strength & Best Pairings
 
-**Strongest Currencies Right Now:**
+**Strongest Currencies Right Now (Live 24h % Change):**
 ${top2.map(c => `- 🟢 **${c.currency}**: \`${c.strength.toFixed(1)} / 10\` (${c.status.replace('_', ' ')} • 24h: ${c.change24h >= 0 ? '+' : ''}${c.change24h}%)`).join('\n')}
 
-**Weakest Currencies Right Now:**
+**Weakest Currencies Right Now (Live 24h % Change):**
 ${bottom2.map(c => `- 🔴 **${c.currency}**: \`${c.strength.toFixed(1)} / 10\` (${c.status.replace('_', ' ')} • 24h: ${c.change24h >= 0 ? '+' : ''}${c.change24h}%)`).join('\n')}
 
 ---
@@ -223,7 +268,7 @@ ${bottom2.map(c => `- 🔴 **${c.currency}**: \`${c.strength.toFixed(1)} / 10\` 
 ### 🎯 Top High-Probability Divergence Pairings:
 ${bestPairings.slice(0, 3).map(bp => `- **${bp.pair}** → **${bp.action}** (Spread: \`${bp.strengthDiff.toFixed(1)}\` pts | ${bp.confluenceReason})`).join('\n')}
 
-**How to Use:** Pair the strongest currency against the weakest currency and wait for an M15/H1 Order Block pullback in the direction of the divergence.`;
+**How to Use:** Pair the strongest currency against the weakest currency and wait for H4 50/9 EMA trend alignment before entering.`;
     }
 
     // 9. Risk Management / Lot size calculation inquiry
@@ -346,17 +391,20 @@ ${bestPairings.slice(0, 3).map(bp => `- **${bp.pair}** → **${bp.action}** (Spr
     const upcomingHighImpact = events.filter(e => Date.now() < e.timestamp && e.impact === 'HIGH');
     const releasedRecent = events.filter(e => Date.now() >= e.timestamp);
     const sortedStrengths = [...strengths].sort((a, b) => b.strength - a.strength);
+    const strengthSummaryLine = sortedStrengths.length >= 2
+      ? `Strongest currency is **${sortedStrengths[0].currency} (${sortedStrengths[0].strength.toFixed(1)}/10)** | Weakest currency is **${sortedStrengths[sortedStrengths.length - 1].currency} (${sortedStrengths[sortedStrengths.length - 1].strength.toFixed(1)}/10)**.`
+      : '**NO DATA - CANNOT GENERATE SIGNAL** (waiting for live 24h FX price changes).';
 
     return `### 🌐 Universal AI Copilot Response
-**Your Query:** *"${prompt}"*  
+**Your Query:** *"${prompt}"*
 **Active Mode:** \`${persona.title}\`
 
 ---
 
 ### 🧠 1. Direct Analysis & Market Intelligence:
-- **Live Terminal Snapshot:** Currently tracking **${allPairs.length} global instruments** with **${signals.length} active institutional signals** (${activeRunning.length} Running in market, ${pendingSignals.length} Pending limit setups).
-- **Top High-Confluence Setup Right Now:** **${bestTrade ? `${bestTrade.pair.symbol} (${bestTrade.type.replace('_', ' ')}) at ${formatPrice(bestTrade.pair, bestTrade.entryPrice)} — ${bestTrade.confluenceScore}% Confluence` : 'XAU/USD'}**.
-- **Interbank Currency Flow:** Strongest currency is **${sortedStrengths[0]?.currency || 'USD'} (${sortedStrengths[0]?.strength.toFixed(1)}/10)** | Weakest currency is **${sortedStrengths[sortedStrengths.length - 1]?.currency || 'JPY'} (${sortedStrengths[sortedStrengths.length - 1]?.strength.toFixed(1)}/10)**.
+- **Live Terminal Snapshot:** Currently tracking **${allPairs.length} global instruments** with **${signals.length} signals** (${activeRunning.length} Running in market, ${pendingSignals.length} Pending setups).
+- **Top High-Confluence Setup Right Now:** **${bestTrade ? `${bestTrade.pair.symbol} (${bestTrade.type.replace('_', ' ')}) at ${formatPrice(bestTrade.pair, bestTrade.entryPrice)} — ${bestTrade.confluenceScore}% Confluence` : 'No verified active setup right now'}**.
+- **Interbank Currency Flow:** ${strengthSummaryLine}
 
 ---
 
@@ -388,8 +436,12 @@ ${upcomingHighImpact.length > 0 ? `- **Next High-Impact Release:** **${upcomingH
     const baseSt = strengths.find(s => s.currency === baseCur);
     const quoteSt = strengths.find(s => s.currency === quoteCur);
 
-    const baseScore = baseSt ? baseSt.strength : 5.2;
-    const quoteScore = quoteSt ? quoteSt.strength : 4.8;
+    if (!baseSt || !quoteSt) {
+      return `### ⚠️ Re-Entry Audit Unavailable: **${pair.symbol}**\n\n**NO DATA - CANNOT GENERATE SIGNAL**\n\nLive currency strength scores for **${baseCur}** / **${quoteCur}** are unavailable. Wait for the live FX feed to stream before evaluating a re-entry.`;
+    }
+
+    const baseScore = baseSt.strength;
+    const quoteScore = quoteSt.strength;
     const strengthDiff = +(baseScore - quoteScore).toFixed(1);
 
     const isBullishBias = strengthDiff >= 0;
@@ -524,9 +576,9 @@ ${
 ---
 
 ### 🏛️ 3. Strongest vs Weakest Interbank Divergence:
-- **Strongest Currency:** **${sortedStrengths[0]?.currency || 'USD'} (${sortedStrengths[0]?.strength.toFixed(1)}/10)**
-- **Weakest Currency:** **${sortedStrengths[sortedStrengths.length - 1]?.currency || 'JPY'} (${sortedStrengths[sortedStrengths.length - 1]?.strength.toFixed(1)}/10)**
-- **Best Practice:** Only trade setups where the Currency Strength spread is **≥ 2.5 points** (e.g. ${sortedStrengths[0]?.currency}/${sortedStrengths[sortedStrengths.length - 1]?.currency}).
+${sortedStrengths.length >= 2 ? `- **Strongest Currency:** **${sortedStrengths[0].currency} (${sortedStrengths[0].strength.toFixed(1)}/10)**
+- **Weakest Currency:** **${sortedStrengths[sortedStrengths.length - 1].currency} (${sortedStrengths[sortedStrengths.length - 1].strength.toFixed(1)}/10)**
+- **Best Practice:** Only trade setups where the Currency Strength spread aligns with H4 50/9 EMA trend (${sortedStrengths[0].currency}/${sortedStrengths[sortedStrengths.length - 1].currency}).` : `- **Status:** **NO DATA - CANNOT GENERATE SIGNAL** (live 24h FX changes unavailable).`}
 
 ---
 
@@ -623,8 +675,12 @@ ${
       e => e.affectedPairs?.includes(pair.symbol) || pair.symbol.includes(e.currency)
     );
 
-    const baseScore = baseSt ? baseSt.strength : 5.0;
-    const quoteScore = quoteSt ? quoteSt.strength : 5.0;
+    if (!baseSt || !quoteSt) {
+      return `### ⚠️ Pair Analysis Unavailable: **${pair.symbol}**\n\n**NO DATA - CANNOT GENERATE SIGNAL**\n\nLive 24h FX strength data for **${baseCur}/${quoteCur}** is currently unavailable. Do not rely on hardcoded scores.`;
+    }
+
+    const baseScore = baseSt.strength;
+    const quoteScore = quoteSt.strength;
     const strengthDiff = +(baseScore - quoteScore).toFixed(1);
     const priceDeltaPct = pair.basePrice > 0
       ? +(((price - pair.basePrice) / pair.basePrice) * 100).toFixed(2)
@@ -667,10 +723,9 @@ ${
 ---
 
 ### 🏛️ 2. Macro & Currency Strength Driver:
-- **${baseCur} Strength:** \`${baseScore.toFixed(1)}/10\` (${baseSt?.status || 'Neutral'})
-- **${quoteCur} Strength:** \`${quoteScore.toFixed(1)}/10\` (${quoteSt?.status || 'Neutral'})
+- **${baseCur} Strength:** \`${baseScore.toFixed(1)}/10\` (${baseSt.status})
+- **${quoteCur} Strength:** \`${quoteScore.toFixed(1)}/10\` (${quoteSt.status})
 - **Divergence:** **${strengthDiff >= 0 ? `+${strengthDiff}` : strengthDiff} points** (${isBullish ? `${baseCur} is outperforming ${quoteCur}` : `${quoteCur} is outperforming ${baseCur}`})
-- **Technical Bias:** ${isBullish ? 'Price holding above session liquidity; buyers defending demand.' : 'Price rejecting higher liquidity; sellers pushing lower highs.'}
 
 ---
 
@@ -694,7 +749,16 @@ ${
 - **Recommended Size:** **0.02 to 0.03 Lots** on 0.01 micro-lot broker margin (~$${(pair.minMargin001 || 2.5).toFixed(2)}).`;
   },
 
-  buildDeepSignalAnalysis(signal: ForexSignal, isBestTrade: boolean = false): string {
+  buildDeepSignalAnalysis(
+    signal: ForexSignal | null | undefined,
+    isBestTrade: boolean = false,
+    userQuery?: string
+  ): string {
+    if (!signal) {
+      return `### 🏛️ Institutional Market Overview
+No live trade setup currently passes all strict filters (Real H4 50/9 EMA trend alignment + Live Currency Strength + Conflict Check). Wait for verified live candles and price ticks.`;
+    }
+
     const isPending = signal.status === 'PENDING' || signal.isPending;
     const slPips = calculateSlPips(signal) || 15;
     const tfLabel = signal.timeframe;
@@ -704,58 +768,72 @@ ${
     const lot10k = calculateLotSize(signal, 10000, 1.0).toFixed(2);
     const lot50k = calculateLotSize(signal, 50000, 1.0).toFixed(2);
 
-    return `### 🏛️ Institutional Audit: ${signal.pair.symbol} (${signal.pair.name})
-${isBestTrade ? '⭐ **AI BEST TRADE NOW — A+ VIP INSTITUTIONAL TIER**\n' : ''}
+    const audit = signal.generationAudit;
+    const gradeLabel = signal.quality === 'A_PLUS' ? 'A+' : (signal.quality || 'C');
+    const winLabel = signal.backtestTradeCount === 0
+      ? `Grade ${gradeLabel} (${signal.winPctSource || 'NO BACKTEST DATA - 0 TRADES'})`
+      : `${signal.winProbability}% (${signal.winPctSource || 'Historical Backtest'})`;
+
+    return `### 🎯 SIGNAL AUDIT: **${signal.pair.symbol}** (${signal.type.replace('_', ' ')})
+${isBestTrade ? '⭐ **TOP CONFLUENCE VERIFIED SETUP**\n' : ''}
+${userQuery ? `*In response to:* "${userQuery}"\n` : ''}
 ---
 
-### 📌 1. Execution Mode & Order Classification:
-- **Order Execution Type:** **${signal.type}**
-- **Chart Timeframe:** **${tfLabel}**
-- **Trade Lifecycle State:** ${isPending ? '🟡 **PENDING ORDER** (Awaiting Limit Fill)' : '🟢 **ACTIVE RUNNING TRADE** (Filled & Floating)'}
-- **Floating Performance:** ${isPending ? 'Awaiting price touch at entry zone' : `**+${signal.pips} Pips** floating in profit`}
-
----
-
-${isPending ? `### ⏳ 2. Pending Order Entry Window (${signal.timeframe === 'M15' ? '1 Hour' : signal.timeframe === 'H1' ? '4 Hours' : `${signal.timeframe} cycle`}):
-- **Remaining Validation Time:** **${signal.validityTimeLeft}**
-- **Session Deadline:** \`${signal.validityExpiresAt}\`
-- **Auto-Cancellation Trigger:** ${signal.invalidationTrigger}` : `### 🛡️ 2. Trade Execution & Stop Loss Protection:
-- **Trade State:** Active running trade (Open until TP or SL reached — no fixed time expiration).
-- **Stop Loss Protection:** Immediate manual/automatic exit if price closes beyond Stop Loss at ${formatPrice(signal.pair, signal.stopLoss)} on the ${tfLabel} candle close.
-- **Protective Trailing Rule:** Once TP1 is secured, shift Stop Loss to Entry price (Break-Even).`}
-
----
-
-### 🎯 3. Precision Institutional Price Levels:
-- **Limit/Entry Price:** \`${formatPrice(signal.pair, signal.entryPrice)}\`
-- **Protective Stop Loss:** \`${formatPrice(signal.pair, signal.stopLoss)}\` (${slPips} pips risk)
-- **Take Profit 1 (TP1):** \`${formatPrice(signal.pair, signal.takeProfit1)}\` (Bank 50% lots)
-- **Take Profit 2 (TP2):** \`${formatPrice(signal.pair, signal.takeProfit2)}\` (Bank 30% lots)
-- **Take Profit 3 (TP3):** \`${formatPrice(signal.pair, signal.takeProfit3)}\` (Runner)
-- **Risk / Reward Ratio:** **${signal.riskReward}**
-- **Confluence Quality:** **${signal.confluenceScore}%**
+### 📌 1. Execution Verdict & Real Audit Parameters:
+- **Recommended Setup:** **${signal.pair.symbol}** (${signal.pair.name})
+- **Execution Mode:** **${signal.type}** on **[${tfLabel}]** Timeframe
+- **Live Market Price:** \`${formatPrice(signal.pair, signal.pair.currentPrice || signal.entryPrice)}\`
+- **Action Required:** ${
+      isPending
+        ? `Place **${signal.type} Limit Order** at \`${formatPrice(signal.pair, signal.entryPrice)}\``
+        : `**Active Running Position** at \`${formatPrice(signal.pair, signal.entryPrice)}\` (${signal.pips >= 0 ? `+${signal.pips}` : signal.pips} pips floating)`
+    }
+- **Confluence Score:** **${signal.confluenceScore}%** | **Grade & Backtest:** **${winLabel}**
+${audit ? `- **Real H4 Trend Filter:** **${audit.h4TrendBias}** (50 EMA: \`${audit.ema50}\` | 9 EMA: \`${audit.ema9}\` from ${audit.h4CandleCount} real H4 bars)` : ''}
+${audit ? `- **Live Currency Strength at Generation:** ${audit.baseCurrency} \`${audit.baseStrengthScore}/10\` vs ${audit.quoteCurrency} \`${audit.quoteStrengthScore}/10\`` : ''}
 
 ---
 
-### 🔍 4. Smart Money Concepts (ICT/SMC) Audit:
-- **Setup Rationale:** ${signal.rationale}
-- **Interbank Session:** Active during **${signal.killzone}** for peak market depth.
-- **Liquidity Footprint:** Order Block & Fair Value Gap mitigation with institutional order flow confluence.
-- **Economic Shield Status:** ${signal.economicRisk}
+### 🎯 2. Precision Institutional Price Levels:
+- **Entry Price:** \`${formatPrice(signal.pair, signal.entryPrice)}\`
+- **Protective Stop Loss (SL):** \`${formatPrice(signal.pair, signal.stopLoss)}\` (${slPips} pips risk)
+- **Take Profit 1 (TP1):** \`${formatPrice(signal.pair, signal.takeProfit1)}\`
+- **Take Profit 2 (TP2):** \`${formatPrice(signal.pair, signal.takeProfit2)}\`
+- **Take Profit 3 (TP3):** \`${formatPrice(signal.pair, signal.takeProfit3)}\`
+- **Target Risk / Reward:** **${signal.riskReward}**
 
 ---
 
-### 📐 5. Prop Firm & Retail Mathematical Lot Sizing (1% Risk Model):
-- **Account Capital $1,000:** Recommended size: **${lot1k} Lots** (Max risk: $10.00)
-- **Account Capital $5,000:** Recommended size: **${lot5k} Lots** (Max risk: $50.00)
-- **Account Capital $10,000:** Recommended size: **${lot10k} Lots** (Max risk: $100.00)
-- **Account Capital $50,000 (Prop Firm):** Recommended size: **${lot50k} Lots** (Max risk: $500.00)
+### 📐 3. Mathematical Lot Sizing (1% Risk Model):
+- **$1,000 Account (1% = $10 risk):** **${lot1k} Lots**
+- **$5,000 Account (1% = $50 risk):** **${lot5k} Lots**
+- **$10,000 Account (1% = $100 risk):** **${lot10k} Lots**
+- **$50,000 Account (1% = $500 risk):** **${lot50k} Lots**`;
+  },
 
----
+  buildSavedSignalAuditResponse(prompt: string, pairSymbol?: string): string {
+    const records = PersistenceManager.getSignalAuditLog();
+    const matched = pairSymbol
+      ? PersistenceManager.getSignalAuditByPairOrId(pairSymbol)
+      : records[0] || null;
 
-### 🛡️ 6. Professional Execution Directive:
-1. Copy the exact order parameters using the **Copy MT4** button.
-2. Set your Take Profit 1 alert and never move your Stop Loss wider.
-3. If news volatility spikes or the setup invalidation trigger occurs, delete/cancel order immediately.`;
+    if (!matched) {
+      return `### 📋 Signal Generation Audit Lookup\n\n**Query:** *"${prompt}"*\n\n**I don't have saved data for that signal/date.**\n\nNo saved \`SignalGenerationAudit\` record was found in localStorage (\`fx_signal_audit_log_v1\`)${pairSymbol ? ` for **${pairSymbol}**` : ''}. I will not invent historical prices, EMA values, currency scores, or win probabilities.`;
+    }
+
+    const scoresList = Object.entries(matched.currencyScoresSnapshot || {})
+      .sort((a, b) => b[1].score - a[1].score)
+      .map(([ccy, s]) => `${ccy}: ${s.score}/10 (${s.change24hPct >= 0 ? '+' : ''}${s.change24hPct}%)`)
+      .join(' · ');
+
+    return `### 📋 Saved Signal Generation Audit: **${matched.pairSymbol}** (${matched.direction})
+- **Generated Time (UTC):** \`${matched.generatedAtIso}\`
+- **Live Price at Generation:** \`${matched.price}\`
+- **Timeframe:** \`${matched.timeframe}\`
+- **H4 Trend Filter Bias:** **${matched.h4TrendBias}**
+- **Real H4 50 EMA:** \`${matched.ema50}\` | **Real H4 9 EMA:** \`${matched.ema9}\` (${matched.h4CandleCount} real H4 bars)
+- **Live Currency Scores Saved:** ${matched.baseCurrency} \`${matched.baseStrengthScore}/10\` vs ${matched.quoteCurrency} \`${matched.quoteStrengthScore}/10\` (Strongest: \`${matched.strongestCurrency}\` | Weakest: \`${matched.weakestCurrency}\`)
+- **All Currency Scores at Time:** ${scoresList || 'N/A'}
+- **Backtest Grade & Win%:** **Grade ${matched.grade}** · ${matched.winPct !== null ? `\`${matched.winPct}%\`` : 'N/A'} (\`${matched.winPctSource}\`)`;
   }
 };

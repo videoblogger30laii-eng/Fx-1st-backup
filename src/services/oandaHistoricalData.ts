@@ -753,406 +753,68 @@ export const REAL_OANDA_HISTORICAL_TRADES: OandaHistoricalTradeRecord[] = [
 ];
 
 import { StrategyBacktester } from './strategyBacktester';
-import { RealCandleFetcherService } from './realCandleFetcher';
-import { ALL_PAIRS } from './marketData';
 
-const DEFAULT_SYMBOLS = [
-  ...ALL_PAIRS.map(p => p.symbol)
-];
-const DEFAULT_TIMEFRAMES: Timeframe[] = ['M15', 'H1', 'H4', 'D1'];
-const strategyCache: Partial<Record<StrategyType, BacktestTrade[]>> = {};
-let lastPriceSignature = '';
-
-function getLivePriceSignature(): string {
-  const keySymbols = ['XAU/USD', 'EUR/USD', 'GBP/USD', 'USD/JPY'];
-  return keySymbols
-    .map(sym => {
-      const info = RealCandleFetcherService.resolveLiveSpotInfo(sym);
-      // Round to coarse bucket so tiny sub-pip ticks don't thrash cache, but real feed updates refresh it
-      return `${sym}:${info.basePrice.toPrecision(4)}`;
-    })
-    .join('|');
+function parseOandaTimeMs(dateStr: string, fallbackIdx: number): number {
+  const parsed = Date.parse(dateStr.replace(' GMT', ' UTC'));
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return Date.now() - (fallbackIdx + 30) * 86400000;
 }
 
 /**
- * Returns trades evaluated against real historical candles for the selected strategy.
- * Evaluates real price action across all 32 assets (Majors, Minors, Metals, Indices, Crypto)
- * across M15, H1, H4, and D1 timeframes anchored strictly to real-time live interbank spot prices
- * with zero lookahead, broker spreads, and multi-stage TP1 (Break-Even) & TP2 execution.
+ * Returns ONLY verified OANDA historical archive records (zero synthetic Math.sin trades).
+ * Live multi-pair historical candle backtests are executed directly on real /api/market/candles OHLC data
+ * inside StrategyBacktester & BacktestEngine.runPortfolioRealCandleBacktest.
  */
 export function getAllRealOandaTrades(strategy: StrategyType): BacktestTrade[] {
-  const currentSig = getLivePriceSignature();
-  if (lastPriceSignature !== currentSig) {
-    // Invalidate entire strategy cache when live market prices update
-    (Object.keys(strategyCache) as StrategyType[]).forEach(k => {
-      delete strategyCache[k];
-    });
-    lastPriceSignature = currentSig;
-  }
+  const matching =
+    strategy === 'ALL_STRATEGIES'
+      ? REAL_OANDA_HISTORICAL_TRADES
+      : REAL_OANDA_HISTORICAL_TRADES.filter(r => r.strategy === strategy);
 
-  if (strategyCache[strategy] && strategyCache[strategy]!.length > 0) {
-    return strategyCache[strategy]!;
-  }
+  return matching
+    .map((rec, idx): BacktestTrade => {
+      const entryMs = parseOandaTimeMs(rec.entryTime, idx);
+      const exitMs = parseOandaTimeMs(rec.exitTime, idx);
+      const isWin = rec.outcome === 'WIN';
+      const dollarPnl = isWin ? Math.round(rec.pnlPercent * 100) : -100;
+      const spread = StrategyBacktester.getSpread(rec.pairSymbol);
 
-  const nowMs = Date.now();
-  const DAY_MS = 86400000;
-  const generatedTrades: BacktestTrade[] = [];
-
-  // IMPORTANT:
-  // 1. The 24-Hour (24H) horizon is driven strictly by actual fulfilled/closed signals from the Live Signals Page
-  //    (so 24H in Backtesting matches the Signals Page Closed section 1-to-1, never fabricating 22 random 24H trades).
-  // 2. Multi-day historical archive slots (>24H: 7D, 15D, 1M, 3M, 6M, 1Y, ALL) follow the realistic institutional
-  //    Signals Page cadence (~2 to 2.5 completed high-confluence setups per day across the 30-pair universe).
-  interface PendingSlotItem {
-    sym: string;
-    symIdx: number;
-    slot: { minDay: number; maxDay: number; tf: Timeframe };
-    slotIdx: number;
-  }
-
-  const allPendingItems: PendingSlotItem[] = [];
-
-  // Realistic multi-day historical archive buckets (>1.2 days ago) distributed across the 30 Forex & Metals pairs:
-  // - 7D (Days 1.2 to 7): 14 historical trades (+ closed 24H live signals = ~16 trades/week, ~2.3/day)
-  // - 15D (Days 7.2 to 15): +18 trades (~34 trades in 15 days)
-  // - 1M (Days 15.2 to 30): +34 trades (~68 trades in 1 month)
-  // - 3M (Days 31 to 90): +90 trades (~158 trades in 3 months)
-  // - 6M (Days 91 to 180): +120 trades (~278 trades in 6 months)
-  // - 1Y (Days 181 to 365): +180 trades (~458 trades in 1 year)
-  // - ALL (>365D): +60 archive trades (~518 trades total)
-  const tfs: Timeframe[] = ['M15', 'H1', 'H4', 'D1'];
-
-  // 1. 7D bucket (Days 1.25 to 6.85): 14 setups across top liquid pairs
-  for (let k = 0; k < 14; k++) {
-    const symIdx = (k * 2) % DEFAULT_SYMBOLS.length;
-    const minDay = 1.25 + (k / 14) * 5.2;
-    const maxDay = minDay + 0.35;
-    allPendingItems.push({
-      sym: DEFAULT_SYMBOLS[symIdx],
-      symIdx,
-      slot: { minDay, maxDay, tf: tfs[k % 3] },
-      slotIdx: k
-    });
-  }
-
-  // 2. 15D bucket (Days 7.15 to 14.85): 18 setups across pairs
-  for (let k = 0; k < 18; k++) {
-    const symIdx = (k * 3 + 1) % DEFAULT_SYMBOLS.length;
-    const minDay = 7.15 + (k / 18) * 7.3;
-    const maxDay = minDay + 0.38;
-    allPendingItems.push({
-      sym: DEFAULT_SYMBOLS[symIdx],
-      symIdx,
-      slot: { minDay, maxDay, tf: tfs[k % 3] },
-      slotIdx: 100 + k
-    });
-  }
-
-  // 3. 1M bucket (Days 15.2 to 29.8): 34 setups across all 30 pairs
-  for (let k = 0; k < 34; k++) {
-    const symIdx = k % DEFAULT_SYMBOLS.length;
-    const minDay = 15.2 + (k / 34) * 14.2;
-    const maxDay = minDay + 0.4;
-    allPendingItems.push({
-      sym: DEFAULT_SYMBOLS[symIdx],
-      symIdx,
-      slot: { minDay, maxDay, tf: tfs[k % 4] },
-      slotIdx: 200 + k
-    });
-  }
-
-  // 4. 3M bucket (Days 30.5 to 89.5): 90 setups (3 per pair across all 30 pairs)
-  for (let k = 0; k < 90; k++) {
-    const symIdx = k % DEFAULT_SYMBOLS.length;
-    const minDay = 30.5 + (k / 90) * 58.5;
-    const maxDay = minDay + 0.6;
-    allPendingItems.push({
-      sym: DEFAULT_SYMBOLS[symIdx],
-      symIdx,
-      slot: { minDay, maxDay, tf: tfs[k % 4] },
-      slotIdx: 300 + k
-    });
-  }
-
-  // 5. 6M bucket (Days 90.5 to 179.5): 120 setups (4 per pair across all 30 pairs)
-  for (let k = 0; k < 120; k++) {
-    const symIdx = k % DEFAULT_SYMBOLS.length;
-    const minDay = 90.5 + (k / 120) * 88.5;
-    const maxDay = minDay + 0.7;
-    allPendingItems.push({
-      sym: DEFAULT_SYMBOLS[symIdx],
-      symIdx,
-      slot: { minDay, maxDay, tf: tfs[k % 4] },
-      slotIdx: 400 + k
-    });
-  }
-
-  // 6. 1Y bucket (Days 180.5 to 364.0): 180 setups (6 per pair across all 30 pairs)
-  for (let k = 0; k < 180; k++) {
-    const symIdx = k % DEFAULT_SYMBOLS.length;
-    const minDay = 180.5 + (k / 180) * 183.0;
-    const maxDay = minDay + 0.9;
-    allPendingItems.push({
-      sym: DEFAULT_SYMBOLS[symIdx],
-      symIdx,
-      slot: { minDay, maxDay, tf: tfs[k % 4] },
-      slotIdx: 600 + k
-    });
-  }
-
-  // 7. Extended Archive (>365D): 60 setups (2 per pair across all 30 pairs)
-  for (let k = 0; k < 60; k++) {
-    const symIdx = k % DEFAULT_SYMBOLS.length;
-    const minDay = 366.0 + (k / 60) * 90.0;
-    const maxDay = minDay + 1.2;
-    allPendingItems.push({
-      sym: DEFAULT_SYMBOLS[symIdx],
-      symIdx,
-      slot: { minDay, maxDay, tf: tfs[(k + 1) % 4] },
-      slotIdx: 800 + k
-    });
-  }
-
-  const stratCodeMap: Record<StrategyType, number> = {
-    GOLD_HUNTER: 1,
-    LONDON_KILLER: 2,
-    TREND_RIDER: 3,
-    ALL_STRATEGIES: 1
-  };
-  const stratCode = stratCodeMap[strategy] || 1;
-
-  // Sort items chronologically by mid-point day so we can stratify outcomes cleanly across time horizons
-  allPendingItems.sort((a, b) => {
-    const midA = (a.slot.minDay + a.slot.maxDay) * 0.5;
-    const midB = (b.slot.minDay + b.slot.maxDay) * 0.5;
-    if (midA !== midB) return midA - midB;
-    return a.symIdx - b.symIdx;
-  });
-
-  // Golden-ratio low-discrepancy sequence (0..1) prevents clustering across buckets
-  const PHI = 0.618033988749895;
-  const spec = StrategyBacktester.getStrategySpec(strategy);
-
-  allPendingItems.forEach((item, globalIdx) => {
-    const { sym, symIdx, slot, slotIdx } = item;
-    const seed = (symIdx + 1) * 97 + (slotIdx + 1) * 131 + stratCode * 53 + globalIdx * 17;
-
-    // Strategy-specific institutional selectivity gate (e.g., Master Omni-Confluence and Silver Bullet filter out low-confluence noise)
-    const rSelectivity = (((globalIdx * PHI) + (stratCode * 0.273) + (symIdx * 0.137)) % 1);
-    if (rSelectivity > spec.selectivityFactor) {
-      return;
-    }
-
-    const spotInfo = RealCandleFetcherService.resolveLiveSpotInfo(sym);
-    const liveSpot = spotInfo.basePrice;
-    const pipMult = StrategyBacktester.getPipMultiplier(sym, liveSpot);
-    const spread = StrategyBacktester.getSpread(sym);
-
-    const r1 = Math.abs(Math.sin(seed * 12.9898) * 43758.5453) % 1;
-    // Independent random variable rConf so confluence score is NEVER correlated with timestamp (r1)!
-    const rConf = Math.abs(Math.sin((seed + 73) * 78.233 + globalIdx * 19.19) * 29481.3719) % 1;
-    const r3 = Math.abs(Math.sin((seed + 19) * 45.164) * 19384.7261) % 1;
-
-    const dayFraction = slot.minDay + ((slot.maxDay - slot.minDay) * r1);
-    const execTimeMs = Math.floor(nowMs - dayFraction * DAY_MS);
-    if (!isMarketOpenTimestamp(execTimeMs)) return;
-
-    const durationHours =
-      slot.tf === 'M15' ? (1.2 + r3 * 2.2) :
-      slot.tf === 'H1' ? (3.0 + r3 * 4.5) :
-      slot.tf === 'H4' ? (8.0 + r3 * 10.0) :
-      (18.0 + r3 * 14.0);
-    const exitTimeMs = Math.min(nowMs - 300000, Math.floor(execTimeMs + durationHours * 3600000));
-
-    // Compute unique live-spot-anchored entry price within realistic historical excursion for `dayFraction`
-    const ageScale = Math.min(1.0, Math.sqrt(dayFraction / 365));
-    const maxPctExcursion = (sym.includes('XAU') || sym.includes('XAG'))
-      ? (0.003 + ageScale * 0.026)
-      : (0.0015 + ageScale * 0.015);
-    const priceShift = liveSpot * maxPctExcursion * Math.sin(seed * 0.37);
-    const rawEntry = liveSpot + priceShift;
-    const entryPrice = StrategyBacktester.roundPrice(rawEntry, sym);
-
-    const isBuy = ((seed + symIdx + slotIdx) % 2) === 0;
-    const direction: SignalType = isBuy ? 'BUY' : 'SELL';
-
-    // Realistic institutional SL distance for this symbol and timeframe
-    const minSl = StrategyBacktester.getMinInstitutionalStopDistance(sym, slot.tf);
-    const slScale =
-      strategy === 'LONDON_KILLER'
-        ? (0.92 + r3 * 0.16)
-        : strategy === 'GOLD_HUNTER'
-        ? (0.98 + r3 * 0.18)
-        : (1.05 + r3 * 0.22);
-    const slDistance = minSl * slScale;
-    const tp2Mult = spec.tp2Multiplier;
-    const tp1Distance = 1.0 * slDistance;
-    const tp2Distance = tp2Mult * slDistance;
-
-    const stopLoss = StrategyBacktester.roundPrice(isBuy ? entryPrice - slDistance : entryPrice + slDistance, sym);
-    const takeProfit1 = StrategyBacktester.roundPrice(isBuy ? entryPrice + tp1Distance : entryPrice - tp1Distance, sym);
-    const takeProfit2 = StrategyBacktester.roundPrice(isBuy ? entryPrice + tp2Distance : entryPrice - tp2Distance, sym);
-
-    // 1. Natural institutional multi-tier confluence distribution (70% - 98%)
-    let confluenceScore: number;
-    if (rConf > 0.78) {
-      const sub = (rConf - 0.78) / 0.22;
-      confluenceScore = 90 + Math.floor(sub * 9);
-    } else if (rConf > 0.50) {
-      const sub = (rConf - 0.50) / 0.28;
-      confluenceScore = 85 + Math.floor(sub * 5);
-    } else if (rConf > 0.24) {
-      const sub = (rConf - 0.24) / 0.26;
-      confluenceScore = 80 + Math.floor(sub * 5);
-    } else {
-      const sub = rConf / 0.24;
-      confluenceScore = 72 + Math.floor(sub * 8);
-    }
-
-    if (strategy === 'GOLD_HUNTER') {
-      confluenceScore = Math.min(98, confluenceScore + 2);
-    }
-
-    // 2. Upgraded Institutional Win Probability Calibration across the 3 strategies
-    const stratBase: Record<StrategyType, number> = {
-      GOLD_HUNTER: 0.856,
-      LONDON_KILLER: 0.842,
-      TREND_RIDER: 0.835,
-      ALL_STRATEGIES: 0.848
-    };
-
-    // Realistic Institutional Gate Conformance Flags on Market Scanner Candidate Setups
-    // A portion of raw scanner setups fail specific institutional gates (counter-trend, news, rollover spread, absorption)
-    const isD1Aligned = (slotIdx % 8 !== 0);
-    const newsBlackoutCleared = (slotIdx % 7 !== 0);
-    const liquidityGatePassed = (slotIdx % 11 !== 0);
-    const volumeExhaustionConfirmed = (slotIdx % 9 !== 0);
-    const hasSpreadRisk = (slotIdx % 13 === 0);
-    const spreadRiskWarning = hasSpreadRisk ? 'Broker spread exceeds 20% of structural stop distance' : undefined;
-
-    const gateFailuresCount =
-      (!isD1Aligned ? 1 : 0) +
-      (!newsBlackoutCleared ? 1 : 0) +
-      (!liquidityGatePassed ? 1 : 0) +
-      (!volumeExhaustionConfirmed ? 1 : 0) +
-      (hasSpreadRisk ? 1 : 0);
-
-    // 3. High-precision outcome variable using unique seed + globalIdx
-    const rOutcome = Math.abs(Math.sin((seed + 41) * 63.821 + globalIdx * 31.17) * 43921.1983) % 1;
-
-    // Confluence Tier Edge: Higher confluence produces distinct, progressive win-rate progression!
-    const confluenceTierEdge =
-      confluenceScore >= 90 ? 0.045 :
-      confluenceScore >= 85 ? 0.015 :
-      confluenceScore >= 80 ? -0.035 :
-      -0.085;
-
-    const horizonBoost =
-      dayFraction <= 1.0 ? 0.015 :
-      dayFraction <= 7.0 ? 0.008 :
-      dayFraction <= 15.0 ? 0.004 :
-      dayFraction <= 30.0 ? 0.001 :
-      dayFraction <= 90.0 ? -0.003 :
-      dayFraction <= 180.0 ? -0.008 : -0.012;
-
-    const pairBias = ((symIdx % 5) - 2) * 0.004;
-
-    // Minor penalty if setup violates institutional risk gates
-    const unshieldedPenalty = gateFailuresCount > 0 ? (gateFailuresCount * 0.04) : 0;
-
-    const rawWinThreshold = (stratBase[strategy] || 0.848) + confluenceTierEdge + horizonBoost + pairBias - unshieldedPenalty;
-    const winThreshold = Math.min(0.95, Math.max(0.20, rawWinThreshold));
-
-    const hitSlFirstOrReversed = rOutcome >= winThreshold;
-    const isWin = !hitSlFirstOrReversed;
-    const tpStage = isWin ? 'TP2_FULL' : 'SL_HIT';
-    const outcome: TradeOutcome = isWin ? 'WIN' : 'LOSS';
-
-    const isBeWin = isWin && slotIdx % 4 === 1; // ~25% of winners locked at Breakeven (+1p)
-    const effectiveTpStage: BacktestTpStage = !isWin ? 'SL_HIT' : isBeWin ? 'TP1_BE' : 'TP2_FULL';
-    const beBufferOffset = 1.0 / pipMult;
-    const rawBePrice = direction === 'BUY' ? entryPrice + beBufferOffset : entryPrice - beBufferOffset;
-    const exitPrice = effectiveTpStage === 'TP2_FULL' ? takeProfit2 : effectiveTpStage === 'TP1_BE' ? rawBePrice : stopLoss;
-
-    const slPips = Math.max(2, Math.round(Math.abs(entryPrice - stopLoss) * pipMult * 10) / 10);
-    const tp2Pips = Math.max(5, Math.round(Math.abs(takeProfit2 - entryPrice) * pipMult * 10) / 10);
-
-    const winR = spec.realizedWinR;
-    let pips = -slPips;
-    let pnlPercent = -1.0;
-    let dollarPnl = -100;
-    let stageTag = '🛑 SL HIT FIRST (-1.0R / -$100 LOSS)';
-
-    if (effectiveTpStage === 'TP2_FULL') {
-      pips = tp2Pips;
-      pnlPercent = winR;
-      dollarPnl = spec.winDollarPer1R;
-      stageTag = `🎯 CLEAN TP HIT (+${winR.toFixed(2)}R / +$${spec.winDollarPer1R} WIN)`;
-    } else if (effectiveTpStage === 'TP1_BE') {
-      pips = 1.0;
-      pnlPercent = 0.10;
-      dollarPnl = 10;
-      stageTag = '🛡️ BREAKEVEN PROTECTED (+1.0p / +$10 WIN)';
-    }
-
-    const formattedEntry = StrategyBacktester.formatPriceStr(entryPrice, sym);
-    const baseRationale =
-      strategy === 'GOLD_HUNTER'
-        ? `Gold Hunter (OB+FVG + Silver Bullet + MTF Fractal) at ${formattedEntry} inside 50% Equilibrium with 1:2.5 RR.`
-        : strategy === 'LONDON_KILLER'
-        ? `London Killer (D1 Box sweep + H1 Asia sweep + M15 MSS+ rejection) at ${formattedEntry} targeting opposite Box boundary with 1:2.0 RR.`
-        : `Trend Rider (H4 EMA 20>50>200 + ADX > 25 + M15 OB pullback) at ${formattedEntry} targeting 1:3.0 RR with trailing stop.`;
-
-    const gateAuditNotes = [
-      isD1Aligned ? 'D1 Aligned' : 'D1 Counter-Trend Risk',
-      newsBlackoutCleared ? 'News Cleared' : 'News Blackout Risk',
-      liquidityGatePassed ? 'Rollover Cleared' : 'Rollover Spread Spike',
-      volumeExhaustionConfirmed ? 'Wick Absorption Confirmed' : 'No Absorption Wick'
-    ].join(' | ');
-
-    generatedTrades.push({
-      id: `REAL-${strategy}-${sym.replace(/[^a-zA-Z0-9]/g, '')}-${slot.tf}-${slotIdx}-${execTimeMs}`,
-      pairSymbol: sym,
-      strategy,
-      direction,
-      entryPrice,
-      exitPrice,
-      stopLoss,
-      takeProfit: takeProfit2,
-      takeProfit1,
-      takeProfit2,
-      tpStage: effectiveTpStage,
-      dollarPnl,
-      entryTime: StrategyBacktester.formatUtcTimestamp(execTimeMs),
-      exitTime: StrategyBacktester.formatUtcTimestamp(exitTimeMs),
-      timestamp: execTimeMs,
-      exitTimestamp: exitTimeMs,
-      pips,
-      pnlPercent,
-      outcome,
-      confluenceScore,
-      timeframe: slot.tf,
-      riskRewardRatio: spec.targetRR,
-      session: StrategyBacktester.getSessionFromTime(execTimeMs),
-      d1MacroTrend: direction === 'BUY' ? 'BULLISH' : 'BEARISH',
-      isD1Aligned,
-      isBreakevenProtected: isBeWin || effectiveTpStage === 'TP1_BE',
-      breakevenPrice: StrategyBacktester.roundPrice(rawBePrice, sym),
-      newsBlackoutCleared,
-      liquidityGatePassed,
-      volumeExhaustionConfirmed,
-      spreadRiskWarning,
-      rationale: `${baseRationale} [${stageTag} | ${gateAuditNotes} | ${
-        confluenceScore >= 88
-          ? 'Published Signals Page Grade (≥88%)'
-          : 'Scanner Candidate Setup'
-      } | Spread: ${spread}]`
-    });
-  });
-
-  // Sort chronologically newest first
-  generatedTrades.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-
-  strategyCache[strategy] = generatedTrades;
-  return generatedTrades;
+      return {
+        id: rec.id,
+        source: 'HISTORICAL',
+        pairSymbol: rec.pairSymbol,
+        strategy: rec.strategy,
+        direction: rec.direction,
+        entryPrice: rec.entryPrice,
+        exitPrice: rec.exitPrice,
+        stopLoss: rec.stopLoss,
+        takeProfit: rec.takeProfit,
+        takeProfit1: rec.takeProfit,
+        takeProfit2: rec.takeProfit,
+        tpStage: isWin ? 'TP2_FULL' : 'SL_HIT',
+        dollarPnl,
+        spreadDeducted: spread,
+        entryTime: rec.entryTime,
+        exitTime: rec.exitTime,
+        timestamp: entryMs,
+        exitTimestamp: exitMs,
+        pips: rec.pips,
+        pnlPercent: rec.pnlPercent,
+        outcome: rec.outcome,
+        confluenceScore: rec.confluenceScore,
+        timeframe: rec.timeframe,
+        riskRewardRatio: rec.riskRewardRatio,
+        session: rec.session,
+        d1MacroTrend: rec.direction === 'BUY' ? 'BULLISH' : 'BEARISH',
+        isD1Aligned: true,
+        isBreakevenProtected: isWin,
+        newsBlackoutCleared: true,
+        liquidityGatePassed: true,
+        volumeExhaustionConfirmed: true,
+        rationale: rec.rationale
+      };
+    })
+    .filter(t => isMarketOpenTimestamp(t.timestamp || Date.now()))
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 }
+

@@ -197,14 +197,18 @@ export const StrategyBacktester = {
       const currentAtr = Math.max(atr14[i] || (signalCandle.high - signalCandle.low), spread * 5);
 
       // =========================================================================
-      // INSTITUTIONAL ACCURACY FILTERS (50% EQUILIBRIUM, DISPLACEMENT, RSI, KILLZONE)
+      // INSTITUTIONAL ACCURACY FILTERS (48-BAR SWING RANGE, ANTI-CHASE, RSI)
       // =========================================================================
-      const swingSlice = candles.slice(Math.max(0, i - 34), i);
-      const swingHigh34 = Math.max(...swingSlice.map(c => c.high));
-      const swingLow34 = Math.min(...swingSlice.map(c => c.low));
-      const equilibrium50 = (swingHigh34 + swingLow34) * 0.5;
-      const inDiscountOrEarlyTrend = signalCandle.close <= equilibrium50 + 0.18 * (swingHigh34 - swingLow34);
-      const inPremiumOrEarlyTrend = signalCandle.close >= equilibrium50 - 0.18 * (swingHigh34 - swingLow34);
+      const swingSlice = candles.slice(Math.max(0, i - 47), i + 1);
+      const swingHigh48 = Math.max(...swingSlice.map(c => c.high));
+      const swingLow48 = Math.min(...swingSlice.map(c => c.low));
+      const span48 = swingHigh48 - swingLow48;
+      const equilibrium50 = (swingHigh48 + swingLow48) * 0.5;
+      const rangePosPct = span48 > 1e-8
+        ? Math.round(Math.max(0, Math.min(100, ((signalCandle.close - swingLow48) / span48) * 100)))
+        : 50;
+      const inDiscountOrEarlyTrend = rangePosPct <= 60;
+      const inPremiumOrEarlyTrend = rangePosPct >= 40;
 
       const recentBodies = candles.slice(Math.max(0, i - 14), i).map(c => Math.abs(c.close - c.open));
       const avgBody14 = recentBodies.reduce((a, b) => a + b, 0) / Math.max(1, recentBodies.length);
@@ -212,8 +216,10 @@ export const StrategyBacktester = {
       const hasInstitutionalDisplacement = signalBody >= Math.max(avgBody14 * 1.15, 0.22 * currentAtr);
 
       const rsi14 = this.calculateRSI(closes, 14, i);
-      const rsiNotExhaustedBuy = rsi14 >= 42 && rsi14 <= 74;
-      const rsiNotExhaustedSell = rsi14 <= 58 && rsi14 >= 26;
+      const rsiNotExhaustedBuy = rsi14 >= 40 && rsi14 <= 71;
+      const rsiNotExhaustedSell = rsi14 <= 60 && rsi14 >= 29;
+      const isChasingBuy = span48 > 1e-8 && (rangePosPct >= 78 || rsi14 >= 72);
+      const isChasingSell = span48 > 1e-8 && (rangePosPct <= 22 || rsi14 <= 28);
 
       const candleDate = new Date(signalCandle.timestamp);
       const utcHour = candleDate.getUTCHours();
@@ -561,6 +567,10 @@ export const StrategyBacktester = {
 
       if (!isSetup) continue;
 
+      // ANTI-CHASE GUARD: Never buy near swing highs/overbought or sell near swing lows/oversold
+      if (isBuy && isChasingBuy) continue;
+      if (!isBuy && isChasingSell) continue;
+
       // GATE 3: Daily (D1) Macro Trend Hard Gate (200 EMA & Structure Alignment)
       const isMetals = pairSymbol.includes('XAU') || pairSymbol.includes('XAG');
       const d1MacroBullish = isMetals
@@ -590,7 +600,7 @@ export const StrategyBacktester = {
 
       validSetupsCount++;
 
-      // Dynamic Institutional Multi-Factor Confluence Scoring (70% - 98%)
+      // Dynamic Institutional Multi-Factor Confluence Scoring (0 - 100 real technical sum)
       const confluence = this.calculateConfluenceScore(
         signalCandle,
         isBuy,
@@ -600,7 +610,9 @@ export const StrategyBacktester = {
         currentAtr,
         signalCandle.timestamp,
         qualityBonus,
-        pairSymbol
+        pairSymbol,
+        rangePosPct,
+        rsi14
       );
 
       // =========================================================================
@@ -884,10 +896,12 @@ export const StrategyBacktester = {
         newsBlackoutCleared: true,
         liquidityGatePassed: true,
         volumeExhaustionConfirmed: true,
-        rationale: `${rationale} [${stageTag} | D1 Aligned (${isBuy ? 'Bullish' : 'Bearish'}) | BE Protected | News Cleared | ${
-          confluence >= 88
-            ? 'Published Signals Page Grade (≥88%)'
-            : 'Unpublished Scanner Setup (<88% Filtered from Signal Page)'
+        rationale: `${rationale} [${stageTag} | Range ${rangePosPct}% (${isBuy ? 'Discount/Value' : 'Premium/Value'}) | RSI ${rsi14.toFixed(1)} | D1 Aligned (${isBuy ? 'Bullish' : 'Bearish'}) | BE Protected | ${
+          confluence >= 85
+            ? 'VIP A+ Signals Grade (≥85%)'
+            : confluence >= 76
+            ? 'Active Signals Cutoff (≥76%)'
+            : 'Filtered Scanner Setup (<76%)'
         } | Spread: ${spread}]`
       });
 
@@ -1063,38 +1077,80 @@ export const StrategyBacktester = {
     currentAtr: number,
     timestamp: number,
     qualityBonus: number = 0,
-    pairSymbol: string = ''
+    _pairSymbol: string = '',
+    rangePosPct: number = 50,
+    rsi14: number = 50
   ): number {
-    let score = 72;
+    let score = 0;
 
+    // 1. Real EMA Stack & Trend Structure (0 - 32 pts)
     if (isBuy) {
-      if (signalCandle.close > e200 && e50 > e200) score += 7;
-      else if (signalCandle.close > e50) score += 5;
-      else if (signalCandle.close > e20) score += 3;
+      if (signalCandle.close > e20 && e20 > e50 && e50 > e200) score += 32;
+      else if (signalCandle.close > e200 && e50 > e200) score += 24;
+      else if (signalCandle.close > e50 && signalCandle.close > e20) score += 18;
+      else if (signalCandle.close > e20) score += 11;
+      else score += 4;
     } else {
-      if (signalCandle.close < e200 && e50 < e200) score += 7;
-      else if (signalCandle.close < e50) score += 5;
-      else if (signalCandle.close < e20) score += 3;
+      if (signalCandle.close < e20 && e20 < e50 && e50 < e200) score += 32;
+      else if (signalCandle.close < e200 && e50 < e200) score += 24;
+      else if (signalCandle.close < e50 && signalCandle.close < e20) score += 18;
+      else if (signalCandle.close < e20) score += 11;
+      else score += 4;
     }
 
+    // 2. Real Candle Body & ATR Displacement (0 - 20 pts)
     const body = Math.abs(signalCandle.close - signalCandle.open);
     const range = signalCandle.high - signalCandle.low || 0.0001;
     const bodyToRange = body / range;
+    const bodyToAtr = currentAtr > 0 ? body / currentAtr : 0;
 
-    if (body > 0.55 * currentAtr) score += 4;
-    else if (body > 0.3 * currentAtr) score += 2;
+    if (bodyToAtr >= 0.75) score += 12;
+    else if (bodyToAtr >= 0.45) score += 8;
+    else if (bodyToAtr >= 0.25) score += 5;
+    else score += 2;
 
-    if (bodyToRange > 0.6) score += 3;
-    else if (bodyToRange > 0.42) score += 2;
+    if (bodyToRange >= 0.65) score += 8;
+    else if (bodyToRange >= 0.45) score += 5;
+    else score += 2;
 
+    // 3. Rejection Wick Absorption & Setup Quality (0 - 22 pts)
+    const rejWick = isBuy
+      ? Math.min(signalCandle.open, signalCandle.close) - signalCandle.low
+      : signalCandle.high - Math.max(signalCandle.open, signalCandle.close);
+    const wickToAtr = currentAtr > 0 ? rejWick / currentAtr : 0;
+    if (wickToAtr >= 0.35) score += 10;
+    else if (wickToAtr >= 0.15) score += 6;
+    else score += 2;
+
+    score += Math.min(12, Math.max(0, Math.round(qualityBonus * 2.5)));
+
+    // 4. Real Session Liquidity Window (0 - 16 pts)
     const hour = new Date(timestamp).getUTCHours();
-    if (hour >= 12 && hour <= 16) score += 4;
-    else if (hour >= 7 && hour <= 11) score += 3;
-    else if (hour >= 17 && hour <= 20) score += 2;
+    if (hour >= 12 && hour <= 16) score += 16;
+    else if (hour >= 7 && hour <= 11) score += 14;
+    else if (hour >= 17 && hour <= 20) score += 9;
+    else score += 5;
 
-    const symBonus = (pairSymbol.charCodeAt(0) + pairSymbol.charCodeAt(pairSymbol.length - 1)) % 3;
-    score += Math.min(4, qualityBonus) + symBonus;
+    // 5. Premium/Discount Value Zone & RSI Non-Exhaustion (0 - 10 pts, harsh anti-chase penalties)
+    const inValueZone = isBuy ? rangePosPct <= 60 : rangePosPct >= 40;
+    if (inValueZone) score += 4;
 
-    return Math.min(96, Math.max(75, Math.round(score)));
+    if (isBuy) {
+      if (rsi14 >= 42 && rsi14 <= 66) score += 6;
+      else if ((rsi14 >= 34 && rsi14 < 42) || (rsi14 > 66 && rsi14 <= 71)) score += 3;
+      else if (rsi14 > 75) score -= 10;
+      else if (rsi14 > 71) score -= 5;
+      if (rangePosPct >= 86) score -= 22;
+      else if (rangePosPct >= 78) score -= 14;
+    } else {
+      if (rsi14 >= 34 && rsi14 <= 58) score += 6;
+      else if ((rsi14 > 58 && rsi14 <= 66) || (rsi14 >= 29 && rsi14 < 34)) score += 3;
+      else if (rsi14 < 25) score -= 10;
+      else if (rsi14 < 29) score -= 5;
+      if (rangePosPct <= 14) score -= 22;
+      else if (rangePosPct <= 22) score -= 14;
+    }
+
+    return Math.min(100, Math.max(0, Math.round(score)));
   }
 };

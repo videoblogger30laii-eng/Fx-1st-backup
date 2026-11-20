@@ -23,7 +23,10 @@ import {
   ExternalLink,
   ShieldCheck,
   Clock,
-  Layers
+  Layers,
+  CheckCircle2,
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react';
 
 interface Props {
@@ -33,6 +36,7 @@ interface Props {
   onClose: () => void;
   onExecuteTrade: (trade: Elev8Trade) => void;
   onOpenElev8Dashboard: () => void;
+  onOpenTelegramModal?: () => void;
 }
 
 export const Elev8OrderModal: React.FC<Props> = ({
@@ -41,7 +45,8 @@ export const Elev8OrderModal: React.FC<Props> = ({
   isOpen,
   onClose,
   onExecuteTrade,
-  onOpenElev8Dashboard
+  onOpenElev8Dashboard,
+  onOpenTelegramModal
 }) => {
   const isBuy = signal.type.startsWith('BUY');
   const symbolWithSuffix = signal.pair.symbol.replace('/', '') + (config.symbolSuffix || '');
@@ -56,9 +61,9 @@ export const Elev8OrderModal: React.FC<Props> = ({
   const [takeProfit3, setTakeProfit3] = useState<number>(signal.takeProfit3);
 
   // Sizing mode: 'RISK_PERCENT' | 'MANUAL_LOTS'
-  const [sizingMode, setSizingMode] = useState<'RISK_PERCENT' | 'MANUAL_LOTS'>('RISK_PERCENT');
+  const [sizingMode, setSizingMode] = useState<'RISK_PERCENT' | 'MANUAL_LOTS'>('MANUAL_LOTS');
   const [riskPercent, setRiskPercent] = useState<number>(config.riskPerTradePercent || 0.5);
-  const [manualLots, setManualLots] = useState<number>(1.0);
+  const [manualLots, setManualLots] = useState<number>(0.01);
 
   // Real-time live price hook
   const [livePrice, setLivePrice] = useState<number>(() => {
@@ -73,6 +78,80 @@ export const Elev8OrderModal: React.FC<Props> = ({
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [copiedAndAlerted, setCopiedAndAlerted] = useState(false);
   const [tgAlertStatus, setTgAlertStatus] = useState<string | null>(null);
+  const [tgFeedback, setTgFeedback] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+    detail?: string;
+  } | null>(null);
+  const [isSendingTgAlert, setIsSendingTgAlert] = useState(false);
+  const [tgConfig, setTgConfig] = useState(() => TelegramAlertService.getConfig());
+  const [quickChatIdInput, setQuickChatIdInput] = useState<string>('');
+  const [showQuickChatInput, setShowQuickChatInput] = useState<boolean>(false);
+  const [isQuickDetecting, setIsQuickDetecting] = useState<boolean>(false);
+
+  const isTelegramLinked = Boolean(tgConfig.enabled && tgConfig.botToken && tgConfig.chatId);
+
+  useEffect(() => {
+    if (isOpen) {
+      const cfg = TelegramAlertService.getConfig();
+      setTgConfig(cfg);
+      setQuickChatIdInput(cfg.chatId || '');
+      setTgFeedback(null);
+      setShowQuickChatInput(false);
+    }
+  }, [isOpen]);
+
+  const handleSaveQuickChatId = () => {
+    const raw = quickChatIdInput.trim();
+    if (!raw) return;
+    const current = TelegramAlertService.getConfig();
+    const updated = { ...current, chatId: raw, enabled: true };
+    TelegramAlertService.saveConfig(updated);
+    setTgConfig(updated);
+    setShowQuickChatInput(false);
+    setTgFeedback({
+      type: 'success',
+      message: `Telegram Chat ID (${raw}) saved!`,
+      detail: 'Now tap the copy button to test sending this trade alert to your Telegram.'
+    });
+  };
+
+  const handleQuickAutoDetect = async () => {
+    const current = TelegramAlertService.getConfig();
+    const token = current.botToken;
+    if (!token) {
+      setTgFeedback({
+        type: 'warning',
+        message: 'Bot token missing',
+        detail: 'Please configure your Telegram Bot Token first in settings.'
+      });
+      return;
+    }
+    setIsQuickDetecting(true);
+    try {
+      const res = await TelegramAlertService.autoDetectChatId(token);
+      if (res.success && res.chatId) {
+        const updated = { ...current, chatId: res.chatId, enabled: true };
+        TelegramAlertService.saveConfig(updated);
+        setTgConfig(updated);
+        setQuickChatIdInput(res.chatId);
+        setShowQuickChatInput(false);
+        setTgFeedback({
+          type: 'success',
+          message: `Chat ID detected: ${res.chatId}!`,
+          detail: 'Telegram is linked! Tap the button above to copy values and send this trade to Telegram.'
+        });
+      } else {
+        setTgFeedback({
+          type: 'warning',
+          message: 'Could not detect Chat ID',
+          detail: res.message
+        });
+      }
+    } finally {
+      setIsQuickDetecting(false);
+    }
+  };
 
   // Sync editable order fields when selected signal changes
   useEffect(() => {
@@ -185,16 +264,36 @@ export const Elev8OrderModal: React.FC<Props> = ({
     `TP1: ${formatPrice(signal.pair, takeProfit1)}\n` +
     `TP2: ${formatPrice(signal.pair, takeProfit2)}`;
 
-  const copySingleValue = (val: string | number, label: string) => {
-    navigator.clipboard.writeText(String(val));
+  const copySingleValue = async (val: string | number, label: string) => {
+    try {
+      await navigator.clipboard.writeText(String(val));
+    } catch {}
     setCopiedValue(label);
     setTimeout(() => setCopiedValue(null), 1800);
+
+    try {
+      await TelegramAlertService.sendAlert(
+        `📋 *MT5 FIELD COPIED: ${label}*\nPair: ${symbolWithSuffix}\nValue: ${val}\nType: ${orderType.replace('_', ' ')}`,
+        undefined,
+        true
+      );
+    } catch {}
   };
 
-  const handleCopyMobile = () => {
-    navigator.clipboard.writeText(mobileCommand);
+  const handleCopyMobile = async () => {
+    try {
+      await navigator.clipboard.writeText(mobileCommand);
+    } catch {}
     setCopiedMobile(true);
     setTimeout(() => setCopiedMobile(false), 2000);
+
+    try {
+      await TelegramAlertService.sendAlert(
+        `📱 *MT5 MOBILE ORDER COPIED*\n${mobileCommand}`,
+        undefined,
+        true
+      );
+    } catch {}
   };
 
   const handleCopyAndSendTgAlert = async () => {
@@ -245,6 +344,9 @@ export const Elev8OrderModal: React.FC<Props> = ({
     onExecuteTrade(trade);
 
     // 3. Dispatch instant active notification to Telegram chat
+    setIsSendingTgAlert(true);
+    setTgFeedback(null);
+
     const tgMsg = `🔔 *TRADE COPIED & ACTIVE WATCHDOG STARTED!*\n\n` +
       `📊 *Pair:* ${symbolWithSuffix} (${orderType.replace('_', ' ')})\n` +
       `💵 *Volume:* ${calculatedLots.toFixed(2)} Lots\n` +
@@ -256,13 +358,37 @@ export const Elev8OrderModal: React.FC<Props> = ({
       `⏱️ *Live Price:* ${formatPrice(signal.pair, livePrice)}\n\n` +
       `👉 *Parameters copied to clipboard for your MT5 mobile!* Live Watchdog is active 24/7 — you will receive instant push alerts whenever Entry, TP, or SL triggers.`;
 
-    const res = await TelegramAlertService.sendAlert(tgMsg, undefined, true);
-    if (res.success) {
-      setTgAlertStatus('Sent to Telegram!');
-    } else {
-      setTgAlertStatus('Copied! (Check Telegram tab in Alerts)');
+    try {
+      const res = await TelegramAlertService.sendAlert(tgMsg, undefined, true);
+      if (res.success) {
+        setTgAlertStatus('Sent to Telegram!');
+        setTgFeedback({
+          type: 'success',
+          message: 'Copied & Sent to Telegram!',
+          detail: 'Trade alert was dispatched to your Telegram chat. Live Watchdog is monitoring Entry, TP & SL.'
+        });
+      } else {
+        const isNotConfigured = !TelegramAlertService.isConfigured();
+        setTgAlertStatus(isNotConfigured ? 'Copied! (TG Setup Needed)' : 'Copied! (TG Failed)');
+        setTgFeedback({
+          type: isNotConfigured ? 'warning' : 'error',
+          message: isNotConfigured
+            ? 'Parameters copied to MT5 clipboard! (Telegram not connected)'
+            : 'Parameters copied! (Telegram alert did not send)',
+          detail: res.message
+        });
+      }
+    } catch (err: any) {
+      setTgAlertStatus('Copied! (TG Error)');
+      setTgFeedback({
+        type: 'error',
+        message: 'Parameters copied! (Network error)',
+        detail: err.message
+      });
+    } finally {
+      setIsSendingTgAlert(false);
     }
-    setTimeout(() => setTgAlertStatus(null), 3500);
+    setTimeout(() => setTgAlertStatus(null), 4000);
   };
 
   const handleOpenInMt5Mobile = () => {
@@ -801,6 +927,119 @@ export const Elev8OrderModal: React.FC<Props> = ({
                     </span>
                   )}
                 </button>
+
+                {/* Telegram Alert Status / Setup Notification Banner */}
+                {tgFeedback && (
+                  <div className={`p-2.5 rounded-xl border text-xs transition-all space-y-1.5 ${
+                    tgFeedback.type === 'success'
+                      ? 'bg-[#00E676]/10 border-[#00E676]/40 text-[#F1F5F9]'
+                      : tgFeedback.type === 'warning'
+                      ? 'bg-[#f59e0b]/10 border-[#f59e0b]/40 text-[#F1F5F9]'
+                      : 'bg-[#FF3366]/10 border-[#FF3366]/40 text-[#F1F5F9]'
+                  }`}>
+                    <div className="flex items-start gap-2">
+                      {tgFeedback.type === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-[#00E676] shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${tgFeedback.type === 'warning' ? 'text-[#f59e0b]' : 'text-[#FF3366]'}`} />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-xs leading-snug">{tgFeedback.message}</p>
+                        {tgFeedback.detail && (
+                          <p className="text-[11px] text-[#94A3B8] mt-0.5 leading-relaxed">{tgFeedback.detail}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Quick action buttons if warning/error */}
+                    {tgFeedback.type !== 'success' && (
+                      <div className="flex items-center gap-2 pt-1 flex-wrap">
+                        {onOpenTelegramModal && (
+                          <button
+                            type="button"
+                            onClick={onOpenTelegramModal}
+                            className="px-3 py-1.5 rounded-lg bg-[#0088cc] hover:bg-[#0077b3] text-white text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                          >
+                            <Send className="w-3 h-3" />
+                            <span>Configure Telegram Bot</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setShowQuickChatInput(!showQuickChatInput)}
+                          className="px-2.5 py-1.5 rounded-lg bg-[#182033] hover:bg-[#222F47] border border-[#222F47] text-[#38bdf8] text-[11px] font-semibold transition-colors cursor-pointer"
+                        >
+                          {showQuickChatInput ? 'Hide Quick Input' : 'Enter Chat ID Directly'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Inline Quick Chat ID Input */}
+                {showQuickChatInput && (
+                  <div className="p-2.5 rounded-xl bg-[#161D2E] border border-[#222F47] space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-bold text-[#F1F5F9] flex items-center gap-1.5">
+                        <Send className="w-3.5 h-3.5 text-[#38bdf8]" />
+                        <span>Link Your Telegram Chat ID</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleQuickAutoDetect}
+                        disabled={isQuickDetecting}
+                        className="text-[10px] font-bold text-[#38bdf8] hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isQuickDetecting ? 'animate-spin' : ''}`} />
+                        <span>{isQuickDetecting ? 'Detecting...' : 'Auto-Detect'}</span>
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Paste Chat ID (e.g. 123456789)"
+                        value={quickChatIdInput}
+                        onChange={e => setQuickChatIdInput(e.target.value)}
+                        className="flex-1 bg-[#0D1117] border border-[#222F47] rounded-lg px-2.5 py-1.5 text-xs text-[#F1F5F9] font-mono focus:border-[#38bdf8] outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSaveQuickChatId}
+                        disabled={!quickChatIdInput.trim()}
+                        className="px-3 py-1.5 bg-[#0088cc] hover:bg-[#0077b3] disabled:opacity-50 text-white font-bold rounded-lg text-xs cursor-pointer"
+                      >
+                        Save
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-[#94A3B8]">
+                      Send any message to your bot on Telegram first, then tap Auto-Detect or paste your numeric chat ID.
+                    </p>
+                  </div>
+                )}
+
+                {/* Subtle Telegram connection status line */}
+                {!tgFeedback && (
+                  <div className="flex items-center justify-between text-[10px] text-[#94A3B8] px-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${isTelegramLinked ? 'bg-[#00E676] shadow-[0_0_6px_#00E676]' : 'bg-[#f59e0b]'}`} />
+                      <span>
+                        {isTelegramLinked
+                          ? `Telegram linked (Chat: ${tgConfig.chatId})`
+                          : 'Telegram Bot not connected yet'}
+                      </span>
+                    </div>
+                    {onOpenTelegramModal && (
+                      <button
+                        type="button"
+                        onClick={onOpenTelegramModal}
+                        className="text-[#38bdf8] hover:underline flex items-center gap-1 font-semibold cursor-pointer"
+                      >
+                        <span>{isTelegramLinked ? 'Settings' : 'Connect Bot'}</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* Individual Value Quick-Copy Chips */}
                 <div className="pt-1">

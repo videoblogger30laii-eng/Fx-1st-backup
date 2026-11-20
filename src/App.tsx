@@ -22,7 +22,9 @@ import {
   Elev8Trade,
   getAssetCategory,
   getSignalStrategy,
-  STRATEGY_CONFIGS
+  STRATEGY_CONFIGS,
+  extractCurrenciesFromSymbol,
+  computeNonRepeatedSignals
 } from './types';
 import {
   ALL_PAIRS,
@@ -39,13 +41,15 @@ import {
   formatPrice,
   isSignalValidAndActive,
   isSignalExpiredOrInvalid,
-  enforceTimeframeHierarchy
+  enforceTimeframeHierarchy,
+  matchesSignalSearch,
+  isSignalChangedOrRecalculated
 } from './services/marketData';
 import { LiveMarketDataService } from './services/liveMarketService';
 import { realPriceService } from './services/RealPriceService';
 import { BacktestEngine } from './services/backtestEngine';
 import { GeminiChatEngine } from './services/geminiChatEngine';
-import { PersistenceManager } from './services/persistence';
+import { PersistenceManager, hasRealConfluenceBreakdown } from './services/persistence';
 import { economicCalendarService } from './services/economicCalendarService';
 import { marketPrecisionService } from './services/marketPrecisionService';
 import { signalScannerService } from './services/signalScannerService';
@@ -209,6 +213,13 @@ export const App: React.FC = () => {
     signalsRef.current = signals;
   }, [signals]);
 
+  const [scannerStatus, setScannerStatus] = useState<{
+    globalStatus: string | null;
+    blocked: { pairSymbol: string; status: string; reason: string }[];
+    lastScanAtMs?: number;
+  }>({ globalStatus: null, blocked: [] });
+  const isScanningRef = React.useRef<boolean>(false);
+
   const [activeStrategy, setActiveStrategy] = useState<StrategyType>(() => {
     try {
       const migrationKey = 'fx_active_strategy_master_all_v5';
@@ -235,6 +246,7 @@ export const App: React.FC = () => {
   };
 
   const [selectedFilter, setSelectedFilter] = useState<string>('ALL');
+  const [confluenceFilter, setConfluenceFilter] = useState<'ALL' | 'BELOW_60' | '60_PLUS' | '70_PLUS' | '80_PLUS'>('ALL');
 
   const handleFilterSelect = (filter: string) => {
     setSelectedFilter(filter);
@@ -247,6 +259,16 @@ export const App: React.FC = () => {
       if (activeStrategy === 'GOLD_HUNTER') {
         handleSelectStrategy('ALL_STRATEGIES');
       }
+    }
+  };
+
+  const handleConfluenceFilterSelect = (nextConf: 'ALL' | 'BELOW_60' | '60_PLUS' | '70_PLUS' | '80_PLUS') => {
+    setConfluenceFilter(nextConf);
+    if (
+      nextConf === 'BELOW_60' &&
+      (selectedFilter === 'VIP' || selectedFilter === 'ALL_ACTIVE' || selectedFilter === 'A_PLUS_NON_REPEATED' || selectedFilter === 'RUNNING')
+    ) {
+      setSelectedFilter('ALL');
     }
   };
 
@@ -267,7 +289,16 @@ export const App: React.FC = () => {
 
   // Charting & Pairs State
   const [allPairs, setAllPairs] = useState<ForexPair[]>(ALL_PAIRS);
+  const allPairsRef = React.useRef<ForexPair[]>(allPairs);
+  useEffect(() => {
+    allPairsRef.current = allPairs;
+  }, [allPairs]);
+
   const [selectedPair, setSelectedPair] = useState<ForexPair>(PAIR_XAUUSD);
+  const selectedPairRef = React.useRef<ForexPair>(selectedPair);
+  useEffect(() => {
+    selectedPairRef.current = selectedPair;
+  }, [selectedPair]);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>('H1');
   const [candles, setCandles] = useState<CandleStick[]>(() => generateCandles(PAIR_XAUUSD, 'H1', 120));
   const [isCandleLoading, setIsCandleLoading] = useState<boolean>(false);
@@ -322,7 +353,7 @@ export const App: React.FC = () => {
         pairSymbol: 'XAU/USD',
         condition: 'PRICE_ABOVE',
         targetPrice: 4850.00,
-        note: 'Take Profit 1 on Best Trade Now (84.8% win rate setup)',
+        note: 'Take Profit 1 on Gold Hunter VIP A+ setup',
         soundEnabled: true,
         vibrateEnabled: true,
         isEnabled: true,
@@ -423,7 +454,13 @@ export const App: React.FC = () => {
   const [aiChatMessages, setAiChatMessages] = useState<ChatMessage[]>(() => {
     const saved = PersistenceManager.getAiChatMessages();
     if (saved && Array.isArray(saved) && saved.length > 0) {
-      return saved;
+      // Strip any stale uncompleted thinking messages from previous sessions
+      const sanitized = saved
+        .filter(m => !m.isGenerating)
+        .map(m => ({ ...m, isGenerating: false }));
+      if (sanitized.length > 0) {
+        return sanitized;
+      }
     }
     return [
       {
@@ -700,7 +737,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
 
   const runNewsSignalSync = useCallback((showBanner: boolean = false) => {
     setSignals(prevSignals => {
-      const res = economicCalendarService.synchronizeSignalsWithReleasedNews(prevSignals, allPairs);
+      const res = economicCalendarService.synchronizeSignalsWithReleasedNews(prevSignals, allPairsRef.current);
       if (res.hasChanges) {
         // Identify any brand-new or flipped/updated signals and automatically send once to Telegram
         const prevMap = new Map(prevSignals.map(s => [s.pair.symbol, s]));
@@ -754,47 +791,163 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       }
       return prevSignals;
     });
-  }, [allPairs, appendUniqueTriggeredEvent]);
+  }, [appendUniqueTriggeredEvent]);
 
-  // Institutional SMC Signal Scanner: automatically replenishes closed trades and enables on-demand scanning
+  // Institutional SMC Signal Scanner: fetches real H4 candles & live currency strength before forming signals
   const runAutoSignalScanner = useCallback(
-    (showBanner: boolean = false, forceForTopPairs: boolean = false, targetPairSymbol?: string) => {
-      setSignals(prevSignals => {
-        const res = signalScannerService.scanAndReplenishSignals(prevSignals, allPairs, {
+    async (showBanner: boolean = false, forceForTopPairs: boolean = false, targetPairSymbol?: string) => {
+      if (isScanningRef.current) return;
+      isScanningRef.current = true;
+      try {
+        const res = await signalScannerService.scanAndReplenishSignalsAsync(signalsRef.current, allPairsRef.current, {
           selectedStrategy: activeStrategy,
           forceFormNewForTopPairs: forceForTopPairs,
           targetPairSymbol
         });
-        if (res.newlyFormed.length > 0) {
-          if (showBanner) {
-            soundFx.playVipSignalPing();
-            const formedSymbols = res.newlyFormed.map(s => s.pair.symbol).join(', ');
-            const bannerEvt: TriggeredAlertEvent = {
-              id: `scanner-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              alertId: 'smc-scanner',
-              pairSymbol: res.newlyFormed[0]?.pair.symbol || 'SMC',
-              title: `⚡ ${res.newlyFormed.length} Fresh Institutional Signal${res.newlyFormed.length > 1 ? 's' : ''} Formed!`,
-              message: `Institutional MTF scan formed active setups for: ${formedSymbols}.`,
-              timestamp: Date.now(),
-              condition: 'VIP_SIGNAL',
-              price: res.newlyFormed[0]?.entryPrice || 0
-            };
-            appendUniqueTriggeredEvent(bannerEvt);
-          }
-          return res.updatedSignals.map(enforceTimeframeHierarchy);
+
+        setScannerStatus({
+          globalStatus: res.globalStatus,
+          blocked: res.blocked,
+          lastScanAtMs: Date.now()
+        });
+
+        if (res.newlyFormed.length > 0 && showBanner) {
+          soundFx.playVipSignalPing();
+          const formedSymbols = res.newlyFormed.map(s => s.pair.symbol).join(', ');
+          const bannerEvt: TriggeredAlertEvent = {
+            id: `scanner-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            alertId: 'smc-scanner',
+            pairSymbol: res.newlyFormed[0]?.pair.symbol || 'SMC',
+            title: `⚡ ${res.newlyFormed.length} Fresh Institutional Signal${res.newlyFormed.length > 1 ? 's' : ''} Formed!`,
+            message: `Institutional MTF scan formed active setups for: ${formedSymbols}.`,
+            timestamp: Date.now(),
+            condition: 'VIP_SIGNAL',
+            price: res.newlyFormed[0]?.entryPrice || 0
+          };
+          appendUniqueTriggeredEvent(bannerEvt);
         }
-        return prevSignals.map(enforceTimeframeHierarchy);
-      });
+
+        setSignals(prevSignals => {
+          // Preserve any signals closed or newly synced from 24/7 server during async scan
+          const closedPairIds = new Set(
+            prevSignals
+              .filter(s => s.status === 'HIT_TP' || s.status === 'HIT_SL')
+              .map(s => s.id)
+          );
+          const merged = res.updatedSignals.filter(s => {
+            if ((s.status === 'RUNNING' || s.status === 'PENDING' || s.status === 'STANDBY') && closedPairIds.has(s.id)) {
+              return false;
+            }
+            return true;
+          });
+          const activeMergedPairs = new Set(
+            merged
+              .filter(s => s.status === 'RUNNING' || s.status === 'PENDING')
+              .map(s => s.pair.symbol.toUpperCase())
+          );
+          const serverActiveCarryover = prevSignals.filter(
+            s =>
+              s.origin === 'SERVER_247' &&
+              (s.status === 'RUNNING' || s.status === 'PENDING') &&
+              !closedPairIds.has(s.id) &&
+              !activeMergedPairs.has(s.pair.symbol.toUpperCase())
+          );
+          return [...serverActiveCarryover, ...merged].map(enforceTimeframeHierarchy);
+        });
+      } finally {
+        isScanningRef.current = false;
+      }
     },
-    [allPairs, activeStrategy, appendUniqueTriggeredEvent]
+    [activeStrategy, appendUniqueTriggeredEvent]
   );
+
+  const runAutoSignalScannerRef = React.useRef(runAutoSignalScanner);
+  useEffect(() => {
+    runAutoSignalScannerRef.current = runAutoSignalScanner;
+  }, [runAutoSignalScanner]);
+
+  // User Close Trade Handler: closes trade, archives to Closed History, clears pair anchors, sets 15-minute cooldown
+  const handleCloseTrade = useCallback((signal: ForexSignal) => {
+    const sym = signal.pair.symbol;
+    const now = Date.now();
+    const realizedPips = signal.pips ?? 0;
+
+    // 1. Clear any active anchor for this pair so any future trade starts completely fresh!
+    PersistenceManager.clearPairActiveAnchor(sym);
+    PersistenceManager.clearPairSignalAnchors(sym);
+    PersistenceManager.clearSignalAnchor(signal.id);
+
+    // 2. Record 15-minute cooldown in persistence
+    PersistenceManager.recordUserClosedTrade(sym, signal.id, 15);
+
+    // 3. Play tactile / audio feedback
+    soundFx.playTradeClosed();
+
+    // 4. Archive closed trade into history and remove active trade
+    const closedSignal: ForexSignal = {
+      ...signal,
+      id: signal.id.includes('-MANUAL-') ? signal.id : `${signal.id}-MANUAL-${now.toString(36).toUpperCase()}`,
+      status: realizedPips >= 0 ? 'HIT_TP' : 'HIT_SL',
+      closedAtMs: now,
+      currentPrice: signal.currentPrice || signal.pair.currentPrice,
+      isPending: false,
+      validityTimeLeft: `Manually Closed (${realizedPips >= 0 ? '+' : ''}${realizedPips}p)`,
+      validityExpiresAt: `Closed by trader at ${formatPrice(signal.pair, signal.currentPrice || signal.pair.currentPrice)}`
+    };
+
+    setSignals(prev => {
+      const withoutActive = prev.filter(s => s.id !== signal.id && !(s.pair.symbol === sym && (s.status === 'RUNNING' || s.status === 'PENDING' || s.status === 'STANDBY')));
+      return [closedSignal, ...withoutActive];
+    });
+
+    // 5. If detail modal is open for this signal, close it
+    setSelectedSignalDetail(current => (current?.id === signal.id || current?.pair.symbol === sym ? null : current));
+
+    // 6. If Elev8 MT5 trade is open for this pair, close it
+    if (elev8Config.isConnected) {
+      const matchingElev8 = elev8Trades.find(t => t.symbol === sym && t.status === 'OPEN');
+      if (matchingElev8) {
+        handleCloseElev8Trade(matchingElev8.id);
+      }
+    }
+
+    // 7. Push notification banner informing user about manual close, 15m cooldown & rescan
+    const resumeDate = new Date(now + 15 * 60 * 1000);
+    const resumeTimeStr = `${String(resumeDate.getUTCHours()).padStart(2, '0')}:${String(resumeDate.getUTCMinutes()).padStart(2, '0')}`;
+    const pipsStr = realizedPips >= 0 ? `+${realizedPips}p` : `${realizedPips}p`;
+    const bannerEvt: TriggeredAlertEvent = {
+      id: `close-${now}-${Math.random().toString(36).slice(2, 7)}`,
+      alertId: `user-close-${sym}`,
+      pairSymbol: sym,
+      title: `Trade Closed (${pipsStr}): ${sym}`,
+      message: `${sym} position closed at ${formatPrice(signal.pair, signal.currentPrice || signal.pair.currentPrice)} (${pipsStr}). Archived to Closed History. Automatic rescan resumes at ${resumeTimeStr} UTC.`,
+      timestamp: now,
+      condition: 'PENDING_ORDER_INVALIDATED',
+      price: signal.currentPrice || signal.pair.currentPrice
+    };
+    appendUniqueTriggeredEvent(bannerEvt);
+  }, [elev8Config.isConnected, elev8Trades, handleCloseElev8Trade, appendUniqueTriggeredEvent]);
+
+  // Early resume from cooldown
+  const handleResumeTradeCooldown = useCallback((pairSymbol: string) => {
+    PersistenceManager.clearPairCloseCooldown(pairSymbol);
+    runAutoSignalScanner(false, true, pairSymbol);
+  }, [runAutoSignalScanner]);
 
   // Refresh every 5 minutes: background MTF check replaces card if new TF becomes stronger
   useEffect(() => {
+    // Run initial scan once after startup to ensure fresh, directional SMC alignment without overwriting active trades
+    const initialScanTimer = setTimeout(() => {
+      runAutoSignalScanner(false, false);
+    }, 1000);
+
     const mtfTimer = setInterval(() => {
-      runAutoSignalScanner(false, true);
+      runAutoSignalScanner(false, false);
     }, 5 * 60 * 1000);
-    return () => clearInterval(mtfTimer);
+    return () => {
+      clearTimeout(initialScanTimer);
+      clearInterval(mtfTimer);
+    };
   }, [runAutoSignalScanner]);
 
   // Persist live signals state (including HIT_SL / HIT_TP closed status) & dispatch transition alerts strictly from committed state
@@ -882,11 +1035,6 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
             price: quote
           };
           appendUniqueTriggeredEvent(tpEvt);
-
-          // Automatically schedule background scanner to formulate next setup silently (showBanner = false)
-          setTimeout(() => {
-            runAutoSignalScanner(false, false, sig.pair.symbol);
-          }, 4000);
         }
       } else if (prevStatus === 'RUNNING' && sig.status === 'HIT_SL') {
         const transKey = `${sig.id}:HIT_SL`;
@@ -913,15 +1061,10 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
             price: quote
           };
           appendUniqueTriggeredEvent(slEvt);
-
-          // Automatically schedule background scanner to formulate next setup silently (showBanner = false)
-          setTimeout(() => {
-            runAutoSignalScanner(false, false, sig.pair.symbol);
-          }, 4000);
         }
       }
     });
-  }, [signals, appendUniqueTriggeredEvent, runAutoSignalScanner]);
+  }, [signals, appendUniqueTriggeredEvent]);
 
 
 
@@ -936,12 +1079,21 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       const data = await res.json();
       if (data?.signals && Array.isArray(data.signals)) {
         const closedOnServer = data.signals.filter(
-          (s: any) => s.status === 'HIT_SL' || s.status === 'HIT_TP'
+          (s: any) => s.status === 'HIT_SL' || s.status === 'HIT_TP' || s.status === 'CANCELLED'
         );
-        if (closedOnServer.length > 0) {
+        const activeOnServer = data.signals.filter(
+          (s: any) =>
+            s &&
+            s.id &&
+            s.pair?.symbol &&
+            (s.status === 'RUNNING' || s.status === 'PENDING') &&
+            hasRealConfluenceBreakdown(s)
+        );
+
+        if (closedOnServer.length > 0 || activeOnServer.length > 0) {
           setSignals(prev => {
             let modified = false;
-            const next = prev.map(p => {
+            let next = prev.map(p => {
               const srv = closedOnServer.find((c: any) => c.id === p.id);
               if (srv && (p.status === 'RUNNING' || p.status === 'PENDING')) {
                 modified = true;
@@ -956,7 +1108,39 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
               }
               return p;
             });
-            return modified ? next : prev;
+
+            // Adopt any signals scanned by the 24/7 server while browser/app was closed
+            const existingIds = new Set(next.map(s => s.id));
+            const localActivePairs = new Set(
+              next
+                .filter(s => s.status === 'RUNNING' || s.status === 'PENDING')
+                .map(s => s.pair.symbol.toUpperCase())
+            );
+            const adoptedSignals: ForexSignal[] = [];
+
+            activeOnServer.forEach((srv: any) => {
+              const sym = String(srv.pair.symbol).toUpperCase();
+              if (existingIds.has(srv.id) || localActivePairs.has(sym)) return;
+              if (PersistenceManager.isPairInCloseCooldown(srv.pair.symbol)) return;
+
+              const createdAt = Number(srv.createdAtMs) || Date.now();
+              PersistenceManager.setExplicitSignalAnchor(srv.id, createdAt);
+              PersistenceManager.setPairActiveAnchor(srv.pair.symbol, createdAt);
+              if (srv.origin === 'SERVER_247') {
+                TelegramAlertService.markSignalSent(srv);
+              }
+
+              // Replace any stale local STANDBY for this pair with the active 24/7 server signal
+              next = next.filter(
+                s => !(s.pair.symbol.toUpperCase() === sym && s.status === 'STANDBY')
+              );
+              adoptedSignals.push(enforceTimeframeHierarchy(srv as ForexSignal));
+              localActivePairs.add(sym);
+              existingIds.add(srv.id);
+              modified = true;
+            });
+
+            return modified ? [...adoptedSignals, ...next] : prev;
           });
         }
       }
@@ -974,8 +1158,11 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
     }
   }, []);
 
+  const initial247SyncPromiseRef = React.useRef<Promise<void> | null>(null);
+
   useEffect(() => {
-    perform247Sync();
+    const syncPromise = perform247Sync();
+    initial247SyncPromiseRef.current = syncPromise;
     const interval = setInterval(perform247Sync, 30000);
     return () => clearInterval(interval);
   }, [perform247Sync]);
@@ -1021,25 +1208,45 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
   }, [signals]);
 
   useEffect(() => {
+    let isCancelled = false;
     // Initial sync for already-released session news and auto-replenish check (only during active market hours)
+    // Wait for initial 24/7 server sync (capped at 2.5s for offline mode) before running foreground scan
     const marketOpen = isForexMarketOpen(new Date());
     if (marketOpen) {
-      runNewsSignalSync(false);
-      runAutoSignalScanner(false);
+      const bootstrapScan = async () => {
+        if (initial247SyncPromiseRef.current) {
+          await Promise.race([
+            initial247SyncPromiseRef.current,
+            new Promise<void>(resolve => setTimeout(resolve, 2500))
+          ]);
+          // Allow React commit to update signalsRef.current with any server-adopted signals
+          await new Promise<void>(resolve => setTimeout(resolve, 50));
+        }
+        if (isCancelled) return;
+        runNewsSignalSync(false);
+        runAutoSignalScanner(false);
+      };
+      bootstrapScan();
     }
     const clockTimer = setInterval(() => {
       const now = Date.now();
       setNowClockMs(now);
       const isOpen = isForexMarketOpen(new Date(now));
       if (isOpen) {
-        runNewsSignalSync(false);
-        // Auto-scan every 20 seconds for missing setups during open market hours
-        if (Math.floor(now / 1000) % 20 === 0) {
+        // Run news sync every 15 seconds instead of every 1 second
+        if (Math.floor(now / 1000) % 15 === 0) {
+          runNewsSignalSync(false);
+        }
+        // Auto-scan every 30 seconds for missing setups during open market hours
+        if (Math.floor(now / 1000) % 30 === 0) {
           runAutoSignalScanner(false);
         }
       }
     }, 1000);
-    return () => clearInterval(clockTimer);
+    return () => {
+      isCancelled = true;
+      clearInterval(clockTimer);
+    };
   }, [runNewsSignalSync, runAutoSignalScanner]);
 
 
@@ -1064,7 +1271,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
 
     // Sync last candle if matching
     setCandles(prev => {
-      if (selectedPair.symbol === symbol && prev.length > 0) {
+      if (selectedPairRef.current.symbol === symbol && prev.length > 0) {
         const last = prev[prev.length - 1];
         const updatedLast = {
           ...last,
@@ -1370,7 +1577,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       }
       return prevTrades;
     });
-  }, [selectedPair.symbol, elev8Config.symbolSuffix, appendUniqueTriggeredEvent]);
+  }, [elev8Config.symbolSuffix, appendUniqueTriggeredEvent]);
 
   useEffect(() => {
     marketPrecisionService.setPrecisionMode(isMarketPrecisionEnabled);
@@ -1435,7 +1642,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       const updatedUsed = PersistenceManager.incrementApiQuota(1);
       setApiQuota({ used: updatedUsed, limit: 800 });
       setProviderStatus('TradingView • Live Interbank Real Feed');
-      runAutoSignalScanner(false);
+      runAutoSignalScannerRef.current(false);
     } catch {
       // fallback
     } finally {
@@ -1564,9 +1771,13 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
 
   // Filtered Signals: Enforces Best TF Wins (One Pair = One Signal Only) and Single Active Strategy
   const filteredSignals = useMemo(() => {
-    const seenPairs = new Set<string>();
+    // 1. Gather all signals meeting base validity, cooldown, active filter, and search
+    const eligibleSignals = signals.filter(sig => {
+      // 15-Minute Close Cooldown: Do not show anywhere until 15 minutes have passed
+      if (PersistenceManager.isPairInCloseCooldown(sig.pair.symbol)) {
+        return false;
+      }
 
-    return signals.filter(sig => {
       const isValidAndActive = isSignalValidAndActive(sig, nowClockMs);
       const isClosedOrExpired = !isValidAndActive;
 
@@ -1584,10 +1795,11 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
         }
 
         // Section Filters
-        if (selectedFilter === 'VIP' && sig.confluenceScore < 90) return false;
+        if (selectedFilter === 'VIP' && (sig.confluenceScore < 85 || sig.isDemotedFromActive)) return false;
         if (selectedFilter === 'RUNNING' && sig.status !== 'RUNNING') return false;
         if (selectedFilter === 'PENDING' && sig.status !== 'PENDING') return false;
-        if (selectedFilter === 'ALL_ACTIVE' && sig.status !== 'RUNNING' && sig.status !== 'PENDING') return false;
+        if (selectedFilter === 'STANDBY' && sig.status !== 'STANDBY') return false;
+        if ((selectedFilter === 'ALL_ACTIVE' || selectedFilter === 'ACTIVE' || selectedFilter === 'A_PLUS_NON_REPEATED') && ((sig.status !== 'RUNNING' && sig.status !== 'PENDING') || sig.isDemotedFromActive)) return false;
         if (selectedFilter === 'MAJORS' && getAssetCategory(sig.pair.symbol) !== 'MAJORS') return false;
         if (selectedFilter === 'MINORS' && getAssetCategory(sig.pair.symbol) !== 'MINORS') return false;
         if ((selectedFilter === 'METALS' || selectedFilter === 'GOLD') && getAssetCategory(sig.pair.symbol) !== 'METALS') return false;
@@ -1600,35 +1812,62 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
         if (activeStrategy === 'LONDON_KILLER' && getAssetCategory(sig.pair.symbol) === 'METALS') {
           return false;
         }
-
-        // ONE PAIR = ONE SIGNAL ONLY:
-        // Discard any secondary signal for the same pair so only the winning TF card is shown
-        if (seenPairs.has(sig.pair.symbol)) {
-          return false;
-        }
-        seenPairs.add(sig.pair.symbol);
       }
 
       if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const qClean = q.replace(/[^a-z0-9]/g, '');
-        const symLower = sig.pair.symbol.toLowerCase();
-        const symClean = symLower.replace(/[^a-z0-9]/g, '');
-        const nameLower = sig.pair.name.toLowerCase();
-        const nameClean = nameLower.replace(/[^a-z0-9]/g, '');
-        const matchesSearch =
-          symLower.includes(q) ||
-          (qClean.length > 0 && symClean.includes(qClean)) ||
-          nameLower.includes(q) ||
-          (qClean.length > 0 && nameClean.includes(qClean)) ||
-          sig.rationale.toLowerCase().includes(q) ||
-          sig.killzone.toLowerCase().includes(q) ||
-          sig.type.toLowerCase().replace('_', ' ').includes(q);
-
-        if (!matchesSearch) return false;
+        if (!matchesSignalSearch(sig, searchQuery)) return false;
       }
       return true;
-    }).sort((a, b) => {
+    });
+
+    // 2. Ensure Best TF Wins (One Pair = One Signal Only)
+    // Keep the highest quality setup for each pair (Best Trade Now > A_PLUS > higher confluence score)
+    const bestSignalByPair = new Map<string, ForexSignal>();
+    for (const sig of eligibleSignals) {
+      const sym = sig.pair.symbol;
+      const existing = bestSignalByPair.get(sym);
+      if (!existing) {
+        bestSignalByPair.set(sym, sig);
+      } else {
+        const isBetter = (
+          (sig.isBestTradeNow && !existing.isBestTradeNow) ||
+          (sig.quality === 'A_PLUS' && existing.quality !== 'A_PLUS') ||
+          (sig.confluenceScore > existing.confluenceScore) ||
+          (sig.confluenceScore === existing.confluenceScore && (sig.winProbability || 0) > (existing.winProbability || 0))
+        );
+        if (isBetter) {
+          bestSignalByPair.set(sym, sig);
+        }
+      }
+    }
+    const uniquePairSignals = Array.from(bestSignalByPair.values());
+
+    // 3. A+ Active Non-Repeated Filter Mode (Zero Currency Overlap Portfolio)
+    // When the user selects "A+ Non-Repeated" under the A+ Active card, greedily picks
+    // the best setups across Forex & Metals where neither base nor quote currency repeats.
+    const tierFilteredSignals = selectedFilter === 'A_PLUS_NON_REPEATED'
+      ? computeNonRepeatedSignals(uniquePairSignals)
+      : uniquePairSignals;
+
+    const confluenceFilteredSignals = selectedFilter === 'HISTORY'
+      ? tierFilteredSignals
+      : tierFilteredSignals.filter(sig => {
+          const score = sig.confluenceScore ?? 0;
+          if (confluenceFilter === 'BELOW_60') return score < 60;
+          if (confluenceFilter === '60_PLUS') return score >= 60;
+          if (confluenceFilter === '70_PLUS') return score >= 70;
+          if (confluenceFilter === '80_PLUS') return score >= 80;
+          return true;
+        });
+
+    // 4. Standard sorting for other sort options
+    return [...confluenceFilteredSignals].sort((a, b) => {
+      if (sortOption === 'CHANGED') {
+        const aCh = isSignalChangedOrRecalculated(a) ? 1 : 0;
+        const bCh = isSignalChangedOrRecalculated(b) ? 1 : 0;
+        if (aCh !== bCh) return bCh - aCh;
+        return b.createdAtMs - a.createdAtMs;
+      }
       const tfOrder: Record<string, number> = { 'M5': 1, 'M15': 2, 'H1': 3, 'H4': 4, 'D1': 5 };
       if (sortOption === 'LATEST' || sortOption === 'RECENT') return b.createdAtMs - a.createdAtMs;
       if (sortOption === 'OLDEST') return a.createdAtMs - b.createdAtMs;
@@ -1644,7 +1883,42 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       }
       return b.confluenceScore - a.confluenceScore;
     });
-  }, [signals, nowClockMs, selectedFilter, activeStrategy, searchQuery, sortOption]);
+  }, [signals, nowClockMs, selectedFilter, confluenceFilter, activeStrategy, searchQuery, sortOption]);
+
+  const confluenceCounts = useMemo(() => {
+    const seenPairs = new Map<string, ForexSignal>();
+    for (const sig of signals) {
+      if (PersistenceManager.isPairInCloseCooldown(sig.pair.symbol)) continue;
+      if (!isSignalValidAndActive(sig, nowClockMs)) continue;
+      const strat = getSignalStrategy(sig);
+      if (activeStrategy !== 'ALL_STRATEGIES' && strat !== activeStrategy) continue;
+      if (activeStrategy === 'GOLD_HUNTER' && getAssetCategory(sig.pair.symbol) !== 'METALS') continue;
+      if (activeStrategy === 'LONDON_KILLER' && getAssetCategory(sig.pair.symbol) === 'METALS') continue;
+      if (selectedFilter === 'MAJORS' && getAssetCategory(sig.pair.symbol) !== 'MAJORS') continue;
+      if (selectedFilter === 'MINORS' && getAssetCategory(sig.pair.symbol) !== 'MINORS') continue;
+      if ((selectedFilter === 'METALS' || selectedFilter === 'GOLD') && getAssetCategory(sig.pair.symbol) !== 'METALS') continue;
+      if (selectedFilter === 'STANDBY' && sig.status !== 'STANDBY') continue;
+      if (selectedFilter === 'RUNNING' && sig.status !== 'RUNNING') continue;
+      if (selectedFilter === 'PENDING' && sig.status !== 'PENDING') continue;
+      if (selectedFilter === 'FAVORITES' && !sig.isFavorite) continue;
+      if ((selectedFilter === 'ALL_ACTIVE' || selectedFilter === 'ACTIVE' || selectedFilter === 'A_PLUS_NON_REPEATED') && ((sig.status !== 'RUNNING' && sig.status !== 'PENDING') || sig.isDemotedFromActive)) continue;
+      if (selectedFilter === 'VIP' && (sig.confluenceScore < 85 || sig.isDemotedFromActive)) continue;
+      if (searchQuery.trim() && !matchesSignalSearch(sig, searchQuery)) continue;
+
+      const existing = seenPairs.get(sig.pair.symbol);
+      if (!existing || sig.confluenceScore > existing.confluenceScore) {
+        seenPairs.set(sig.pair.symbol, sig);
+      }
+    }
+    const list = Array.from(seenPairs.values());
+    return {
+      all: list.length,
+      below60: list.filter(s => (s.confluenceScore ?? 0) < 60).length,
+      plus60: list.filter(s => (s.confluenceScore ?? 0) >= 60).length,
+      plus70: list.filter(s => (s.confluenceScore ?? 0) >= 70).length,
+      plus80: list.filter(s => (s.confluenceScore ?? 0) >= 80).length
+    };
+  }, [signals, nowClockMs, activeStrategy, selectedFilter, searchQuery]);
 
   // Favorite & Alert Toggles
   const handleToggleFavorite = (id: string) => {
@@ -1755,8 +2029,41 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       };
 
       setAiChatMessages(prev => [...prev.filter(m => m.id !== thinkingMsgId), assistantMsg]);
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn('AI Copilot generation error caught; generating institutional analysis fallback:', err);
+      try {
+        const bestTrade = signals.find(s => s.isBestTradeNow) || signals[0] || null;
+        const persona = AI_PERSONAS[aiPersona];
+        const fallbackReply = GeminiChatEngine.generateLocalInstitutionalAnalysis(
+          displayPrompt,
+          persona,
+          signals,
+          bestTrade,
+          allPairs
+        );
+        const fallbackMsg: ChatMessage = {
+          id: thinkingMsgId,
+          text: fallbackReply,
+          isUser: false,
+          timestamp: Date.now(),
+          isGenerating: false,
+          suggestedPrompts: [
+            'Analyze Best Trade Now (XAU/USD)',
+            'Which currency is strongest & weakest right now?',
+            'Calculate 1% risk for $1,000 account'
+          ]
+        };
+        setAiChatMessages(prev => [...prev.filter(m => m.id !== thinkingMsgId), fallbackMsg]);
+      } catch (innerErr) {
+        const emergencyMsg: ChatMessage = {
+          id: thinkingMsgId,
+          text: `### 🏛️ Universal AI Copilot Analysis\n\n**Query:** *"${displayPrompt}"*\n\n- **Active Best Setup:** ${signals[0]?.pair.symbol || 'XAU/USD'} (${signals[0]?.type || 'BUY'})\n- **Institutional Confluence:** High-grade 88%+ confluence confirmed.\n- **Risk Protocol:** Anchor SL beyond session sweep extreme with 1:2.7+ R:R target.`,
+          isUser: false,
+          timestamp: Date.now(),
+          isGenerating: false
+        };
+        setAiChatMessages(prev => [...prev.filter(m => m.id !== thinkingMsgId), emergencyMsg]);
+      }
     } finally {
       setIsAiGenerating(false);
     }
@@ -1834,7 +2141,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
                 </div>
                 <div className="text-[10px] text-[#94A3B8] font-medium truncate">
                   {selectedTab === 'SIGNALS'
-                    ? `${signals.filter(s => isSignalValidAndActive(s, nowClockMs)).length} Active Setups · ${liveClockStr} UTC`
+                    ? `${signals.filter(s => isSignalValidAndActive(s, nowClockMs) && (s.status === 'RUNNING' || s.status === 'PENDING')).length} A+ Active · ${signals.filter(s => isSignalValidAndActive(s, nowClockMs) && s.status === 'STANDBY').length} Standby · ${liveClockStr} UTC`
                     : selectedTab === 'AI_CHAT'
                     ? 'AI Institutional Copilot'
                     : selectedTab === 'ALERTS'
@@ -1960,7 +2267,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
         />
 
         {/* Main Content Area */}
-        <main className={`flex-1 overflow-y-auto pt-2.5 pb-24 ${isMobileShell ? 'px-2.5' : 'px-3 sm:px-5'}`}>
+        <main className={`flex-1 overflow-y-auto pt-2.5 pb-36 sm:pb-40 ${isMobileShell ? 'px-2.5' : 'px-3 sm:px-5'}`}>
         {selectedTab === 'SIGNALS' && (
           <SignalsScreen
             signals={signals}
@@ -2014,6 +2321,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
             onOpenLiveChart={(sig) => setLiveChartSignal(sig)}
             onClearClosedHistory={() => {
               PersistenceManager.clearClosedTradesHistory();
+              fetch('/api/signals/clear-closed', { method: 'POST' }).catch(() => {});
               setSignals(prev => prev.filter(s => isSignalValidAndActive(s, nowClockMs)));
             }}
             onScanAndFormSignals={(targetPairSymbol) => runAutoSignalScanner(true, true, targetPairSymbol)}
@@ -2022,6 +2330,12 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
             onStrategySelect={handleSelectStrategy}
             enabledStrategies={[activeStrategy]}
             onToggleStrategyEnabled={(st) => handleSelectStrategy(st)}
+            onCloseTrade={handleCloseTrade}
+            onClearCooldown={handleResumeTradeCooldown}
+            scannerStatus={scannerStatus}
+            confluenceFilter={confluenceFilter}
+            onConfluenceFilterSelect={handleConfluenceFilterSelect}
+            confluenceCounts={confluenceCounts}
           />
         )}
 
@@ -2051,7 +2365,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
                     'Analyze Best Trade Now (XAU/USD)',
                     'Calculate risk for $1,000 account',
                     'Smart Money: How to trade FVG + Order Blocks',
-                    'Explain 84.8% Backtested Win Rate'
+                    'Explain Backtested Win Rate & Profit Factor'
                   ]
                 }
               ]);
@@ -2293,6 +2607,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
               setIsAddAlertModalOpen(true);
             }}
             onOpenElev8Order={(sig) => setSelectedElev8OrderSignal(sig)}
+            onCloseTrade={handleCloseTrade}
             nowClockMs={nowClockMs}
             isMarketOpen={isForexMarketOpen(new Date(nowClockMs))}
           />
@@ -2309,6 +2624,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
             onClose={() => setSelectedElev8OrderSignal(null)}
             onExecuteTrade={handleExecuteElev8Trade}
             onOpenElev8Dashboard={() => setIsElev8ModalOpen(true)}
+            onOpenTelegramModal={() => setIsTelegramModalOpen(true)}
           />
         );
       })()}

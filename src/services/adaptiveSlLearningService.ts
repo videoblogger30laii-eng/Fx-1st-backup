@@ -270,12 +270,10 @@ export class AdaptiveSlLearningService {
     const targetRr1 = bounds.targetRr;
     const tp2Ratio = (tf === 'M5' || tf === 'M15') ? 1.4 : 1.5;
     const tp3Ratio = (tf === 'M5' || tf === 'M15') ? 1.8 : 2.0;
-    const targetRr2 = targetRr1 * tp2Ratio;
-    const targetRr3 = targetRr1 * tp3Ratio;
-
-    const enhancedTp1Dist = newSlDist * targetRr1;
-    const enhancedTp2Dist = newSlDist * targetRr2;
-    const enhancedTp3Dist = newSlDist * targetRr3;
+    const clampedTp1Pips = Math.min(bounds.maxTp1, Math.max(bounds.minTp1, Math.round(targetSlPips * targetRr1 * 10) / 10));
+    const enhancedTp1Dist = pipsToPrice(pair, clampedTp1Pips);
+    const enhancedTp2Dist = enhancedTp1Dist * tp2Ratio;
+    const enhancedTp3Dist = enhancedTp1Dist * tp3Ratio;
 
     let enhancedTakeProfit1 = round(
       isBuy ? signal.entryPrice + enhancedTp1Dist : signal.entryPrice - enhancedTp1Dist
@@ -374,8 +372,8 @@ export class AdaptiveSlLearningService {
       takeProfit3: enhancedTakeProfit3,
       takeProfit: enhancedTakeProfit1,
       riskReward: `1:${targetRr1.toFixed(1)}`,
-      confluenceScore: Math.min(99, signal.confluenceScore + 1),
-      winProbability: Math.min(98, signal.winProbability + 2),
+      confluenceScore: signal.confluenceScore,
+      winProbability: Math.min(95, signal.winProbability),
       invalidationTrigger: `Anti-Wick Protected SL at ${formatPrice(pair, enhancedStopLoss)} (+${addedExtraPips}p safety cushion beyond structure)`,
       checklist: updatedChecklist,
       slLearningAudit
