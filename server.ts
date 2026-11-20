@@ -2504,21 +2504,31 @@ async function startServer() {
 
   app.get('/api/signals/background-scan', async (req, res) => {
     const force = req.query.force === '1' || req.query.force === 'true';
+    const includeSignals = req.query.includeSignals === '1' || req.query.includeSignals === 'true';
     const result = await runServerBackgroundMarketScan(force);
+    const allStored = Object.values(serverSignalsStore);
+    const activeCount = allStored.filter((s: any) => s?.status === 'RUNNING' || s?.status === 'PENDING').length;
     res.json({
       success: true,
       ...result,
-      signals: Object.values(serverSignalsStore)
+      activeCount,
+      totalStoredCount: allStored.length,
+      ...(includeSignals ? { signals: allStored } : {})
     });
   });
 
   app.post('/api/signals/background-scan', async (req, res) => {
     const force = Boolean(req.body?.force || req.query.force === '1');
+    const includeSignals = Boolean(req.body?.includeSignals || req.query.includeSignals === '1');
     const result = await runServerBackgroundMarketScan(force);
+    const allStored = Object.values(serverSignalsStore);
+    const activeCount = allStored.filter((s: any) => s?.status === 'RUNNING' || s?.status === 'PENDING').length;
     res.json({
       success: true,
       ...result,
-      signals: Object.values(serverSignalsStore)
+      activeCount,
+      totalStoredCount: allStored.length,
+      ...(includeSignals ? { signals: allStored } : {})
     });
   });
 
