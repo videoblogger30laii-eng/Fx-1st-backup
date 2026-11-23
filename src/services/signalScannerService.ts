@@ -839,7 +839,7 @@ class SignalScannerService {
     const h4Filter = preloaded?.h4Filter ?? evaluateH4EmaFilter(h4Candles, livePrice);
 
     const makeBlockedResult = (
-      blockedStatus: 'NO_DATA' | 'NO_CANDLES' | 'NO_TRADE' | 'CONFLICT_BLOCKED',
+      blockedStatus: 'NO_DATA' | 'NO_CANDLES' | 'NO_TRADE' | 'CONFLICT_BLOCKED' | 'LOW_SCORE',
       blockedReason: string
     ): BestTfEvaluationResult => {
       const atrCheck = this.evaluateAtrVolatility(pair, livePrice > 0 ? livePrice : pair.basePrice, h4Candles);
@@ -915,13 +915,29 @@ class SignalScannerService {
       winningTf = 'H4';
     }
 
-    // Include all pairs passing real H4 EMA + currency alignment gates (including <60 confluence as STANDBY signal cards)
-    const isEligible = true;
-    const scoreBreakdownText = `M15:${m15} | H1:${h1} | H4:${h4} - ${winningTf} won`;
-
     const winningCandles = winningTf === 'M15' ? m15Candles : winningTf === 'H1' ? h1Candles : h4Candles;
     const atrCheck = this.evaluateAtrVolatility(pair, livePrice, winningCandles && winningCandles.length >= 15 ? winningCandles : h4Candles);
     const winningRes = winningTf === 'H4' ? h4Res : winningTf === 'H1' ? h1Res : m15Res;
+    const scoreBreakdownText = `M15:${m15} | H1:${h1} | H4:${h4} - ${winningTf} won`;
+
+    // Enforce minimum 60 confluence rate: never generate or display new setups below 60 confluence
+    if (highestScore < 60) {
+      return {
+        ...makeBlockedResult(
+          'LOW_SCORE',
+          `Confluence ${highestScore}/100 below 60 minimum (${winningTf} M15:${m15} | H1:${h1} | H4:${h4})`
+        ),
+        winningTf,
+        highestScore,
+        m15Score: m15,
+        h1Score: h1,
+        h4Score: h4,
+        scoreBreakdownText,
+        isBuy: h4Filter.bias === 'BUY_ONLY',
+        confluenceBreakdown: winningRes.confluenceBreakdown
+      };
+    }
+    const isEligible = true;
     const winningSmc = detectSMCOnTimeframe(winningCandles, livePrice, h4Filter.bias === 'BUY_ONLY');
     const isBuy = h4Filter.bias === 'BUY_ONLY';
 
@@ -2023,7 +2039,7 @@ class SignalScannerService {
           isDemotedFromActive: isDemoted,
           demotionReason: isDemoted ? demotionReason : undefined,
           demotionAudit,
-          confluenceBreakdown: existing.confluenceBreakdown ?? evalRes.confluenceBreakdown
+          confluenceBreakdown: evalRes.confluenceBreakdown ?? existing.confluenceBreakdown
         });
       }
 
@@ -2114,10 +2130,37 @@ class SignalScannerService {
             strengthSnap
           });
           if (!evalCheck.isEligible && evalCheck.blockedStatus && evalCheck.blockedStatus !== 'NO_CANDLES' && evalCheck.blockedStatus !== 'NO_DATA') {
-            const penaltyScore = evalCheck.highestScore > 0 ? evalCheck.highestScore : 38;
+            const baseBd = evalCheck.confluenceBreakdown || activeSig.confluenceBreakdown;
+            let penaltyScore = evalCheck.highestScore > 0 ? evalCheck.highestScore : (activeSig.confluenceScore ?? 0);
+            let updatedBd = baseBd;
+
+            if (evalCheck.blockedStatus === 'LOW_SCORE' && evalCheck.highestScore > 0) {
+              penaltyScore = evalCheck.highestScore;
+              updatedBd = evalCheck.confluenceBreakdown ?? baseBd;
+            } else if (baseBd) {
+              const nextH4 = evalCheck.blockedStatus === 'NO_TRADE' ? 0 : baseBd.h4Score;
+              const nextStrength = evalCheck.blockedStatus === 'CONFLICT_BLOCKED' ? 0 : baseBd.strengthScore;
+              const recalcTotal = Math.max(
+                0,
+                Math.min(
+                  100,
+                  Math.round(nextH4 + baseBd.h1M15Score + nextStrength + baseBd.d1LiquidityScore + baseBd.atrSpreadScore - (baseBd.newsPenalty || 0))
+                )
+              );
+              penaltyScore = recalcTotal;
+              updatedBd = {
+                ...baseBd,
+                h4Score: nextH4,
+                strengthScore: nextStrength,
+                total: recalcTotal,
+                summaryText: `H4:${nextH4} + H1/M15:${baseBd.h1M15Score} + Strength:${nextStrength} + D1/Liq:${baseBd.d1LiquidityScore} + ATR:${baseBd.atrSpreadScore}${baseBd.newsPenalty > 0 ? ` - News:${baseBd.newsPenalty}` : ''} = ${recalcTotal}`
+              };
+            }
+
             refreshedActiveBySymbol.set(sym, {
               ...activeSig,
               confluenceScore: penaltyScore,
+              confluenceBreakdown: updatedBd,
               scoreBreakdownText: evalCheck.scoreBreakdownText,
               isBestTradeNow: false,
               isDemotedFromActive: true,
@@ -2125,10 +2168,10 @@ class SignalScannerService {
               demotionAudit: {
                 reason: evalCheck.blockedReason || 'Confluence invalidated by live H4/Currency filter',
                 actionableAdvice: 'Live trend or currency strength no longer supports this trade. Protect capital or tighten SL.',
-                verdict: 'STOP_IMMEDIATELY',
-                details: [evalCheck.scoreBreakdownText],
+                verdict: penaltyScore < 60 ? 'STOP_IMMEDIATELY' : 'WATCH_OUT',
+                details: [updatedBd?.summaryText || evalCheck.scoreBreakdownText],
                 demotedAtFormatted: `${String(new Date().getUTCHours()).padStart(2, '0')}:${String(new Date().getUTCMinutes()).padStart(2, '0')} UTC`,
-                triggerFactor: 'COUNTER_TREND'
+                triggerFactor: evalCheck.blockedStatus === 'LOW_SCORE' ? 'SCORE_DROP' : 'COUNTER_TREND'
               }
             });
           }

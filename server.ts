@@ -2278,17 +2278,28 @@ async function startServer() {
               const cleanIdSym = pair.symbol.replace(/[^A-Za-z0-9]/g, '');
               const id = `SIG-${cleanIdSym}-${strategy}-${winningTf}-${createdAtMs.toString(36).toUpperCase()}-S247`;
               const riskRewardLabel = `1:${rrRatio.toFixed(1)}`;
-              const summaryText = `H4:${h4Pts} + H1/M15:${h1M15Pts} + Strength:${strengthPts} + D1/Liq:${d1LiquidityPts} + ATR:${atrSpreadPts} = ${total}`;
+              const effectiveH4Pts = winningTf === 'H4' ? Math.round(h4Pts * 1.15) : h4Pts;
+              const effectiveH1M15Pts = winningTf === 'M15'
+                ? Math.round(m15Pts * 1.5) + h1Pts
+                : winningTf === 'H4'
+                ? h1Pts + Math.round(m15Pts * 0.6)
+                : h1M15Pts;
+              const effectiveAtrSpreadPts = atrSpreadPts + valueAdjustment;
+              const finalBreakdownTotal = Math.max(
+                0,
+                Math.min(100, Math.round(effectiveH4Pts + effectiveH1M15Pts + strengthPts + d1LiquidityPts + effectiveAtrSpreadPts))
+              );
+              const summaryText = `H4:${effectiveH4Pts} + H1/M15:${effectiveH1M15Pts} + Strength:${strengthPts} + D1/Liq:${d1LiquidityPts} + ATR:${effectiveAtrSpreadPts} = ${finalBreakdownTotal}`;
               const scoreBreakdownText = `H1:${h1ScoreVal} | M15:${m15ScoreVal} | H4:${h4ScoreVal}`;
 
               const confluenceBreakdown = {
-                h4Score: h4Pts,
-                h1M15Score: h1M15Pts,
+                h4Score: effectiveH4Pts,
+                h1M15Score: effectiveH1M15Pts,
                 strengthScore: strengthPts,
                 d1LiquidityScore: d1LiquidityPts,
-                atrSpreadScore: atrSpreadPts,
+                atrSpreadScore: effectiveAtrSpreadPts,
                 newsPenalty: 0,
-                total,
+                total: finalBreakdownTotal,
                 summaryText,
                 sources: {
                   h4Bars: sortedH4.length,
@@ -2360,7 +2371,7 @@ async function startServer() {
                 takeProfit: takeProfit1,
                 pips: isLimit ? 0 : srvCalcPips(pair.symbol, entryPrice, livePrice, isBuy),
                 riskReward: riskRewardLabel,
-                confluenceScore: highestScore,
+                confluenceScore: finalBreakdownTotal,
                 confluenceBreakdown,
                 rationale: `[24/7 SERVER SCAN] H4 EMA Lock (${h4Filter.bias}): Price ${srvFormatPrice(pair.pipDigits, livePrice)} vs EMA9 (${h4Filter.ema9.toFixed(pair.pipDigits)}) / EMA50 (${h4Filter.ema50.toFixed(pair.pipDigits)}). ${swingEval.zoneLabel} (${swingEval.rangePosPct}% range${h1Rsi !== null ? `, RSI ${h1Rsi}` : ''}). ${summaryText}.`,
                 timeframe: winningTf,

@@ -113,11 +113,9 @@ interface Props {
     blocked: { pairSymbol: string; status: string; reason: string }[];
     lastScanAtMs?: number;
   };
-  confluenceFilter?: 'ALL' | 'BELOW_60' | '60_PLUS' | '70_PLUS' | '80_PLUS';
-  onConfluenceFilterSelect?: (val: 'ALL' | 'BELOW_60' | '60_PLUS' | '70_PLUS' | '80_PLUS') => void;
+  confluenceFilter?: '60_PLUS' | '70_PLUS' | '80_PLUS';
+  onConfluenceFilterSelect?: (val: '60_PLUS' | '70_PLUS' | '80_PLUS') => void;
   confluenceCounts?: {
-    all: number;
-    below60: number;
     plus60: number;
     plus70: number;
     plus80: number;
@@ -179,7 +177,7 @@ export const SignalsScreen: React.FC<Props> = ({
   onCloseTrade,
   onClearCooldown,
   scannerStatus,
-  confluenceFilter = 'ALL',
+  confluenceFilter = '60_PLUS',
   onConfluenceFilterSelect,
   confluenceCounts
 }) => {
@@ -193,8 +191,8 @@ export const SignalsScreen: React.FC<Props> = ({
   const [isHiddenConflictsExpanded, setIsHiddenConflictsExpanded] = useState<boolean>(false);
   const [acknowledgedConflictIds, setAcknowledgedConflictIds] = useState<Record<string, boolean>>({});
 
-  // Strictly active, tradeable, non-expired, and non-invalidated signals
-  const activeSignals = signals.filter(s => isSignalValidAndActive(s, nowClockMs));
+  // Strictly active, tradeable, non-expired, and non-invalidated signals (>= 60 confluence)
+  const activeSignals = signals.filter(s => isSignalValidAndActive(s, nowClockMs) && (s.confluenceScore ?? 0) >= 60);
   const isAPlusNonRepeated = selectedFilter === 'A_PLUS_NON_REPEATED';
   const bestTrade = isAPlusNonRepeated
     ? (filteredSignals[0] || activeSignals.find(s => s.isBestTradeNow) || activeSignals[0])
@@ -494,9 +492,9 @@ export const SignalsScreen: React.FC<Props> = ({
   // Asset Class Category Tabs for Signals Feed (Micro-Account Focused: 0.01 Lot Friendly)
   const assetCategoryTabs = [
     { key: 'ALL', label: 'All Assets', count: activeSignals.length, icon: '🌐' },
-    { key: 'MAJORS', label: 'Majors', count: signals.filter(s => isSignalValidAndActive(s, nowClockMs) && getAssetCategory(s.pair.symbol) === 'MAJORS').length, icon: '🏛️' },
-    { key: 'MINORS', label: 'Crosses', count: signals.filter(s => isSignalValidAndActive(s, nowClockMs) && getAssetCategory(s.pair.symbol) === 'MINORS').length, icon: '🔀' },
-    { key: 'METALS', label: 'Metals', count: signals.filter(s => isSignalValidAndActive(s, nowClockMs) && getAssetCategory(s.pair.symbol) === 'METALS').length, icon: '🥇' },
+    { key: 'MAJORS', label: 'Majors', count: activeSignals.filter(s => getAssetCategory(s.pair.symbol) === 'MAJORS').length, icon: '🏛️' },
+    { key: 'MINORS', label: 'Crosses', count: activeSignals.filter(s => getAssetCategory(s.pair.symbol) === 'MINORS').length, icon: '🔀' },
+    { key: 'METALS', label: 'Metals', count: activeSignals.filter(s => getAssetCategory(s.pair.symbol) === 'METALS').length, icon: '🥇' },
   ];
 
   // Execution & Strategy Tabs
@@ -1388,7 +1386,7 @@ export const SignalsScreen: React.FC<Props> = ({
               })}
             </div>
 
-            {/* Row 4: Confluence Score Filter Buttons (All, 60+, 70+, 80+, <60) */}
+            {/* Row 4: Confluence Score Filter Buttons (60+, 70+, 80+) */}
             {selectedFilter !== 'HISTORY' && onConfluenceFilterSelect && (
               <div className="flex items-center justify-between gap-1.5 pt-1.5 border-t border-[#222F47]/60 flex-wrap">
                 <span className="text-[9.5px] font-bold text-[#94A3B8] uppercase tracking-wider shrink-0">
@@ -1396,11 +1394,9 @@ export const SignalsScreen: React.FC<Props> = ({
                 </span>
                 <div className="flex items-center gap-1 flex-wrap">
                   {[
-                    { key: 'ALL' as const, label: 'All', count: confluenceCounts?.all },
                     { key: '60_PLUS' as const, label: '60+', count: confluenceCounts?.plus60 },
                     { key: '70_PLUS' as const, label: '70+', count: confluenceCounts?.plus70 },
-                    { key: '80_PLUS' as const, label: '80+', count: confluenceCounts?.plus80 },
-                    { key: 'BELOW_60' as const, label: '<60', count: confluenceCounts?.below60 }
+                    { key: '80_PLUS' as const, label: '80+', count: confluenceCounts?.plus80 }
                   ].map(btn => {
                     const isActive = confluenceFilter === btn.key;
                     const activeColors =
@@ -1408,11 +1404,7 @@ export const SignalsScreen: React.FC<Props> = ({
                         ? 'bg-[#00E676] border-[#00E676] text-[#080B11] font-black shadow-xs'
                         : btn.key === '70_PLUS'
                         ? 'bg-[#2979FF] border-[#2979FF] text-white font-black shadow-xs'
-                        : btn.key === '60_PLUS'
-                        ? 'bg-[#FFD700] border-[#FFD700] text-[#080B11] font-black shadow-xs'
-                        : btn.key === 'BELOW_60'
-                        ? 'bg-[#FF9100] border-[#FF9100] text-[#080B11] font-black shadow-xs'
-                        : 'bg-[#F1F5F9] border-[#F1F5F9] text-[#080B11] font-black shadow-xs';
+                        : 'bg-[#FFD700] border-[#FFD700] text-[#080B11] font-black shadow-xs';
                     return (
                       <button
                         key={btn.key}

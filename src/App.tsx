@@ -246,7 +246,7 @@ export const App: React.FC = () => {
   };
 
   const [selectedFilter, setSelectedFilter] = useState<string>('ALL');
-  const [confluenceFilter, setConfluenceFilter] = useState<'ALL' | 'BELOW_60' | '60_PLUS' | '70_PLUS' | '80_PLUS'>('ALL');
+  const [confluenceFilter, setConfluenceFilter] = useState<'60_PLUS' | '70_PLUS' | '80_PLUS'>('60_PLUS');
 
   const handleFilterSelect = (filter: string) => {
     setSelectedFilter(filter);
@@ -262,14 +262,8 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleConfluenceFilterSelect = (nextConf: 'ALL' | 'BELOW_60' | '60_PLUS' | '70_PLUS' | '80_PLUS') => {
+  const handleConfluenceFilterSelect = (nextConf: '60_PLUS' | '70_PLUS' | '80_PLUS') => {
     setConfluenceFilter(nextConf);
-    if (
-      nextConf === 'BELOW_60' &&
-      (selectedFilter === 'VIP' || selectedFilter === 'ALL_ACTIVE' || selectedFilter === 'A_PLUS_NON_REPEATED' || selectedFilter === 'RUNNING')
-    ) {
-      setSelectedFilter('ALL');
-    }
   };
 
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -1853,11 +1847,10 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       ? tierFilteredSignals
       : tierFilteredSignals.filter(sig => {
           const score = sig.confluenceScore ?? 0;
-          if (confluenceFilter === 'BELOW_60') return score < 60;
-          if (confluenceFilter === '60_PLUS') return score >= 60;
+          if (score < 60) return false;
           if (confluenceFilter === '70_PLUS') return score >= 70;
           if (confluenceFilter === '80_PLUS') return score >= 80;
-          return true;
+          return score >= 60;
         });
 
     // 4. Standard sorting for other sort options
@@ -1905,6 +1898,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       if (selectedFilter === 'VIP' && (sig.confluenceScore < 85 || sig.isDemotedFromActive)) continue;
       if (searchQuery.trim() && !matchesSignalSearch(sig, searchQuery)) continue;
 
+      if ((sig.confluenceScore ?? 0) < 60) continue;
       const existing = seenPairs.get(sig.pair.symbol);
       if (!existing || sig.confluenceScore > existing.confluenceScore) {
         seenPairs.set(sig.pair.symbol, sig);
@@ -1912,8 +1906,6 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
     }
     const list = Array.from(seenPairs.values());
     return {
-      all: list.length,
-      below60: list.filter(s => (s.confluenceScore ?? 0) < 60).length,
       plus60: list.filter(s => (s.confluenceScore ?? 0) >= 60).length,
       plus70: list.filter(s => (s.confluenceScore ?? 0) >= 70).length,
       plus80: list.filter(s => (s.confluenceScore ?? 0) >= 80).length
