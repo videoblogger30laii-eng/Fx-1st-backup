@@ -1972,6 +1972,22 @@ async function startServer() {
     let evaluatedCount = 0;
 
     try {
+      const utcHour = new Date().getUTCHours();
+      if (utcHour >= 21 && utcHour < 23) {
+        lastBackgroundScanAt = Date.now();
+        lastBackgroundScanNewCount = 0;
+        lastBackgroundScanStatus = 'Paused during 21:00–23:00 UTC rollover spread window';
+        return {
+          scannedAt: lastBackgroundScanAt,
+          marketOpen: true,
+          newlyFormedCount: 0,
+          newlyFormed: [],
+          activeSignalsCount: Object.values(serverSignalsStore).filter((s: any) => s.status === 'RUNNING' || s.status === 'PENDING').length,
+          evaluatedCount: 0,
+          status: lastBackgroundScanStatus
+        };
+      }
+
       const strengthSnap = await fetchServerLiveMarketSnapshot();
       if (!strengthSnap.hasLiveData) {
         lastBackgroundScanAt = Date.now();
@@ -1993,6 +2009,13 @@ async function startServer() {
         (s: any) => s && (s.status === 'RUNNING' || s.status === 'PENDING')
       );
       const activeSymbolsSet = new Set(currentActiveSignals.map((s: any) => String(s.pair?.symbol || '').toUpperCase()));
+
+      // Enforce 60-minute post-SL cooldown per pair so server never revenge-trades a recent stop-out
+      const recentSlPairsSet = new Set(
+        Object.values(serverSignalsStore)
+          .filter((s: any) => s && s.status === 'HIT_SL' && now - Number(s.closedAtMs || 0) < 60 * 60 * 1000)
+          .map((s: any) => String(s.pair?.symbol || '').toUpperCase())
+      );
 
       // Clean stale server STANDBY signals > 15m old
       Object.entries(serverSignalsStore).forEach(([id, s]: [string, any]) => {
@@ -2016,9 +2039,12 @@ async function startServer() {
         }
       });
 
-      // Stage 1: Evaluate H4 9/50 EMA + 24h Currency Strength across ALL 30 pairs without an active trade
+      // Stage 1: Evaluate H4 9/50 EMA + 24h Currency Strength across ALL 30 pairs without an active trade or SL cooldown
       // Only pairs passing Stage 1 proceed to fetch H1/M15/D1 (keeps Yahoo rate limits clean across all 30 pairs)
-      const candidates = SERVER_SCAN_PAIRS.filter(p => !activeSymbolsSet.has(p.symbol.toUpperCase()));
+      const candidates = SERVER_SCAN_PAIRS.filter(p => {
+        const symUpper = p.symbol.toUpperCase();
+        return !activeSymbolsSet.has(symUpper) && !recentSlPairsSet.has(symUpper);
+      });
       const stage2Candidates: Array<{
         pair: ServerPairSpec;
         livePrice: number;
@@ -2058,6 +2084,24 @@ async function startServer() {
       }
 
       // Stage 2: Fetch H1/M15/D1 & evaluate full MTF confluence + Anti-Chase Guard for qualified pairs
+      const qualifiedCandidates: Array<{
+        signalObj: any;
+        baseKey: string;
+        quoteKey: string;
+        finalScore: number;
+        winningTf: 'M15' | 'H1' | 'H4';
+        signalType: string;
+        entryPrice: number;
+        stopLoss: number;
+        takeProfit1: number;
+        riskRewardLabel: string;
+        zoneLabel: string;
+        rangePosPct: number;
+        summaryText: string;
+        pipDigits: number;
+        pairSymbol: string;
+      }> = [];
+
       for (let i = 0; i < stage2Candidates.length; i += 3) {
         const batch = stage2Candidates.slice(i, i + 3);
         await Promise.all(
@@ -2085,7 +2129,20 @@ async function startServer() {
               const h1Atr = srvCalcAtr(sortedH1, 14) || h4Atr * 0.55;
               const h1Rsi = srvCalcRsi(sortedH1, 14);
               const m15Rsi = srvCalcRsi(sortedM15, 14);
+              const h4Adx = srvCalcAdx(sortedH4, 14);
               const h1Adx = srvCalcAdx(sortedH1, 14);
+
+              // Hard DI/ADX trend strength gates (avoid choppy whipsaw markets)
+              if (h4Adx) {
+                const h4DiOk = isBuy ? h4Adx.plusDi > h4Adx.minusDi : h4Adx.minusDi > h4Adx.plusDi;
+                if (h4Adx.adx < 16 || !h4DiOk) return;
+              }
+              if (h1Adx) {
+                const h1DiOk = isBuy ? h1Adx.plusDi > h1Adx.minusDi : h1Adx.minusDi > h1Adx.plusDi;
+                if (h1Adx.adx < 18 || !h1DiOk) return;
+              }
+              // Avoid entering exhausted RSI extremes
+              if (h1Rsi !== null && ((isBuy && h1Rsi > 68) || (!isBuy && h1Rsi < 32))) return;
 
               // 1. Real H4 Trend Score (0-25)
               let h4Pts = 15;
@@ -2122,6 +2179,9 @@ async function startServer() {
               }
               h1Pts = Math.min(15, h1Pts);
 
+              // Require H1 trend alignment (never fight H1 structure)
+              if (!h1Aligned) return;
+
               let m15Pts = 0;
               let m15Aligned = false;
               if (sortedM15.length >= 22) {
@@ -2147,7 +2207,7 @@ async function startServer() {
               // 3. Live 24h Currency Strength Divergence (0-20)
               const strengthPts = Math.min(20, Math.max(0, Math.round(10 + conflict.directionalDelta * 2.5)));
 
-              // 4. Real D1 Trend + PDH/PDL Liquidity Sweep (0-15)
+              // 4. Real D1 Trend + PDH/PDL Liquidity Sweep (-12 to +15)
               let d1Pts = 0;
               let d1Aligned = false;
               let liqPts = 0;
@@ -2159,12 +2219,20 @@ async function startServer() {
               let d1MacroTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
 
               if (sortedD1.length >= 22) {
-                const d1Ema20 = srvCalcEma(sortedD1.map(c => c.close), 20);
+                const d1Closes = sortedD1.map(c => c.close);
+                const d1Ema20 = srvCalcEma(d1Closes, 20);
+                const d1Ema50 = sortedD1.length >= 50 ? srvCalcEma(d1Closes, 50) : null;
                 if (d1Ema20 !== null) {
                   d1MacroTrend = livePrice > d1Ema20 ? 'BULLISH' : livePrice < d1Ema20 ? 'BEARISH' : 'NEUTRAL';
-                  if ((isBuy && livePrice > d1Ema20) || (!isBuy && livePrice < d1Ema20)) {
+                  const fullCounterD1 = d1Ema50 !== null
+                    ? (isBuy ? (livePrice < d1Ema20 && livePrice < d1Ema50) : (livePrice > d1Ema20 && livePrice > d1Ema50))
+                    : (isBuy ? livePrice < d1Ema20 : livePrice > d1Ema20);
+                  if ((isBuy && livePrice > d1Ema20 && (d1Ema50 === null || livePrice > d1Ema50)) || (!isBuy && livePrice < d1Ema20 && (d1Ema50 === null || livePrice < d1Ema50))) {
                     d1Pts = 8;
                     d1Aligned = true;
+                  } else if (fullCounterD1) {
+                    d1Pts = -12;
+                    d1Aligned = false;
                   } else {
                     const lastD1 = sortedD1[sortedD1.length - 1];
                     d1Pts = (isBuy ? lastD1.close > lastD1.open : lastD1.close < lastD1.open) ? 3 : 0;
@@ -2215,35 +2283,42 @@ async function startServer() {
                 ? (swingEval.isExtremeChase ? -22 : swingEval.isChasingZone ? -14 : swingEval.isInValueZone ? 4 : 0)
                 : 0;
 
-              const rawTotal = h4Pts + h1M15Pts + strengthPts + d1LiquidityPts + atrSpreadPts + valueAdjustment;
-              const total = Math.max(0, Math.min(100, Math.round(rawTotal)));
-
-              // Compute per-TF scores & choose winning TF (H1 -> M15 -> H4 tie-breaker)
+              // Compute per-TF scores WITHOUT artificial 1.5x M15 boost; prioritize proven H1 & H4 setups
               const sharedOther = strengthPts + d1LiquidityPts + atrSpreadPts + valueAdjustment;
               const h1ScoreVal = Math.max(0, Math.min(100, h4Pts + h1Pts + m15Pts + sharedOther));
-              const m15ScoreVal = Math.max(0, Math.min(100, h4Pts + Math.round(m15Pts * 1.5) + h1Pts + sharedOther));
-              const h4ScoreVal = Math.max(0, Math.min(100, Math.round(h4Pts * 1.15) + h1Pts + Math.round(m15Pts * 0.6) + sharedOther));
+              const h4ScoreVal = Math.max(0, Math.min(100, Math.round(h4Pts * 1.15) + h1Pts + Math.round(m15Pts * 0.5) + sharedOther));
+              const m15RsiHealthy = m15Rsi === null || (m15Rsi >= 38 && m15Rsi <= 62);
+              const m15Qualified = Boolean(h1Aligned && m15Aligned && d1Aligned && m15RsiHealthy && h1Adx && h1Adx.adx >= 22);
+              const m15ScoreVal = m15Qualified
+                ? Math.max(0, Math.min(100, h4Pts + h1Pts + m15Pts + sharedOther))
+                : 0;
+
               let winningTf: 'M15' | 'H1' | 'H4' = 'H1';
-              if (h1ScoreVal >= m15ScoreVal && h1ScoreVal >= h4ScoreVal) winningTf = 'H1';
-              else if (m15ScoreVal >= h4ScoreVal) winningTf = 'M15';
-              else winningTf = 'H4';
+              if (h1ScoreVal >= h4ScoreVal && h1ScoreVal >= m15ScoreVal) winningTf = 'H1';
+              else if (h4ScoreVal >= m15ScoreVal) winningTf = 'H4';
+              else winningTf = 'M15';
 
-              const highestScore = Math.max(total, winningTf === 'H1' ? h1ScoreVal : winningTf === 'M15' ? m15ScoreVal : h4ScoreVal);
+              const effectiveH4Pts = winningTf === 'H4' ? Math.round(h4Pts * 1.15) : h4Pts;
+              const effectiveH1M15Pts = winningTf === 'H4'
+                ? h1Pts + Math.round(m15Pts * 0.5)
+                : h1M15Pts;
+              const effectiveAtrSpreadPts = atrSpreadPts + valueAdjustment;
+              const finalBreakdownTotal = Math.max(
+                0,
+                Math.min(100, Math.round(effectiveH4Pts + effectiveH1M15Pts + strengthPts + d1LiquidityPts + effectiveAtrSpreadPts))
+              );
 
-              // Strict real-signal gate: Score >= 76 AND NOT chasing highs/lows
-              if (highestScore < 76 || swingEval.isChasingZone || swingEval.isExtremeChase) return;
-
-              // Check ADX if available on H1 (avoid dead flat chop)
-              if (h1Adx && h1Adx.adx < 16) return;
+              // Strict institutional gate: Score >= 76 AND NOT chasing highs/lows
+              if (finalBreakdownTotal < 76 || swingEval.isChasingZone || swingEval.isExtremeChase) return;
 
               const isGold = pair.symbol.includes('XAU');
               const slPips = winningTf === 'M15'
-                ? Math.min(isGold ? 50 : 28, Math.max(isGold ? 28 : 16, Math.round(atrPips * 0.9)))
+                ? Math.min(isGold ? 60 : 34, Math.max(isGold ? 36 : 22, Math.round(atrPips * 1.15)))
                 : winningTf === 'H1'
-                ? Math.min(isGold ? 75 : 42, Math.max(isGold ? 42 : 24, Math.round(atrPips * 1.1)))
-                : Math.min(isGold ? 110 : 62, Math.max(isGold ? 60 : 34, Math.round(atrPips * 1.3)));
+                ? Math.min(isGold ? 85 : 48, Math.max(isGold ? 46 : 28, Math.round(atrPips * 1.25)))
+                : Math.min(isGold ? 120 : 72, Math.max(isGold ? 65 : 38, Math.round(atrPips * 1.4)));
 
-              const rrRatio = winningTf === 'M15' ? 2.0 : winningTf === 'H1' ? 2.5 : 3.0;
+              const rrRatio = winningTf === 'M15' ? 1.8 : winningTf === 'H1' ? 2.0 : 2.5;
               const tp1Pips = Math.round(slPips * rrRatio * 10) / 10;
               const tp2Pips = Math.round(tp1Pips * 1.5 * 10) / 10;
               const tp3Pips = Math.round(tp1Pips * 2.0 * 10) / 10;
@@ -2278,17 +2353,6 @@ async function startServer() {
               const cleanIdSym = pair.symbol.replace(/[^A-Za-z0-9]/g, '');
               const id = `SIG-${cleanIdSym}-${strategy}-${winningTf}-${createdAtMs.toString(36).toUpperCase()}-S247`;
               const riskRewardLabel = `1:${rrRatio.toFixed(1)}`;
-              const effectiveH4Pts = winningTf === 'H4' ? Math.round(h4Pts * 1.15) : h4Pts;
-              const effectiveH1M15Pts = winningTf === 'M15'
-                ? Math.round(m15Pts * 1.5) + h1Pts
-                : winningTf === 'H4'
-                ? h1Pts + Math.round(m15Pts * 0.6)
-                : h1M15Pts;
-              const effectiveAtrSpreadPts = atrSpreadPts + valueAdjustment;
-              const finalBreakdownTotal = Math.max(
-                0,
-                Math.min(100, Math.round(effectiveH4Pts + effectiveH1M15Pts + strengthPts + d1LiquidityPts + effectiveAtrSpreadPts))
-              );
               const summaryText = `H4:${effectiveH4Pts} + H1/M15:${effectiveH1M15Pts} + Strength:${strengthPts} + D1/Liq:${d1LiquidityPts} + ATR:${effectiveAtrSpreadPts} = ${finalBreakdownTotal}`;
               const scoreBreakdownText = `H1:${h1ScoreVal} | M15:${m15ScoreVal} | H4:${h4ScoreVal}`;
 
@@ -2338,7 +2402,7 @@ async function startServer() {
                 weakestCurrency: strengthSnap.weakestCurrency,
                 currencyScoresSnapshot,
                 winPct: null,
-                grade: highestScore >= 85 ? 'A+' : highestScore >= 78 ? 'A' : 'B',
+                grade: finalBreakdownTotal >= 85 ? 'A+' : finalBreakdownTotal >= 78 ? 'A' : 'B',
                 winPctSource: '24/7 Server Real MTF Scan',
                 backtestTradeCount: 0,
                 conflictCheckPassed: true,
@@ -2386,7 +2450,7 @@ async function startServer() {
                 },
                 timestamp: '24/7 Server Scan',
                 institutionalFlow: `${strategy} [${winningTf}] • 24/7 Server MTF Scan`,
-                isBestTradeNow: highestScore >= 82,
+                isBestTradeNow: finalBreakdownTotal >= 82,
                 isPending: isLimit,
                 isFavorite: pair.symbol === 'XAU/USD' || pair.symbol === 'EUR/USD',
                 hasAlert: false,
@@ -2418,8 +2482,8 @@ async function startServer() {
                   }
                 ],
                 killzone: '24/7 Continuous Cloud Session',
-                winProbability: highestScore >= 85 ? 72 : 66,
-                quality: highestScore >= 85 ? 'A+' : highestScore >= 78 ? 'A' : 'B',
+                winProbability: finalBreakdownTotal >= 85 ? 72 : 66,
+                quality: finalBreakdownTotal >= 85 ? 'A+' : finalBreakdownTotal >= 78 ? 'A' : 'B',
                 winPctSource: '24/7 Server Real MTF Scan',
                 backtestTradeCount: 0,
                 generationAudit,
@@ -2445,35 +2509,63 @@ async function startServer() {
                 lastSyncedAt: createdAtMs
               };
 
-              serverSignalsStore[id] = signalObj;
-              newlyFormed.push(signalObj);
-              dirExposureCounts[baseKey] = (dirExposureCounts[baseKey] || 0) + 1;
-              dirExposureCounts[quoteKey] = (dirExposureCounts[quoteKey] || 0) + 1;
-
-              console.log(`[24/7 Background Scanner] Formed ${pair.symbol} ${signalType} (${winningTf}, Confluence ${highestScore}/100, Range ${swingEval.rangePosPct}%)`);
-
-              if (!serverSentTelegramIds.has(id) && serverTelegramConfig.enabled && serverTelegramConfig.botToken && serverTelegramConfig.chatId) {
-                serverSentTelegramIds.add(id);
-                const msg =
-                  `🚀 *[24/7 CLOSED-APP SCAN]* *NEW SIGNAL FORMED!*\n\n` +
-                  `📊 *Pair:* ${pair.symbol} (${signalType.replace('_', ' ')})\n` +
-                  `⏱ *Timeframe:* ${winningTf} • *Confluence:* ${highestScore}/100\n` +
-                  `📍 *Entry:* ${srvFormatPrice(pair.pipDigits, entryPrice)}\n` +
-                  `🛑 *SL:* ${srvFormatPrice(pair.pipDigits, stopLoss)}\n` +
-                  `🎯 *TP1:* ${srvFormatPrice(pair.pipDigits, takeProfit1)} (${riskRewardLabel})\n` +
-                  `📈 *Zone:* ${swingEval.zoneLabel} (${swingEval.rangePosPct}% range)\n` +
-                  `🧩 *Breakdown:* ${summaryText}`;
-                fetch(`https://api.telegram.org/bot${serverTelegramConfig.botToken}/sendMessage`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ chat_id: serverTelegramConfig.chatId, text: msg, parse_mode: 'Markdown' })
-                }).catch(() => {});
-              }
+              qualifiedCandidates.push({
+                signalObj,
+                baseKey,
+                quoteKey,
+                finalScore: finalBreakdownTotal,
+                winningTf,
+                signalType,
+                entryPrice,
+                stopLoss,
+                takeProfit1,
+                riskRewardLabel,
+                zoneLabel: swingEval.zoneLabel,
+                rangePosPct: swingEval.rangePosPct,
+                summaryText,
+                pipDigits: pair.pipDigits,
+                pairSymbol: pair.symbol
+              });
             } catch (pairErr) {
               console.warn(`[24/7 Background Scanner] Pair ${pair.symbol} eval failed:`, pairErr);
             }
           })
         );
+      }
+
+      // Rank candidates highest-confluence first and strictly enforce currency correlation cap (max 2 per currency direction, max 3 new signals per scan)
+      qualifiedCandidates.sort((a, b) => b.finalScore - a.finalScore);
+      for (const cand of qualifiedCandidates) {
+        if (newlyFormed.length >= 3) break;
+        if ((dirExposureCounts[cand.baseKey] || 0) >= 2 || (dirExposureCounts[cand.quoteKey] || 0) >= 2) {
+          continue;
+        }
+
+        const { signalObj } = cand;
+        serverSignalsStore[signalObj.id] = signalObj;
+        newlyFormed.push(signalObj);
+        dirExposureCounts[cand.baseKey] = (dirExposureCounts[cand.baseKey] || 0) + 1;
+        dirExposureCounts[cand.quoteKey] = (dirExposureCounts[cand.quoteKey] || 0) + 1;
+
+        console.log(`[24/7 Background Scanner] Formed ${cand.pairSymbol} ${cand.signalType} (${cand.winningTf}, Confluence ${cand.finalScore}/100, Range ${cand.rangePosPct}%)`);
+
+        if (!serverSentTelegramIds.has(signalObj.id) && serverTelegramConfig.enabled && serverTelegramConfig.botToken && serverTelegramConfig.chatId) {
+          serverSentTelegramIds.add(signalObj.id);
+          const msg =
+            `🚀 *[24/7 CLOSED-APP SCAN]* *NEW SIGNAL FORMED!*\n\n` +
+            `📊 *Pair:* ${cand.pairSymbol} (${cand.signalType.replace('_', ' ')})\n` +
+            `⏱ *Timeframe:* ${cand.winningTf} • *Confluence:* ${cand.finalScore}/100\n` +
+            `📍 *Entry:* ${srvFormatPrice(cand.pipDigits, cand.entryPrice)}\n` +
+            `🛑 *SL:* ${srvFormatPrice(cand.pipDigits, cand.stopLoss)}\n` +
+            `🎯 *TP1:* ${srvFormatPrice(cand.pipDigits, cand.takeProfit1)} (${cand.riskRewardLabel})\n` +
+            `📈 *Zone:* ${cand.zoneLabel} (${cand.rangePosPct}% range)\n` +
+            `🧩 *Breakdown:* ${cand.summaryText}`;
+          fetch(`https://api.telegram.org/bot${serverTelegramConfig.botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: serverTelegramConfig.chatId, text: msg, parse_mode: 'Markdown' })
+          }).catch(() => {});
+        }
       }
 
       if (newlyFormed.length > 0) {
