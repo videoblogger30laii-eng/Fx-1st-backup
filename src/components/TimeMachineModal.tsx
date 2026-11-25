@@ -375,7 +375,10 @@ export const TimeMachineModal: React.FC<Props> = ({
   const gradeBadgeText = backtestStats.grade === 'A_PLUS' ? 'A+' : backtestStats.grade;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+    <div
+      onClick={(e) => e.stopPropagation()}
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+    >
       <div className="relative w-full max-w-4xl max-h-[94vh] flex flex-col bg-[#0B0F19] border border-[#222F47] rounded-2xl shadow-2xl overflow-hidden">
 
         {/* Top Header */}
@@ -418,7 +421,11 @@ export const TimeMachineModal: React.FC<Props> = ({
           </div>
 
           <button
-            onClick={onClose}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
             className="p-2 rounded-xl text-[#94A3B8] hover:text-[#F8FAFC] hover:bg-[#1E293B] transition-colors cursor-pointer"
             title="Close Time Machine"
           >
@@ -429,7 +436,11 @@ export const TimeMachineModal: React.FC<Props> = ({
         {/* Tab Switcher */}
         <div className="flex items-center gap-1 px-4 py-2 bg-[#0E1524] border-b border-[#1E293B] text-xs font-bold overflow-x-auto">
           <button
-            onClick={() => setActiveTab('REPLAY')}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveTab('REPLAY');
+            }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'REPLAY'
                 ? 'bg-[#8B5CF6]/25 text-[#A78BFA] border border-[#8B5CF6]/50 shadow-sm'
@@ -441,7 +452,11 @@ export const TimeMachineModal: React.FC<Props> = ({
           </button>
 
           <button
-            onClick={() => setActiveTab('BACKTEST_STATS')}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveTab('BACKTEST_STATS');
+            }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'BACKTEST_STATS'
                 ? 'bg-[#8B5CF6]/25 text-[#A78BFA] border border-[#8B5CF6]/50 shadow-sm'
@@ -453,7 +468,11 @@ export const TimeMachineModal: React.FC<Props> = ({
           </button>
 
           <button
-            onClick={() => setActiveTab('HISTORICAL_MATCHES')}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveTab('HISTORICAL_MATCHES');
+            }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'HISTORICAL_MATCHES'
                 ? 'bg-[#8B5CF6]/25 text-[#A78BFA] border border-[#8B5CF6]/50 shadow-sm'

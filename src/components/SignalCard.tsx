@@ -1,14 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ForexSignal, getAssetCategory, getSignalStrategy, STRATEGY_CONFIGS, isMarketExecutionSignal } from '../types';
+import { ForexSignal, getSignalStrategy, STRATEGY_CONFIGS, isMarketExecutionSignal } from '../types';
 import {
   formatPrice,
   calculatePips,
   getFormattedCountdown,
-  isSignalValidAndActive,
   getRemainingValidityMs,
   getFormattedTimeElapsed,
   getFormattedClosedTime,
-  getFormattedTotalValidity,
   getValidityProgress,
   getTpProgressRatio,
   getTradeDurationMs,
@@ -47,10 +45,11 @@ import {
   Zap,
   Flame,
   AlertTriangle,
-  Trophy,
   ShieldCheck,
   Info,
-  X
+  X,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 
 interface Props {
@@ -96,16 +95,17 @@ export const SignalCard: React.FC<Props> = ({
 }) => {
   const marketOpen = typeof isMarketOpen === 'boolean' ? isMarketOpen : isForexMarketOpen(new Date(nowClockMs));
   const [copied, setCopied] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
+  const [isDemotionModalOpen, setIsDemotionModalOpen] = useState(false);
+  const [isTimeMachineOpen, setIsTimeMachineOpen] = useState(false);
+
   const isBuy = signal.type.startsWith('BUY');
   const isStandby = signal.status === 'STANDBY';
   const isPending = (signal.status === 'PENDING' || signal.isPending) && !isStandby;
   const isTimeExpired = isPending && getRemainingValidityMs(signal, nowClockMs) <= 0;
-  const isClosed = (signal.status === 'HIT_TP' || signal.status === 'HIT_SL' || isTimeExpired) && !isStandby;
   const countdown = getFormattedCountdown(signal, nowClockMs);
   const newsGuard = economicCalendarService.getNewsGuard(signal.pair.symbol);
-  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
-  const [isDemotionModalOpen, setIsDemotionModalOpen] = useState(false);
-  const [isTimeMachineOpen, setIsTimeMachineOpen] = useState(false);
   const isParamChanged = isSignalChangedOrRecalculated(signal);
   const paramAudit = isParamChanged ? getSignalParameterAudit(signal) : null;
 
@@ -116,7 +116,7 @@ export const SignalCard: React.FC<Props> = ({
   });
   const [flashDir, setFlashDir] = useState<'up' | 'down' | null>(null);
   const prevPriceRef = useRef<number>(livePrice);
-  const flashTimerRef = useRef<any>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     prevPriceRef.current = livePrice;
@@ -149,7 +149,6 @@ export const SignalCard: React.FC<Props> = ({
     };
   }, [signal.pair.symbol]);
 
-  // Calculate live floating pips from real price
   const livePips = calculatePips(signal.pair, signal.entryPrice, livePrice, isBuy);
   const isProfit = livePips >= 0;
 
@@ -173,7 +172,6 @@ export const SignalCard: React.FC<Props> = ({
 
   const stratKey = getSignalStrategy(signal);
   const stratCfg = STRATEGY_CONFIGS[stratKey];
-  const assetCat = getAssetCategory(signal.pair.symbol);
   const slPips = Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.stopLoss, isBuy));
   const tp1Pips = Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.takeProfit1, isBuy));
   const tpRatio = Math.round(getTpProgressRatio(signal, livePrice) * 100);
@@ -192,328 +190,241 @@ export const SignalCard: React.FC<Props> = ({
     !isClosedOrder &&
     Boolean(conflictInfo?.isConflict);
 
+  const cardTf = (signal.winningTf || signal.timeframe || 'M15').toUpperCase();
+  const beThresholdPct = cardTf === 'H4' || cardTf === 'D1' ? 30 : 45;
+  const isBreakevenActive = (signal.isBreakevenArmed || (signal.status === 'RUNNING' && tpRatio >= beThresholdPct)) && !isClosedOrder;
+
+  const scoreColorClass =
+    signal.confluenceScore >= 80
+      ? 'text-[#00E676]'
+      : signal.confluenceScore >= 70
+      ? 'text-[#60A5FA]'
+      : signal.confluenceScore >= 60
+      ? 'text-[#FFD700]'
+      : 'text-[#FF9100]';
+
+  const gradeLabel = signal.quality === 'A_PLUS' ? 'A+' : (signal.quality || 'C');
+  const hasDiagnosticsNotes = Boolean(
+    (signal.slLearningAudit && signal.slLearningAudit.applied && !isClosedOrder) ||
+    signal.tfUpdateNotice ||
+    executedAtMs ||
+    signal.correlationExposureTag ||
+    signal.isCorrelationBlocked
+  );
+
   return (
     <div
       onClick={() => {
-        if (isClosedOrder) {
-          if (onOpenOutcomeAnalysis) {
-            onOpenOutcomeAnalysis(signal);
-          } else {
-            onClick();
-          }
+        if (isClosedOrder && onOpenOutcomeAnalysis) {
+          onOpenOutcomeAnalysis(signal);
         } else {
           onClick();
         }
       }}
-      className={`p-3.5 rounded-xl transition-all cursor-pointer border shadow-md ${
+      className={`p-3.5 rounded-2xl transition-all cursor-pointer border shadow-md space-y-2.5 ${
         isWarningConflictCard
           ? `${
-              isConflictAcknowledged ? 'opacity-95' : 'opacity-50'
+              isConflictAcknowledged ? 'opacity-95' : 'opacity-65'
             } bg-[#180C14] border-[#FF3366] hover:border-[#FF5252] shadow-[0_0_14px_rgba(255,51,102,0.18)]`
           : signal.isCorrelationBlocked
-          ? 'opacity-75 bg-[#101420]/90 border-[#FF3366]/40 hover:border-[#2979FF]/60'
+          ? 'opacity-80 bg-[#101420]/90 border-[#FF3366]/40 hover:border-[#2979FF]/60'
           : signal.isBestTradeNow
-          ? 'bg-[#0F1626] border-[#FFD700]/50 shadow-[0_0_15px_rgba(255,215,0,0.1)] hover:border-[#2979FF]/60'
-          : 'bg-[#0B101D]/90 border-[#1E293B] hover:border-[#2979FF]/60'
+          ? 'bg-[#0F1626] border-[#FFD700]/50 shadow-[0_0_15px_rgba(255,215,0,0.08)] hover:border-[#2979FF]/60'
+          : 'bg-[#0B101D]/95 border-[#1E293B] hover:border-[#2979FF]/60'
       }`}
     >
-      {/* WARNING MODE: Red Top Banner & Conflict Badge */}
+      {/* WARNING MODE BANNER */}
       {isWarningConflictCard && conflictInfo && (
-        <div className="mb-2.5 space-y-1.5">
-          <div className="px-2.5 py-1.5 rounded-lg bg-[#FF3366]/20 border border-[#FF3366]/65 flex items-center gap-1.5 text-[10px] font-black text-[#FF5252] leading-tight">
-            <span className="leading-snug">{conflictInfo.warningBannerText}</span>
+        <div className="px-2.5 py-2 rounded-lg bg-[#FF3366]/15 border-l-2 border-[#FF3366] space-y-1">
+          <div className="text-[10.5px] font-black text-[#FF5252] leading-snug">
+            {conflictInfo.warningBannerText}
           </div>
           {conflictInfo.warningBadgeText && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[9.5px] font-mono font-bold px-2 py-0.5 rounded bg-[#FF3366]/15 text-[#FF8A9E] border border-[#FF3366]/45 leading-snug">
-                {conflictInfo.warningBadgeText}
-              </span>
+            <div className="text-[9.5px] font-mono text-[#FF8A9E] leading-snug">
+              {conflictInfo.warningBadgeText}
             </div>
           )}
         </div>
       )}
 
-      {/* HEADER ROW: Symbol, Direction, Timeframe & Score (Left) | Quick Tools (Right) */}
-      <div className="flex items-center justify-between gap-2 pb-2 border-b border-[#1E293B]">
-        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-          {/* Symbol */}
-          <span className="text-[14px] sm:text-[15px] font-black tracking-tight text-[#F8FAFC] leading-none">
-            {signal.pair.symbol}
-          </span>
-
-          {/* Buy / Sell Direction & Order Type Badge */}
-          <span
-            className={`text-[10px] font-black px-2 py-0.5 rounded leading-none ${
-              isBuy
-                ? 'bg-[#00E676]/15 text-[#00E676] border border-[#00E676]/40'
-                : 'bg-[#FF3366]/15 text-[#FF3366] border border-[#FF3366]/40'
-            }`}
-          >
-            {signal.type.includes('LIMIT') || signal.type.includes('STOP')
-              ? signal.type.replace('_', ' ')
-              : isBuy
-              ? 'BUY'
-              : 'SELL'}
-          </span>
-
-          {/* Standby Setup Badge */}
-          {isStandby && (
-            <span className="text-[10px] font-black px-1.5 py-0.5 rounded leading-none bg-[#FFD700]/20 text-[#FFD700] border border-[#FFD700]/40 flex items-center gap-1">
-              <span>⏳ STANDBY</span>
+      {/* TIER 1: CLEAN HEADER (Identity + Utilities on Row 1 | Unboxed Metadata + Confluence Score on Row 2) */}
+      <div className="space-y-1.5 pb-2 border-b border-[#1E293B]">
+        {/* Row 1: Symbol + Direction + Utility Toolbar */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[15px] sm:text-[16px] font-black tracking-tight text-[#F8FAFC] leading-none whitespace-nowrap">
+              {signal.pair.symbol}
             </span>
-          )}
 
-          {/* Winning Timeframe Badge [M15], [H1], or [H4] */}
-          <span className="text-[10px] font-mono font-black bg-[#2979FF]/20 text-[#60A5FA] px-1.5 py-0.5 rounded border border-[#2979FF]/40 leading-none">
-            [{signal.winningTf || signal.timeframe}]
-          </span>
+            <span
+              className={`text-[10px] font-black px-2 py-0.5 rounded leading-none whitespace-nowrap shrink-0 ${
+                isBuy
+                  ? 'bg-[#00E676]/15 text-[#00E676] border border-[#00E676]/40'
+                  : 'bg-[#FF3366]/15 text-[#FF3366] border border-[#FF3366]/40'
+              }`}
+            >
+              {signal.type.includes('LIMIT') || signal.type.includes('STOP')
+                ? signal.type.replace('_', ' ')
+                : isBuy
+                ? 'BUY'
+                : 'SELL'}
+            </span>
 
-          {/* Confluence Score Badge */}
-          <span
-            className={`text-[10px] font-mono font-black px-2 py-0.5 rounded border leading-none ${
-              signal.confluenceScore >= 80
-                ? 'text-[#00E676] bg-[#00E676]/15 border-[#00E676]/40'
-                : signal.confluenceScore >= 70
-                ? 'text-[#60A5FA] bg-[#2979FF]/20 border-[#2979FF]/40'
-                : signal.confluenceScore >= 60
-                ? 'text-[#FFD700] bg-[#FFD700]/15 border-[#FFD700]/40'
-                : 'text-[#FF9100] bg-[#FF9100]/15 border-[#FF9100]/40'
-            }`}
-            title={
-              signal.confluenceBreakdown?.summaryText
-                ? `Real MTF Breakdown: ${signal.confluenceBreakdown.summaryText}`
-                : `Multi-Timeframe Evaluated Score: ${signal.confluenceScore}/100`
-            }
-          >
-            {signal.confluenceScore}/100{signal.confluenceScore < 60 ? ' (<60)' : ''}
-          </span>
+            {isStandby ? (
+              <span className="text-[10px] font-black text-[#FFD700] whitespace-nowrap shrink-0">
+                · STANDBY
+              </span>
+            ) : isClosedOrder ? (
+              <span
+                className={`text-[10px] font-black whitespace-nowrap shrink-0 ${
+                  isWin ? 'text-[#00E676]' : 'text-[#FF3366]'
+                }`}
+              >
+                · {isWin ? 'TP HIT' : 'SL HIT'}
+              </span>
+            ) : isTimeExpired ? (
+              <span className="text-[10px] font-black text-[#94A3B8] whitespace-nowrap shrink-0">
+                · EXPIRED
+              </span>
+            ) : null}
+          </div>
 
-          {/* Quality Grade Badge (Grade C when 0 historical backtest trades) */}
-          <span
-            className={`text-[10px] font-mono font-black px-1.5 py-0.5 rounded border leading-none ${
-              signal.quality === 'C' || signal.backtestTradeCount === 0
-                ? 'bg-[#FF9100]/15 text-[#FF9100] border-[#FF9100]/40'
-                : 'bg-[#00E676]/15 text-[#00E676] border-[#00E676]/40'
-            }`}
-            title={signal.winPctSource || `Quality Grade ${signal.quality}`}
-          >
-            Grade {signal.quality === 'A_PLUS' ? 'A+' : (signal.quality || 'C')}
-          </span>
-        </div>
+          {/* Right Quick Utilities */}
+          <div className="flex items-center gap-1 shrink-0">
+            {onCloseTrade && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCloseTrade(signal);
+                }}
+                className="h-7 px-2 flex items-center gap-1 text-[10px] font-bold rounded-lg border border-[#FF3366]/35 bg-[#FF3366]/10 hover:bg-[#FF3366]/25 text-[#FF5252] transition-colors cursor-pointer shrink-0"
+                title="Dismiss & hide for 15 minutes"
+              >
+                <X className="w-3 h-3" />
+                <span>Close</span>
+              </button>
+            )}
 
-        {/* Right Side: Quick Action Utilities */}
-        <div className="flex items-center gap-1 shrink-0">
-          {/* Close Badge */}
-          {onCloseTrade && (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                onCloseTrade(signal);
+                setIsAuditModalOpen(true);
               }}
-              className="flex items-center gap-1 text-[9.5px] font-black px-2 py-1 rounded-md border border-[#FF3366]/40 bg-[#FF3366]/15 hover:bg-[#FF3366]/30 text-[#FF5252] hover:text-[#FF1744] transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
-              title="Close Trade: Dismiss & hide everywhere for 15 minutes. Background scanner will resume after 15m."
+              className={`w-7 h-7 flex items-center justify-center rounded-lg border transition-colors cursor-pointer ${
+                isParamChanged
+                  ? 'bg-[#FF9100]/20 border-[#FF9100]/60 text-[#FF9100] ring-1 ring-[#FF9100]/30'
+                  : 'bg-[#111827] border-[#1E293B] text-[#64748B] hover:text-[#F8FAFC]'
+              }`}
+              title={
+                isParamChanged
+                  ? `Parameters Changed: ${paramAudit?.reason || 'Tap to view before/after audit'}`
+                  : 'Signal Audit & Parameters Info'
+              }
             >
-              <X className="w-3 h-3 text-[#FF5252]" />
-              <span>Close</span>
+              <Info className="w-3.5 h-3.5" />
             </button>
-          )}
 
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsAuditModalOpen(true);
-            }}
-            className={`p-1.5 rounded-md border transition-all ${
-              isParamChanged
-                ? 'bg-[#FF9100]/20 border-[#FF9100]/60 text-[#FF9100] animate-pulse ring-1 ring-[#FF9100]/40'
-                : 'bg-[#161F33] border-[#222F47] text-[#64748B] hover:text-[#F8FAFC]'
-            }`}
+            <button
+              type="button"
+              onClick={copyOrder}
+              className="h-7 px-2 flex items-center justify-center gap-1 text-[10px] font-bold text-[#94A3B8] hover:text-[#F8FAFC] bg-[#111827] rounded-lg border border-[#1E293B] transition-colors cursor-pointer"
+              title="Copy MT4/MT5 Order"
+            >
+              {copied ? <Check className="w-3 h-3 text-[#00E676]" /> : <Copy className="w-3 h-3" />}
+              <span className="hidden sm:inline">{copied ? 'Copied' : 'Copy'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleAlert();
+              }}
+              className={`w-7 h-7 flex items-center justify-center rounded-lg border transition-colors cursor-pointer ${
+                signal.hasAlert
+                  ? 'bg-[#FFD700]/15 border-[#FFD700]/40 text-[#FFD700]'
+                  : 'bg-[#111827] border-[#1E293B] text-[#64748B] hover:text-[#F8FAFC]'
+              }`}
+              title="Toggle Price Alert"
+            >
+              {signal.hasAlert ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
+            </button>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleFavorite();
+              }}
+              className={`w-7 h-7 flex items-center justify-center rounded-lg border transition-colors cursor-pointer ${
+                signal.isFavorite
+                  ? 'bg-[#FFD700]/15 border-[#FFD700]/40 text-[#FFD700]'
+                  : 'bg-[#111827] border-[#1E293B] text-[#64748B] hover:text-[#F8FAFC]'
+              }`}
+              title="Toggle Watchlist"
+            >
+              <Star className={`w-3.5 h-3.5 ${signal.isFavorite ? 'fill-[#FFD700]' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Row 2: Unboxed Telemetry Metadata + Right Focal Confluence Score */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5 text-[10.5px] text-[#94A3B8] min-w-0 leading-snug">
+            <span className="font-mono font-bold text-[#60A5FA]">{cardTf}</span>
+            <span className="text-[#475569]">·</span>
+            <span className="font-semibold text-[#E2E8F0] truncate max-w-[140px]" title={stratCfg.title}>
+              {stratCfg.shortBadge}
+            </span>
+            <span className="text-[#475569]">·</span>
+            <span
+              className={`font-semibold ${
+                signal.quality === 'C' || signal.backtestTradeCount === 0 ? 'text-[#FF9100]' : 'text-[#00E676]'
+              }`}
+              title={signal.winPctSource || `Quality Grade ${gradeLabel}`}
+            >
+              Grade {gradeLabel}
+            </span>
+            <span className="text-[#475569]">·</span>
+            {isClosedOrder ? (
+              <span className="font-mono text-[#94A3B8]">
+                {getFormattedClosedTime(signal, nowClockMs)} · Held {formatDurationCompact(getTradeDurationMs(signal))}
+              </span>
+            ) : (
+              <span className="font-mono text-[#94A3B8]">
+                {getFormattedTimeElapsed(signal, nowClockMs)} · {formatSignalDateTime(signal.createdAtMs)}
+              </span>
+            )}
+            {!marketOpen && !isClosedOrder && (
+              <>
+                <span className="text-[#475569]">·</span>
+                <span className="font-semibold text-[#FFB300]">Weekend Hold</span>
+              </>
+            )}
+          </div>
+
+          {/* Focal Confluence Score */}
+          <div
+            className="shrink-0 flex items-baseline gap-0.5 font-mono tabular-nums"
             title={
-              isParamChanged
-                ? `⚠️ Parameters Changed: ${paramAudit?.reason || 'Tap to view before/after changes & trade verdict'}`
-                : 'Signal Audit & Parameters Info (Tap to view status)'
+              signal.confluenceBreakdown?.summaryText
+                ? `Confluence Math: ${signal.confluenceBreakdown.summaryText}`
+                : `Confluence Score: ${signal.confluenceScore}/100`
             }
           >
-            <Info className={`w-3.5 h-3.5 ${isParamChanged ? 'text-[#FF9100]' : ''}`} />
-          </button>
-
-          <button
-            onClick={copyOrder}
-            className="flex items-center gap-1 text-[10px] font-bold text-[#94A3B8] hover:text-[#F8FAFC] bg-[#161F33] px-2 py-1 rounded-md border border-[#222F47] transition-colors"
-            title="Copy MT4/MT5 Order String"
-          >
-            {copied ? <Check className="w-3 h-3 text-[#00E676]" /> : <Copy className="w-3 h-3" />}
-            <span className="hidden sm:inline">{copied ? 'Copied' : 'MT4'}</span>
-          </button>
-
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleAlert();
-            }}
-            className={`p-1.5 rounded-md border transition-colors ${
-              signal.hasAlert
-                ? 'bg-[#FFD700]/20 border-[#FFD700]/40 text-[#FFD700]'
-                : 'bg-[#161F33] border-[#222F47] text-[#64748B] hover:text-[#F8FAFC]'
-            }`}
-            title="Toggle Price Alert"
-          >
-            {signal.hasAlert ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
-          </button>
-
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleFavorite();
-            }}
-            className={`p-1.5 rounded-md border transition-colors ${
-              signal.isFavorite
-                ? 'bg-[#FFD700]/20 border-[#FFD700]/40 text-[#FFD700]'
-                : 'bg-[#161F33] border-[#222F47] text-[#64748B] hover:text-[#F8FAFC]'
-            }`}
-            title="Toggle Watchlist"
-          >
-            <Star className={`w-3.5 h-3.5 ${signal.isFavorite ? 'fill-[#FFD700]' : ''}`} />
-          </button>
+            <span className={`text-[15px] font-black leading-none ${scoreColorClass}`}>
+              {signal.confluenceScore}
+            </span>
+            <span className="text-[10px] text-[#64748B] font-bold">/100</span>
+          </div>
         </div>
       </div>
 
-      {/* SUB-ROW: Strategy Identity & Confluence Breakdown Badges */}
-      <div className="py-1.5 flex flex-wrap items-center gap-1.5 border-b border-[#1E293B]/60">
-        {/* Strategy Name Badge */}
-        <span
-          className="text-[9.5px] font-black px-1.5 py-0.5 rounded border leading-none bg-[#161F33] text-[#FFD700] border-[#FFD700]/30 truncate max-w-[140px]"
-          title={`${stratCfg.title}: ${stratCfg.description}`}
-        >
-          {stratCfg.shortBadge}
-        </span>
-
-        {/* Real Confluence Breakdown */}
-        <span
-          className="text-[9px] font-mono text-[#00E676] bg-[#00E676]/10 px-1.5 py-0.5 rounded border border-[#00E676]/25 leading-none"
-          title={signal.confluenceBreakdown?.summaryText || signal.scoreBreakdownText}
-        >
-          {signal.confluenceBreakdown?.summaryText || signal.scoreBreakdownText || `${signal.winningTf || signal.timeframe}:${signal.confluenceScore}`}
-        </span>
-
-        {/* Daily (D1) Macro Trend Gate */}
-        <span
-          className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border leading-none ${
-            signal.isD1Aligned !== false
-              ? 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/30'
-              : 'bg-[#FF9100]/15 text-[#FF9100] border-[#FF9100]/40'
-          }`}
-          title={`Daily Macro Trend: ${signal.d1MacroTrend || 'Aligned with Structure'}`}
-        >
-          D1 {signal.d1MacroTrend === 'BEARISH' ? '↘' : '↗'}
-        </span>
-
-        {/* Volume & Exhaustion Check */}
-        <span
-          className="text-[9px] font-mono font-bold text-[#60A5FA] bg-[#2979FF]/10 px-1.5 py-0.5 rounded border border-[#2979FF]/25 leading-none"
-          title="Volume & Candle Exhaustion: Institutional Sweep & Absorption Wick Verified"
-        >
-          Vol ✓
-        </span>
-
-        {/* Liquidity Sweep Status */}
-        <span
-          className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded leading-none border ${
-            signal.isLiquiditySwept
-              ? 'bg-[#00E676]/15 text-[#00E676] border-[#00E676]/35'
-              : 'bg-[#FFD700]/15 text-[#FFD700] border-[#FFD700]/35'
-          }`}
-          title={signal.liquiditySweepDetail || 'Pre-Entry Liquidity Sweep Confirmation Status'}
-        >
-          {signal.liquiditySweepStatusTag || (signal.isLiquiditySwept ? '💧 LIQUIDITY SWEPT' : '⏳ AWAITING SWEEP')}
-        </span>
-
-        {/* Correlation Exposure / Hard Block Tag */}
-        {signal.isCorrelationBlocked ? (
-          <span
-            className="text-[9px] font-mono font-black px-1.5 py-0.5 rounded leading-none bg-[#FF3366]/20 text-[#FF3366] border border-[#FF3366]/50 flex items-center gap-1"
-            title={signal.correlationBlockReason || 'Hard Blocked due to Currency Exposure Limits'}
-          >
-            <span>{signal.correlationExposureTag || '🚫 HARD BLOCKED: MAX CORRELATION'}</span>
-          </span>
-        ) : signal.correlationExposureTag ? (
-          <span
-            className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded leading-none bg-[#2979FF]/15 text-[#60A5FA] border border-[#2979FF]/35"
-            title="Currency Exposure Correlation Guard"
-          >
-            {signal.correlationExposureTag}
-          </span>
-        ) : null}
-
-        {/* Demoted from A+ Setup Notice Badge */}
-        {signal.isDemotedFromActive && signal.demotionAudit && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsDemotionModalOpen(true);
-            }}
-            className="text-[9px] font-mono font-black px-2 py-0.5 rounded leading-none bg-[#FF9100]/20 text-[#FF9100] border border-[#FF9100]/50 flex items-center gap-1 hover:bg-[#FF9100]/30 transition-all cursor-pointer animate-pulse"
-            title="⚠️ Trade Demoted from A+ Setup: Tap to see why and whether to run or stop"
-          >
-            <span>⚠️ DEMOTED FROM A+</span>
-            <span className="text-[8px] underline decoration-dotted">Audit →</span>
-          </button>
-        )}
-
-        {/* High-Impact News Guard Indicator */}
-        {newsGuard && newsGuard.isWarning && !isClosedOrder && (
-          <span
-            className="text-[9px] font-bold text-[#FF3366] bg-[#FF3366]/15 px-1.5 py-0.5 rounded border border-[#FF3366]/40 flex items-center gap-1 animate-pulse leading-none"
-            title={`High-Impact News: ${newsGuard.eventTitle} in ${newsGuard.minutesUntil} minutes!`}
-          >
-            <Flame className="w-2.5 h-2.5 text-[#FF3366]" />
-            <span>News {newsGuard.minutesUntil > 0 ? `${newsGuard.minutesUntil}m` : 'Live'}</span>
-          </span>
-        )}
-
-        {/* Currency Conflict Filter: Green Clean Badge */}
-        {conflictFilterActive && !isClosedOrder && conflictInfo && !conflictInfo.isConflict && (
-          <span
-            className="text-[9px] font-mono font-bold px-2 py-0.5 rounded leading-none bg-[#00E676]/15 text-[#00E676] border border-[#00E676]/40"
-            title="Verified clean against current desk currency bias"
-          >
-            {conflictInfo.cleanBadgeText}
-          </span>
-        )}
-
-        {/* Real H4 50/9 EMA Audit Badge */}
-        {signal.generationAudit && (
-          <span
-            className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded leading-none bg-[#161F33] text-[#38BDF8] border border-[#38BDF8]/30"
-            title={`Real H4 50 EMA: ${signal.generationAudit.ema50} | 9 EMA: ${signal.generationAudit.ema9} (${signal.generationAudit.h4CandleCount} bars)`}
-          >
-            H4 EMA50:{signal.generationAudit.ema50} · EMA9:{signal.generationAudit.ema9}
-          </span>
-        )}
-
-        {/* Real Backtest Provenance Badge */}
-        {(signal.backtestTradeCount === 0 || signal.winPctSource === 'NO BACKTEST DATA - 0 TRADES') ? (
-          <span
-            className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded leading-none bg-[#FF9100]/15 text-[#FF9100] border border-[#FF9100]/35"
-            title="Historical archive has 0 trades for this pair"
-          >
-            NO BACKTEST DATA - 0 TRADES
-          </span>
-        ) : signal.winPctSource ? (
-          <span
-            className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded leading-none bg-[#00E676]/10 text-[#00E676] border border-[#00E676]/30"
-            title={signal.winPctSource}
-          >
-            {signal.winProbability}% Win ({signal.backtestTradeCount} trades)
-          </span>
-        ) : null}
-      </div>
-
-      {/* PRICE EXECUTION LEDGER GRID (6-Column Matrix) */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-y sm:divide-y-0 divide-[#1E293B] bg-[#070A12] rounded-lg border border-[#1E293B] my-2 overflow-hidden shadow-inner">
-        {/* Col 1: Live / Exit Price */}
+      {/* TIER 2: PRICE EXECUTION MATRIX (3x2 Mobile / 6-Column Desktop) */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-y sm:divide-y-0 divide-[#1E293B] bg-[#070A12] rounded-xl border border-[#1E293B] overflow-hidden">
+        {/* Live / Exit */}
         <div
           className={`p-2 transition-colors ${
             isClosedOrder
@@ -525,7 +436,7 @@ export const SignalCard: React.FC<Props> = ({
               : ''
           }`}
         >
-          <div className="text-[8px] text-[#94A3B8] font-black uppercase tracking-wider flex items-center gap-1 leading-tight">
+          <div className="text-[9px] text-[#94A3B8] font-bold uppercase tracking-wider flex items-center gap-1 leading-none">
             <span
               className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                 signal.status === 'HIT_SL'
@@ -542,13 +453,13 @@ export const SignalCard: React.FC<Props> = ({
                 ? 'Exit'
                 : marketOpen
                 ? 'Live'
-                : 'Fri Close'}
+                : 'Close'}
             </span>
             {!isClosedOrder && flashDir === 'up' && <TrendingUp className="w-2.5 h-2.5 text-[#00E676] ml-auto" />}
             {!isClosedOrder && flashDir === 'down' && <TrendingDown className="w-2.5 h-2.5 text-[#FF3366] ml-auto" />}
           </div>
           <div
-            className={`text-[12px] font-mono font-black tabular-nums leading-tight mt-1 ${
+            className={`text-[12.5px] font-mono font-black tabular-nums leading-tight mt-1 ${
               signal.status === 'HIT_SL'
                 ? 'text-[#FF3366]'
                 : signal.status === 'HIT_TP'
@@ -569,50 +480,50 @@ export const SignalCard: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Col 2: Entry Price */}
+        {/* Entry */}
         <div className="p-2">
-          <div className="text-[8px] text-[#64748B] font-black uppercase tracking-wider leading-tight">Entry</div>
-          <div className="text-[12px] font-mono font-bold text-[#F8FAFC] tabular-nums leading-tight mt-1">
+          <div className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider leading-none">Entry</div>
+          <div className="text-[12.5px] font-mono font-bold text-[#F8FAFC] tabular-nums leading-tight mt-1">
             {formatPrice(signal.pair, signal.entryPrice)}
           </div>
         </div>
 
-        {/* Col 3: Stop Loss + Pip Risk */}
+        {/* Stop Loss */}
         <div className="p-2">
-          <div className="text-[8px] text-[#FF3366] font-black uppercase tracking-wider leading-tight flex items-center justify-between">
+          <div className="text-[9px] text-[#FF3366] font-bold uppercase tracking-wider leading-none flex items-center justify-between">
             <span>SL</span>
-            <span className="font-mono text-[8px] opacity-80">-{slPips}p</span>
+            <span className="font-mono text-[8.5px] opacity-85">-{slPips}p</span>
           </div>
-          <div className="text-[12px] font-mono font-bold text-[#FF3366] tabular-nums leading-tight mt-1">
+          <div className="text-[12.5px] font-mono font-bold text-[#FF3366] tabular-nums leading-tight mt-1">
             {formatPrice(signal.pair, signal.stopLoss)}
           </div>
         </div>
 
-        {/* Col 4: Take Profit 1 + Pip Target */}
+        {/* Take Profit 1 */}
         <div className="p-2">
-          <div className="text-[8px] text-[#00E676] font-black uppercase tracking-wider leading-tight flex items-center justify-between">
+          <div className="text-[9px] text-[#00E676] font-bold uppercase tracking-wider leading-none flex items-center justify-between">
             <span>TP1</span>
-            <span className="font-mono text-[8px] opacity-80">+{tp1Pips}p</span>
+            <span className="font-mono text-[8.5px] opacity-85">+{tp1Pips}p</span>
           </div>
-          <div className="text-[12px] font-mono font-bold text-[#00E676] tabular-nums leading-tight mt-1">
+          <div className="text-[12.5px] font-mono font-bold text-[#00E676] tabular-nums leading-tight mt-1">
             {formatPrice(signal.pair, signal.takeProfit1)}
           </div>
         </div>
 
-        {/* Col 5: Risk:Reward & Spread */}
+        {/* Risk:Reward & Spread */}
         <div className="p-2">
-          <div className="text-[8px] text-[#2979FF] font-black uppercase tracking-wider leading-tight flex items-center justify-between">
+          <div className="text-[9px] text-[#60A5FA] font-bold uppercase tracking-wider leading-none flex items-center justify-between">
             <span>R:R</span>
-            <span className="text-[#64748B] font-mono text-[7.5px]">Spd {signal.pair.spreadPips}p</span>
+            <span className="text-[#64748B] font-mono text-[8px]">Spd {signal.pair.spreadPips}p</span>
           </div>
-          <div className="text-[12px] font-mono font-bold text-[#2979FF] tabular-nums leading-tight mt-1">
+          <div className="text-[12.5px] font-mono font-bold text-[#60A5FA] tabular-nums leading-tight mt-1">
             {signal.riskReward}
           </div>
         </div>
 
-        {/* Col 6: Net Pips / Status Distance */}
+        {/* Live P&L / Result */}
         <div className="p-2">
-          <div className="text-[8px] text-[#94A3B8] font-black uppercase tracking-wider leading-tight">
+          <div className="text-[9px] text-[#94A3B8] font-bold uppercase tracking-wider leading-none">
             {isStandby
               ? 'Standby'
               : isTimeExpired
@@ -624,7 +535,7 @@ export const SignalCard: React.FC<Props> = ({
               : 'Live P&L'}
           </div>
           <div
-            className={`text-[12px] font-mono font-black tabular-nums leading-tight mt-1 ${
+            className={`text-[12.5px] font-mono font-black tabular-nums leading-tight mt-1 ${
               isStandby
                 ? 'text-[#FFD700]'
                 : isTimeExpired
@@ -641,11 +552,11 @@ export const SignalCard: React.FC<Props> = ({
             }`}
           >
             {isStandby
-              ? '0.0p (Wait)'
+              ? 'Wait'
               : isTimeExpired
               ? 'EXPIRED'
               : isPending
-              ? `${Math.abs(livePips)}p away`
+              ? `${Math.abs(livePips)}p`
               : isClosedOrder
               ? `${(signal.pips ?? 0) >= 0 ? `+${signal.pips}` : signal.pips}p`
               : `${isProfit ? `+${livePips}` : livePips}p`}
@@ -653,133 +564,213 @@ export const SignalCard: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* TELEMETRY & TIMING PROGRESS TRACK */}
-      <div className="mb-2 space-y-1">
-        {isStandby ? (
-          <div className="flex items-center justify-between text-[9.5px] font-mono text-[#FFD700]">
-            <div className="flex items-center gap-1.5">
-              <Clock className="w-3 h-3 text-[#FFD700]" />
-              <span className="font-bold">STANDBY SETUP:</span>
-              <span className="text-[#94A3B8]">{signal.confluenceScore}% Confluence</span>
-              <span className="text-[#64748B]">·</span>
-              <span className="text-[#F8FAFC]">{getFormattedTimeElapsed(signal, nowClockMs)}</span>
-            </div>
-            <span className="text-[9px] text-[#FFD700] font-bold bg-[#FFD700]/10 px-1.5 py-0.5 rounded border border-[#FFD700]/30">
-              Awaiting Trigger
-            </span>
-          </div>
-        ) : isPending ? (
-          <div className="flex items-center justify-between text-[9.5px] font-mono text-[#94A3B8]">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[#FFD700] font-bold">PENDING</span>
-              <span className="text-[#64748B]">·</span>
-              <Clock className="w-3 h-3 text-[#2979FF]" />
-              <span className="text-[#F8FAFC] font-bold">{formatSignalDateTime(signal.createdAtMs)}</span>
-              <span className="text-[#64748B]">·</span>
-              <span>{getFormattedTimeElapsed(signal, nowClockMs)}</span>
-            </div>
-            <div className="flex items-center gap-1 text-[#FFD700] font-bold">
-              <Timer className="w-3 h-3 text-[#FFD700]" />
-              <span>{isTimeExpired ? 'Expired' : `${signal.timeframe} Window: ${countdown}`}</span>
-            </div>
-          </div>
-        ) : isClosedOrder ? (
-          <div className="flex items-center justify-between text-[9.5px] font-mono flex-wrap gap-1">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span
-                className={`font-black px-2 py-0.5 rounded border flex items-center gap-1 shadow-xs ${
-                  isWin
-                    ? 'text-[#00E676] bg-[#00E676]/15 border-[#00E676]/40'
-                    : 'text-[#FF3366] bg-[#FF3366]/15 border-[#FF3366]/40'
-                }`}
-              >
-                <span>{isWin ? '🎯 TP HIT' : '🛑 SL HIT'}</span>
-              </span>
-              <span className="text-[#64748B]">·</span>
-              <span className="text-[#94A3B8]">{getFormattedClosedTime(signal, nowClockMs)}</span>
-              <span className="text-[#64748B]">·</span>
-              <span className={isWin ? 'text-[#00E676] font-bold' : 'text-[#FF3366] font-bold'}>
-                {isWin ? 'Win Held: ' : 'Loss Held: '}
-                {formatDurationCompact(getTradeDurationMs(signal))}
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className={`font-bold ${isWin ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
-                {(signal.pips ?? 0) >= 0 ? `+${signal.pips} pips` : `${signal.pips} pips`} · Exit {formatPrice(signal.pair, signal.currentPrice)}
-              </span>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between text-[9.5px] font-mono">
-            <div className="flex items-center gap-1.5 text-[#94A3B8]">
-              <span className={`font-bold ${isProfit ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
-                LIVE {isProfit ? `+${livePips}p` : `${livePips}p`}
-              </span>
-              <span className="text-[#64748B]">·</span>
-              <Clock className="w-3 h-3 text-[#2979FF]" />
-              <span className="text-[#F8FAFC] font-bold">{formatSignalDateTime(signal.createdAtMs)}</span>
-              <span className="text-[#64748B]">·</span>
-              <span>{getFormattedTimeElapsed(signal, nowClockMs)}</span>
-              {!marketOpen && (
+      {/* TIER 3: CLEAN PROGRESS TRACK + SCANNABLE TELEMETRY & DETAILS TOGGLE */}
+      <div className="space-y-2">
+        {/* Progress Header + Bar */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2 text-[10.5px] font-mono tabular-nums">
+            <div className="flex items-center gap-1.5 min-w-0 truncate">
+              {isStandby ? (
                 <>
-                  <span className="text-[#64748B]">·</span>
-                  <span className="text-[#FFB300] font-bold">WEEKEND HOLD</span>
+                  <Clock className="w-3 h-3 text-[#FFD700] shrink-0" />
+                  <span className="text-[#FFD700] font-bold truncate">Awaiting Trigger Confirmation</span>
+                </>
+              ) : isPending ? (
+                <>
+                  <Timer className="w-3 h-3 text-[#FFD700] shrink-0" />
+                  <span className="text-[#94A3B8] truncate">
+                    {isTimeExpired ? 'Window Expired' : `${signal.timeframe} Window: ${countdown}`}
+                  </span>
+                </>
+              ) : isClosedOrder ? (
+                <span className={`font-bold truncate ${isWin ? 'text-[#00E676]' : 'text-[#FF3366]'}`}>
+                  {isWin ? 'Take Profit Reached' : 'Stop Loss Hit'} · Exit {formatPrice(signal.pair, signal.currentPrice)}
+                </span>
+              ) : (
+                <>
+                  <Target className="w-3 h-3 text-[#00E676] shrink-0" />
+                  <span className="text-[#94A3B8] font-semibold">
+                    TP1 Progress: <span className="text-[#F8FAFC] font-bold">{tpRatio}%</span>
+                  </span>
                 </>
               )}
             </div>
-            <div className="flex items-center gap-1 text-[#00E676] font-bold">
-              <Target className="w-3 h-3 text-[#00E676]" />
-              <span>TP1 Target: {tpRatio}%</span>
+
+            <span
+              className={`font-bold whitespace-nowrap shrink-0 ${
+                isStandby || isPending
+                  ? 'text-[#FFD700]'
+                  : isClosedOrder
+                  ? isWin
+                    ? 'text-[#00E676]'
+                    : 'text-[#FF3366]'
+                  : isProfit
+                  ? 'text-[#00E676]'
+                  : 'text-[#FF3366]'
+              }`}
+            >
+              {isStandby
+                ? 'Standby'
+                : isTimeExpired
+                ? 'Expired'
+                : isPending
+                ? `${Math.abs(livePips)}p to entry`
+                : isClosedOrder
+                ? `${(signal.pips ?? 0) >= 0 ? `+${signal.pips}` : signal.pips} pips`
+                : `LIVE ${isProfit ? `+${livePips}` : livePips}p`}
+            </span>
+          </div>
+
+          <div className="w-full h-1.5 bg-[#182033] rounded-full overflow-hidden">
+            {isStandby ? (
+              <div className="h-full rounded-full bg-[#FFD700]/70" style={{ width: '100%' }} />
+            ) : isPending ? (
+              <div
+                className={`h-full transition-all duration-500 rounded-full ${
+                  isTimeExpired
+                    ? 'bg-[#FF3366]'
+                    : validityRatio > 0.5
+                    ? 'bg-[#00E676]'
+                    : validityRatio > 0.2
+                    ? 'bg-[#FFD700]'
+                    : 'bg-[#FF3366]'
+                }`}
+                style={{ width: `${Math.max(0, Math.min(100, validityRatio * 100))}%` }}
+              />
+            ) : isClosedOrder ? (
+              <div
+                className={`h-full rounded-full ${isWin ? 'bg-[#00E676]' : 'bg-[#FF3366]'}`}
+                style={{ width: '100%' }}
+              />
+            ) : (
+              <div
+                className={`h-full transition-all duration-500 rounded-full ${
+                  livePips >= 0 ? 'bg-[#00E676]' : 'bg-[#FF3366]'
+                }`}
+                style={{ width: `${Math.max(5, Math.min(100, tpRatio))}%` }}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Unboxed Micro-Diagnostics Bar + Collapsible Details Toggle */}
+        <div className="flex items-center justify-between gap-2 pt-1 border-t border-[#1E293B]/60">
+          <div className="flex items-center flex-wrap gap-x-2.5 gap-y-0.5 text-[10px] font-mono min-w-0">
+            {conflictFilterActive && !isClosedOrder && conflictInfo && !conflictInfo.isConflict && (
+              <span className="text-[#00E676] font-semibold">✓ No Conflict</span>
+            )}
+            <span className={signal.isD1Aligned !== false ? 'text-[#00E676]' : 'text-[#FF9100]'}>
+              D1 {signal.d1MacroTrend === 'BEARISH' ? '↘' : '↗'}
+            </span>
+            <span className={signal.isLiquiditySwept ? 'text-[#00E676]' : 'text-[#FFD700]'}>
+              {signal.isLiquiditySwept ? '💧 Swept' : '⏳ Wait Sweep'}
+            </span>
+            {signal.backtestTradeCount === 0 || signal.winPctSource === 'NO BACKTEST DATA - 0 TRADES' ? (
+              <span className="text-[#FF9100]">0 Backtest</span>
+            ) : signal.winPctSource ? (
+              <span className="text-[#94A3B8]">{signal.winProbability}% Win ({signal.backtestTradeCount})</span>
+            ) : null}
+          </div>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowDetails((prev) => !prev);
+            }}
+            className="flex items-center gap-1 text-[10px] font-semibold text-[#94A3B8] hover:text-[#F8FAFC] transition-colors cursor-pointer shrink-0 py-0.5 px-1.5 rounded hover:bg-[#161F33]"
+          >
+            {hasDiagnosticsNotes && !showDetails && (
+              <span className="w-1.5 h-1.5 rounded-full bg-[#60A5FA]" />
+            )}
+            <span>{showDetails ? 'Hide' : 'Details'}</span>
+            {showDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
+        </div>
+
+        {/* Expanded Technical Drawer */}
+        {showDetails && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-[#070A12] border border-[#1E293B] rounded-xl p-2.5 text-[10px] font-mono space-y-1.5 text-[#94A3B8]"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-[#64748B] shrink-0">Score Math</span>
+              <span className="text-[#00E676] text-right">
+                {signal.confluenceBreakdown?.summaryText || signal.scoreBreakdownText || `${cardTf}: ${signal.confluenceScore}/100`}
+              </span>
             </div>
+
+            {signal.generationAudit && (
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[#64748B] shrink-0">H4 EMAs</span>
+                <span className="text-[#38BDF8] text-right">
+                  EMA50 {signal.generationAudit.ema50} · EMA9 {signal.generationAudit.ema9} ({signal.generationAudit.h4CandleCount} bars)
+                </span>
+              </div>
+            )}
+
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-[#64748B] shrink-0">Liquidity</span>
+              <span className="text-[#E2E8F0] text-right">
+                {signal.liquiditySweepStatusTag || (signal.isLiquiditySwept ? 'Liquidity Swept' : 'Awaiting Sweep')} · Vol ✓
+              </span>
+            </div>
+
+            {signal.slLearningAudit && signal.slLearningAudit.applied && !isClosedOrder && (
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[#64748B] shrink-0">SL Guard</span>
+                <span className="text-[#00E676] text-right">
+                  +{signal.slLearningAudit.antiWickExtraBufferPips}p ATR Buffer · H4 Aligned
+                </span>
+              </div>
+            )}
+
+            {(signal.isCorrelationBlocked || signal.correlationExposureTag) && (
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[#64748B] shrink-0">Correlation</span>
+                <span className={`text-right ${signal.isCorrelationBlocked ? 'text-[#FF3366] font-bold' : 'text-[#60A5FA]'}`}>
+                  {signal.correlationBlockReason || signal.correlationExposureTag}
+                </span>
+              </div>
+            )}
+
+            {executedAtMs && (
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[#64748B] shrink-0">Fill Time</span>
+                <span className="text-[#60A5FA] text-right">
+                  {executedTimeText.replace('Executed ', '')} (+{waitText} after signal)
+                </span>
+              </div>
+            )}
+
+            {signal.tfUpdateNotice && (
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[#64748B] shrink-0">TF Update</span>
+                <span className="text-[#60A5FA] text-right">{signal.tfUpdateNotice}</span>
+              </div>
+            )}
+
+            {signal.winPctSource && (
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[#64748B] shrink-0">Backtest</span>
+                <span className="text-[#E2E8F0] text-right">{signal.winPctSource}</span>
+              </div>
+            )}
           </div>
         )}
-
-        {/* Progress Bar Track */}
-        <div className="w-full h-1.5 bg-[#182033] rounded-full overflow-hidden">
-          {isStandby ? (
-            <div className="h-full rounded-full bg-[#FFD700]/70" style={{ width: '100%' }} />
-          ) : isPending ? (
-            <div
-              className={`h-full transition-all duration-500 rounded-full ${
-                isTimeExpired
-                  ? 'bg-[#FF3366]'
-                  : validityRatio > 0.5
-                  ? 'bg-[#00E676]'
-                  : validityRatio > 0.2
-                  ? 'bg-[#FFD700]'
-                  : 'bg-[#FF3366] animate-pulse'
-              }`}
-              style={{ width: `${Math.max(0, Math.min(100, validityRatio * 100))}%` }}
-            />
-          ) : isClosedOrder ? (
-            <div
-              className={`h-full rounded-full ${isWin ? 'bg-[#00E676]' : 'bg-[#FF3366]'}`}
-              style={{ width: '100%' }}
-            />
-          ) : (
-            <div
-              className={`h-full transition-all duration-500 rounded-full ${
-                livePips >= 0 ? 'bg-[#00E676]' : 'bg-[#FF3366]'
-              }`}
-              style={{ width: `${Math.max(5, Math.min(100, tpRatio))}%` }}
-            />
-          )}
-        </div>
       </div>
 
-      {/* SYSTEM NOTICES & INSIGHT BANNERS PANEL */}
+      {/* TIER 4: PRIORITY ACTIONABLE ALERTS (Only time-sensitive or actionable items) */}
       {(
-        (!isMarketExecution && isRunning && !isPending && !isClosedOrder && executedAtMs) ||
-        isStandby ||
         Boolean(signal.isDemotedFromActive && signal.demotionAudit) ||
-        signal.tfUpdateNotice ||
-        ((signal.isBreakevenArmed || (signal.status === 'RUNNING' && tpRatio >= 45)) && !isClosedOrder) ||
         (newsGuard && newsGuard.isWarning && !isClosedOrder) ||
-        (signal.slLearningAudit && signal.slLearningAudit.applied && !isClosedOrder) ||
-        (isParamChanged && paramAudit)
+        isBreakevenActive ||
+        isStandby ||
+        (isParamChanged && paramAudit) ||
+        isWarningConflictCard
       ) && (
-        <div className="my-2 space-y-1">
-          {/* Trade Demoted from A+ Setup Notice Banner */}
+        <div className="space-y-1.5">
           {signal.isDemotedFromActive && signal.demotionAudit && (
             <button
               type="button"
@@ -787,161 +778,53 @@ export const SignalCard: React.FC<Props> = ({
                 e.stopPropagation();
                 setIsDemotionModalOpen(true);
               }}
-              className="w-full px-2.5 py-1.5 rounded-md bg-[#FF9100]/15 border border-[#FF9100]/50 hover:bg-[#FF9100]/25 flex items-center justify-between text-[9.5px] font-mono text-[#FF9100] transition-all cursor-pointer text-left shadow-xs"
-              title="Click to view why trade was demoted from A+ setup, audit details and whether to hold or close"
+              className="w-full px-2.5 py-1.5 rounded-lg bg-[#FF9100]/10 border-l-2 border-[#FF9100] hover:bg-[#FF9100]/20 flex items-center justify-between gap-2 text-[10px] font-mono transition-colors cursor-pointer text-left"
             >
               <div className="flex items-center gap-1.5 min-w-0">
                 <AlertTriangle className="w-3.5 h-3.5 text-[#FF9100] shrink-0" />
-                <span className="font-black text-[#FFD700] shrink-0">DEMOTED FROM A+:</span>
-                <span className="text-[#F8FAFC] truncate text-[9px]">
-                  {signal.demotionAudit.reason}
-                </span>
+                <span className="font-bold text-[#FFD700] shrink-0">DEMOTED A+:</span>
+                <span className="text-[#E2E8F0] truncate">{signal.demotionAudit.reason}</span>
               </div>
-              <span className="text-[8.5px] font-bold text-[#FFD700] shrink-0 ml-1.5 underline underline-offset-2">
-                View Advice & Verdict →
-              </span>
+              <span className="text-[#FFD700] font-bold shrink-0 underline underline-offset-2">Audit →</span>
             </button>
           )}
-          {/* Executed Fill Telemetry */}
-          {!isMarketExecution && isRunning && !isPending && !isClosedOrder && executedAtMs && (
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                onClick();
-              }}
-              className="px-2.5 py-1 rounded-md bg-[#161F33] border border-[#2979FF]/40 flex flex-wrap items-center justify-between gap-1 text-[9px] font-mono cursor-pointer hover:border-[#2979FF]/80 transition-all"
-              title={`Order Type: ${signal.type.replace('_', ' ')} | Posted: ${formatSignalDateTime(signal.createdAtMs)} | Executed at Entry: ${formatSignalDateTime(executedAtMs)} (${waitText} after posting)`}
-            >
-              <div className="flex items-center gap-1.5 min-w-0">
-                <span className="px-1.5 py-0.2 rounded bg-[#2979FF]/20 text-[#60A5FA] border border-[#2979FF]/40 font-black text-[8px] uppercase shrink-0">
-                  {signal.type.replace('_', ' ')}
-                </span>
-                <span className="font-bold text-[#FFD700] flex items-center gap-1 shrink-0">
-                  <Zap className="w-2.5 h-2.5 text-[#FFD700] fill-[#FFD700]/30" />
-                  <span>EXECUTED:</span>
-                  <span className="text-[#00E676] font-black">{executedTimeText.replace('Executed ', '')}</span>
-                </span>
-                <span className="text-[#94A3B8] text-[8px] hidden sm:inline">
-                  ({formatSignalDateTime(executedAtMs)})
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 text-[8px] text-[#94A3B8] font-mono shrink-0">
-                <span>Posted: <span className="text-[#F8FAFC] font-bold">{getFormattedTimeElapsed(signal, nowClockMs).replace('Posted ', '')}</span></span>
-                <span className="text-[#64748B]">·</span>
-                <span className="text-[#60A5FA] font-bold bg-[#2979FF]/15 px-1 rounded border border-[#2979FF]/30">
-                  Time to Fill: +{waitText}
-                </span>
-              </div>
-            </div>
-          )}
 
-          {/* Standby Setup Trigger */}
-          {isStandby && (
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                onClick();
-              }}
-              className="px-2.5 py-1 rounded-md bg-[#FFD700]/10 border border-[#FFD700]/30 flex items-center justify-between text-[9px] font-mono text-[#FFD700] cursor-pointer hover:bg-[#FFD700]/15 transition-all"
-              title={signal.standbyTriggerDetail || 'Monitoring Order Block & liquidity sweep before entry execution.'}
-            >
-              <div className="flex items-center gap-1.5 min-w-0">
-                <Clock className="w-3 h-3 text-[#FFD700] shrink-0" />
-                <span className="font-bold text-[#FFD700] shrink-0">STANDBY TRIGGER:</span>
-                <span className="text-[#F8FAFC] truncate text-[9px]">
-                  {signal.standbyTriggerDetail || 'Monitoring Order Block & liquidity sweep before entry execution.'}
-                </span>
-              </div>
-              <span className="text-[8.5px] font-bold text-[#FFD700] shrink-0 ml-1.5">
-                80-87% Gate
-              </span>
-            </div>
-          )}
-
-          {/* Timeframe Update Notice */}
-          {signal.tfUpdateNotice && (
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                onClick();
-              }}
-              className="px-2.5 py-1 rounded-md bg-[#2979FF]/10 border border-[#2979FF]/30 flex items-center justify-between text-[9px] font-mono text-[#2979FF] cursor-pointer hover:bg-[#2979FF]/15 transition-all"
-            >
-              <div className="flex items-center gap-1 min-w-0">
-                <span className="font-bold shrink-0">⚡ TIMEFRAME UPDATE:</span>
-                <span className="text-[#F8FAFC] truncate">{signal.tfUpdateNotice}</span>
-              </div>
-            </div>
-          )}
-
-          {/* Breakeven Protection */}
-          {(() => {
-            const cardTf = (signal.winningTf || signal.timeframe || 'M15').toUpperCase();
-            const beThresholdPct = cardTf === 'H4' || cardTf === 'D1' ? 30 : 45;
-            return (signal.isBreakevenArmed || (signal.status === 'RUNNING' && tpRatio >= beThresholdPct)) && !isClosedOrder;
-          })() && (
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                onClick();
-              }}
-              className="px-2.5 py-1 rounded-md bg-[#00E676]/15 border border-[#00E676]/40 flex items-center justify-between text-[9px] font-mono text-[#00E676] cursor-pointer hover:bg-[#00E676]/20 transition-all"
-              title="1:1 Risk/Reward reached — Stop Loss automatically moved to Breakeven (+1 pip buffer)."
-            >
-              <div className="flex items-center gap-1 min-w-0">
-                <ShieldCheck className="w-3 h-3 text-[#00E676] shrink-0" />
-                <span className="font-black shrink-0">SL AT BREAKEVEN (+1p):</span>
-                <span className="text-[#F8FAFC] truncate">Protected at {formatPrice(signal.pair, signal.entryPrice)}</span>
-              </div>
-              <span className="text-[8.5px] text-[#00E676] font-bold shrink-0">
-                Zero Risk Active
-              </span>
-            </div>
-          )}
-
-          {/* News Blackout */}
           {newsGuard && newsGuard.isWarning && !isClosedOrder && (
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                onClick();
-              }}
-              className="px-2.5 py-1 rounded-md bg-[#FF3366]/15 border border-[#FF3366]/40 flex items-center justify-between text-[9px] font-mono text-[#FF3366] cursor-pointer hover:bg-[#FF3366]/20 transition-all animate-pulse"
-              title={`Tier-1 News Blackout Window: ${newsGuard.eventTitle}`}
-            >
-              <div className="flex items-center gap-1 min-w-0">
-                <Flame className="w-3 h-3 text-[#FF3366] shrink-0" />
-                <span className="font-black shrink-0">NEWS BLACKOUT:</span>
-                <span className="text-[#F8FAFC] truncate">{newsGuard.eventTitle} ({newsGuard.minutesUntil > 0 ? `in ${newsGuard.minutesUntil}m` : 'Live'})</span>
+            <div className="px-2.5 py-1.5 rounded-lg bg-[#FF3366]/10 border-l-2 border-[#FF3366] flex items-center justify-between gap-2 text-[10px] font-mono">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Flame className="w-3.5 h-3.5 text-[#FF3366] shrink-0" />
+                <span className="font-bold text-[#FF3366] shrink-0">NEWS:</span>
+                <span className="text-[#F8FAFC] truncate">
+                  {newsGuard.eventTitle} ({newsGuard.minutesUntil > 0 ? `in ${newsGuard.minutesUntil}m` : 'Live'})
+                </span>
               </div>
-              <span className="text-[8.5px] text-[#FF9100] font-semibold shrink-0">
-                Spread Gate Active
-              </span>
+              <span className="text-[#FF9100] font-semibold shrink-0">Spread Gate</span>
             </div>
           )}
 
-          {/* SL Guard */}
-          {signal.slLearningAudit && signal.slLearningAudit.applied && !isClosedOrder && (
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                onClick();
-              }}
-              className="px-2.5 py-1 rounded-md bg-[#00E676]/10 border border-[#00E676]/30 flex items-center justify-between text-[9px] font-mono text-[#00E676] cursor-pointer hover:bg-[#00E676]/15 transition-all"
-              title={signal.slLearningAudit.lessonsAppliedSummary}
-            >
-              <div className="flex items-center gap-1 min-w-0">
-                <ShieldCheck className="w-3 h-3 text-[#00E676] shrink-0" />
-                <span className="font-bold shrink-0">SL GUARD:</span>
-                <span className="text-[#F8FAFC] truncate">+{signal.slLearningAudit.antiWickExtraBufferPips}p ATR Buffer</span>
+          {isBreakevenActive && (
+            <div className="px-2.5 py-1.5 rounded-lg bg-[#00E676]/10 border-l-2 border-[#00E676] flex items-center justify-between gap-2 text-[10px] font-mono">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <ShieldCheck className="w-3.5 h-3.5 text-[#00E676] shrink-0" />
+                <span className="font-bold text-[#00E676] shrink-0">BREAKEVEN (+1p):</span>
+                <span className="text-[#E2E8F0] truncate">Protected at {formatPrice(signal.pair, signal.entryPrice)}</span>
               </div>
-              <span className="text-[8.5px] text-[#94A3B8] font-semibold shrink-0">
-                H4 Aligned · -68% Repeat Loss
-              </span>
+              <span className="text-[#00E676] font-bold shrink-0">Risk Free</span>
             </div>
           )}
 
-          {/* Recalculated Audit */}
+          {isStandby && (
+            <div className="px-2.5 py-1.5 rounded-lg bg-[#FFD700]/10 border-l-2 border-[#FFD700] flex items-center justify-between gap-2 text-[10px] font-mono">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Clock className="w-3.5 h-3.5 text-[#FFD700] shrink-0" />
+                <span className="text-[#E2E8F0] truncate">
+                  {signal.standbyTriggerDetail || 'Monitoring Order Block & liquidity sweep before trigger.'}
+                </span>
+              </div>
+              <span className="text-[#FFD700] font-bold shrink-0">80-87% Gate</span>
+            </div>
+          )}
+
           {isParamChanged && paramAudit && (
             <button
               type="button"
@@ -949,232 +832,228 @@ export const SignalCard: React.FC<Props> = ({
                 e.stopPropagation();
                 setIsAuditModalOpen(true);
               }}
-              className="w-full px-2.5 py-1 rounded-md bg-[#FF9100]/10 border border-[#FF9100]/30 hover:bg-[#FF9100]/15 flex items-center justify-between text-[9px] font-mono text-[#FF9100] transition-all cursor-pointer text-left"
-              title="Click to view full parameter changes, institutional reason, and trade verdict"
+              className="w-full px-2.5 py-1.5 rounded-lg bg-[#FF9100]/10 border-l-2 border-[#FF9100] hover:bg-[#FF9100]/20 flex items-center justify-between gap-2 text-[10px] font-mono transition-colors cursor-pointer text-left"
             >
               <div className="flex items-center gap-1.5 min-w-0">
-                <Info className="w-3 h-3 text-[#FF9100] shrink-0" />
-                <span className="font-bold text-[#FFD700] shrink-0">RECALCULATED:</span>
-                <span className="text-[#F8FAFC] truncate text-[9px]">
-                  {paramAudit.reason}
-                </span>
+                <Info className="w-3.5 h-3.5 text-[#FF9100] shrink-0" />
+                <span className="font-bold text-[#FFD700] shrink-0">UPDATED:</span>
+                <span className="text-[#E2E8F0] truncate">{paramAudit.reason}</span>
               </div>
-              <span className="text-[8.5px] font-bold text-[#FF9100] shrink-0 ml-1.5 underline underline-offset-2">
-                View Audit →
+              <span className="text-[#FF9100] font-bold shrink-0 underline underline-offset-2">Audit →</span>
+            </button>
+          )}
+
+          {isWarningConflictCard && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onAcknowledgeConflict) onAcknowledgeConflict(signal.id);
+              }}
+              className={`w-full py-2 px-3 rounded-lg text-[10.5px] font-bold border transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
+                isConflictAcknowledged
+                  ? 'bg-[#FF9100]/15 border-[#FF9100]/50 text-[#FFD700]'
+                  : 'bg-[#FF3366]/15 hover:bg-[#FF3366]/25 border-[#FF3366]/50 text-[#FF8A9E]'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span>
+                {isConflictAcknowledged
+                  ? '✓ Risk Acknowledged — Proceed Carefully'
+                  : 'Trade Anyway — I Understand Risk'}
               </span>
             </button>
           )}
         </div>
       )}
 
-      {/* WARNING MODE: Acknowledge Conflict Button */}
-      {isWarningConflictCard && (
-        <div className="mb-2">
+      {/* TIER 5: ORGANIZED ACTION DOCK */}
+      {isClosedOrder ? (
+        <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5 pt-2.5 border-t border-[#1E293B]">
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              if (onAcknowledgeConflict) onAcknowledgeConflict(signal.id);
-            }}
-            className={`w-full py-1.5 px-3 rounded-lg text-[10px] font-black border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-              isConflictAcknowledged
-                ? 'bg-[#FF9100]/20 border-[#FF9100]/60 text-[#FFD700]'
-                : 'bg-[#FF3366]/20 hover:bg-[#FF3366]/35 border-[#FF3366]/60 text-[#FF8A9E]'
-            }`}
-          >
-            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-            <span>
-              {isConflictAcknowledged
-                ? '✓ Risk Acknowledged — Proceed Carefully'
-                : 'Trade Anyway - I Understand Risk'}
-            </span>
-          </button>
-        </div>
-      )}
-
-      {/* ACTION DOCK (Bottom Action Buttons) */}
-      {isClosedOrder ? (
-        <div className="flex items-center gap-1.5 pt-2 border-t border-[#1E293B]">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
               if (onOpenOutcomeAnalysis) onOpenOutcomeAnalysis(signal);
             }}
-            className={`flex-1 min-w-[120px] flex items-center justify-center gap-1.5 text-[10px] sm:text-[10.5px] font-black py-1.5 px-2.5 rounded-md border transition-all cursor-pointer shadow-xs ${
+            className={`col-span-4 sm:col-span-2 flex items-center justify-center gap-1.5 text-[10.5px] font-black py-2 px-2.5 rounded-lg border transition-colors cursor-pointer whitespace-nowrap ${
               isWin
-                ? 'bg-[#00E676]/20 hover:bg-[#00E676]/30 text-[#00E676] border-[#00E676]/50'
-                : 'bg-[#FF3366]/20 hover:bg-[#FF3366]/30 text-[#FF3366] border-[#FF3366]/50'
+                ? 'bg-[#00E676]/15 hover:bg-[#00E676]/25 text-[#00E676] border-[#00E676]/45'
+                : 'bg-[#FF3366]/15 hover:bg-[#FF3366]/25 text-[#FF3366] border-[#FF3366]/45'
             }`}
-            title={isWin ? 'Open Detailed Take-Profit Forensic Breakdown' : 'Open Detailed Stop-Loss Post-Mortem Audit'}
+            title={isWin ? 'Open Take-Profit Breakdown' : 'Open Stop-Loss Audit'}
           >
-            <span>{isWin ? '🎯 Why TP Hit? (Audit)' : '🛑 Why SL Hit? (Audit)'}</span>
+            <span>{isWin ? '🎯 Why TP Hit?' : '🛑 Why SL Hit?'}</span>
           </button>
 
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               if (onOpenChart) onOpenChart();
             }}
-            className="flex items-center justify-center gap-1 text-[10px] font-bold py-1.5 px-2.5 rounded-md bg-[#00E676]/15 hover:bg-[#00E676]/25 text-[#00E676] border border-[#00E676]/40 transition-all cursor-pointer"
-            title="View Historical Chart Execution"
+            className="col-span-1 flex items-center justify-center gap-1 text-[10px] font-bold py-2 px-1.5 rounded-lg bg-[#111827] hover:bg-[#1E293B] text-[#E2E8F0] border border-[#1E293B] transition-colors cursor-pointer whitespace-nowrap"
           >
-            <BarChart2 className="w-3 h-3 text-[#00E676] shrink-0" />
+            <BarChart2 className="w-3.5 h-3.5 text-[#00E676] shrink-0" />
             <span>Chart</span>
           </button>
 
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               if (onOpenTimeMachine) onOpenTimeMachine(signal);
               else setIsTimeMachineOpen(true);
             }}
-            className="flex items-center justify-center gap-1 text-[10px] font-bold py-1.5 px-2 rounded-md bg-[#8B5CF6]/15 hover:bg-[#8B5CF6]/25 text-[#A78BFA] border border-[#8B5CF6]/35 transition-all cursor-pointer"
-            title="Replay in Quantum Time Machine"
+            className="col-span-1 flex items-center justify-center gap-1 text-[10px] font-bold py-2 px-1.5 rounded-lg bg-[#111827] hover:bg-[#1E293B] text-[#E2E8F0] border border-[#1E293B] transition-colors cursor-pointer whitespace-nowrap"
           >
-            <History className="w-3 h-3 text-[#A78BFA] shrink-0" />
-            <span className="truncate">Time Machine</span>
+            <History className="w-3.5 h-3.5 text-[#A78BFA] shrink-0" />
+            <span>Replay</span>
           </button>
 
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               if (onOpenBacktest) onOpenBacktest();
             }}
-            className="flex items-center justify-center gap-1 text-[10px] font-bold py-1.5 px-2.5 rounded-md bg-[#FFD700]/15 hover:bg-[#FFD700]/25 text-[#FFD700] border border-[#FFD700]/35 transition-all cursor-pointer"
-            title="Test in Quant Lab Backtest"
+            className="col-span-1 flex items-center justify-center gap-1 text-[10px] font-bold py-2 px-1.5 rounded-lg bg-[#111827] hover:bg-[#1E293B] text-[#E2E8F0] border border-[#1E293B] transition-colors cursor-pointer whitespace-nowrap"
           >
-            <FlaskConical className="w-3 h-3 text-[#FFD700] shrink-0" />
+            <FlaskConical className="w-3.5 h-3.5 text-[#FFD700] shrink-0" />
             <span>Backtest</span>
           </button>
 
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               onAskAi();
             }}
-            className="flex items-center justify-center gap-1 text-[10px] font-bold py-1.5 px-2.5 rounded-md bg-[#2979FF]/15 hover:bg-[#2979FF]/25 text-[#2979FF] border border-[#2979FF]/30 transition-all cursor-pointer"
-            title="Ask AI Copilot for In-Depth Audit"
+            className="col-span-1 flex items-center justify-center gap-1 text-[10px] font-bold py-2 px-1.5 rounded-lg bg-[#111827] hover:bg-[#1E293B] text-[#E2E8F0] border border-[#1E293B] transition-colors cursor-pointer whitespace-nowrap"
           >
-            <Sparkles className="w-3 h-3 text-[#2979FF] shrink-0" />
+            <Sparkles className="w-3.5 h-3.5 text-[#2979FF] shrink-0" />
             <span>AI Audit</span>
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1 pt-2 border-t border-[#1E293B]">
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 pt-2.5 border-t border-[#1E293B]">
           {isStandby ? (
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onToggleAlert();
               }}
-              className="flex items-center justify-center gap-1 text-[9.5px] sm:text-[10px] font-bold py-1.5 px-1 rounded-md bg-[#FFD700]/15 hover:bg-[#FFD700]/25 text-[#FFD700] border border-[#FFD700]/35 transition-all cursor-pointer"
-              title="Set Price Alert for Trigger Confirmation"
+              className="flex items-center justify-center gap-1.5 text-[10.5px] font-bold py-2 px-2 rounded-lg bg-[#FFD700]/15 hover:bg-[#FFD700]/25 text-[#FFD700] border border-[#FFD700]/35 transition-colors cursor-pointer whitespace-nowrap"
             >
-              <Bell className="w-3 h-3 text-[#FFD700] shrink-0" />
-              <span className="truncate">Alert</span>
+              <Bell className="w-3.5 h-3.5 shrink-0" />
+              <span>Alert</span>
             </button>
           ) : onOpenElev8Order ? (
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onOpenElev8Order();
               }}
-              className="flex items-center justify-center gap-1 text-[9.5px] sm:text-[10px] font-black py-1.5 px-1 rounded-md bg-[#2979FF]/20 hover:bg-[#2979FF]/30 text-[#F8FAFC] border border-[#2979FF]/45 transition-all cursor-pointer"
-              title="Execute Custom Lots & P&L on Elev8 MT5"
+              className="flex items-center justify-center gap-1.5 text-[10.5px] font-black py-2 px-2 rounded-lg bg-[#2979FF]/20 hover:bg-[#2979FF]/30 text-[#F8FAFC] border border-[#2979FF]/45 transition-colors cursor-pointer whitespace-nowrap"
+              title="Execute on Elev8 MT5"
             >
-              <Zap className="w-3 h-3 text-[#00E676] shrink-0" />
-              <span className="truncate">MT5 Order</span>
+              <Zap className="w-3.5 h-3.5 text-[#00E676] shrink-0" />
+              <span>MT5 Order</span>
             </button>
           ) : (
             <div />
           )}
 
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               onClick();
             }}
-            className="flex items-center justify-center gap-1 text-[9.5px] sm:text-[10px] font-bold py-1.5 px-1 rounded-md bg-[#161F33] hover:bg-[#222F47] text-[#F8FAFC] border border-[#222F47] transition-all cursor-pointer"
-            title="Open Setup Details"
+            className="flex items-center justify-center gap-1.5 text-[10.5px] font-semibold py-2 px-2 rounded-lg bg-[#111827] hover:bg-[#1E293B] text-[#E2E8F0] border border-[#1E293B] transition-colors cursor-pointer whitespace-nowrap"
           >
-            <SlidersHorizontal className="w-3 h-3 text-[#94A3B8] shrink-0" />
-            <span className="truncate">Setup</span>
+            <SlidersHorizontal className="w-3.5 h-3.5 text-[#94A3B8] shrink-0" />
+            <span>Setup</span>
           </button>
 
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onAskAi();
-            }}
-            className="flex items-center justify-center gap-1 text-[9.5px] sm:text-[10px] font-bold py-1.5 px-1 rounded-md bg-[#2979FF]/15 hover:bg-[#2979FF]/25 text-[#2979FF] border border-[#2979FF]/30 transition-all cursor-pointer"
-            title="Audit setup with Gemini AI"
-          >
-            <Sparkles className="w-3 h-3 text-[#2979FF] shrink-0" />
-            <span className="truncate">AI Audit</span>
-          </button>
-
-          <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               if (onOpenChart) onOpenChart();
             }}
-            className="flex items-center justify-center gap-1 text-[9.5px] sm:text-[10px] font-bold py-1.5 px-1 rounded-md bg-[#00E676]/15 hover:bg-[#00E676]/25 text-[#00E676] border border-[#00E676]/40 transition-all cursor-pointer"
-            title="View Live TradingView Chart with Deriv Stream"
+            className="flex items-center justify-center gap-1.5 text-[10.5px] font-semibold py-2 px-2 rounded-lg bg-[#111827] hover:bg-[#1E293B] text-[#E2E8F0] border border-[#1E293B] transition-colors cursor-pointer whitespace-nowrap"
           >
-            <BarChart2 className="w-3 h-3 text-[#00E676] shrink-0" />
-            <span className="truncate">Chart</span>
+            <BarChart2 className="w-3.5 h-3.5 text-[#00E676] shrink-0" />
+            <span>Chart</span>
           </button>
 
           <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAskAi();
+            }}
+            className="flex items-center justify-center gap-1.5 text-[10.5px] font-semibold py-2 px-2 rounded-lg bg-[#111827] hover:bg-[#1E293B] text-[#E2E8F0] border border-[#1E293B] transition-colors cursor-pointer whitespace-nowrap"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-[#2979FF] shrink-0" />
+            <span>AI Audit</span>
+          </button>
+
+          <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               if (onOpenTimeMachine) onOpenTimeMachine(signal);
               else setIsTimeMachineOpen(true);
             }}
-            className="flex items-center justify-center gap-1 text-[9.5px] sm:text-[10px] font-bold py-1.5 px-1 rounded-md bg-[#8B5CF6]/15 hover:bg-[#8B5CF6]/25 text-[#A78BFA] border border-[#8B5CF6]/40 transition-all cursor-pointer"
-            title="Time Machine: AI Forward Projection & Bar-by-Bar Replay"
+            className="flex items-center justify-center gap-1.5 text-[10.5px] font-semibold py-2 px-2 rounded-lg bg-[#111827] hover:bg-[#1E293B] text-[#E2E8F0] border border-[#1E293B] transition-colors cursor-pointer whitespace-nowrap"
           >
-            <History className="w-3 h-3 text-[#A78BFA] shrink-0" />
-            <span className="truncate">Time Machine</span>
+            <History className="w-3.5 h-3.5 text-[#A78BFA] shrink-0" />
+            <span>Replay</span>
           </button>
 
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               if (onOpenBacktest) onOpenBacktest();
             }}
-            className="flex items-center justify-center gap-1 text-[9.5px] sm:text-[10px] font-bold py-1.5 px-1 rounded-md bg-[#FFD700]/15 hover:bg-[#FFD700]/25 text-[#FFD700] border border-[#FFD700]/30 transition-all cursor-pointer"
-            title="Test historical performance in Quant Lab"
+            className="flex items-center justify-center gap-1.5 text-[10.5px] font-semibold py-2 px-2 rounded-lg bg-[#111827] hover:bg-[#1E293B] text-[#E2E8F0] border border-[#1E293B] transition-colors cursor-pointer whitespace-nowrap"
           >
-            <FlaskConical className="w-3 h-3 text-[#FFD700] shrink-0" />
-            <span className="truncate">Backtest</span>
+            <FlaskConical className="w-3.5 h-3.5 text-[#FFD700] shrink-0" />
+            <span>Backtest</span>
           </button>
         </div>
       )}
 
-      {/* Signal Parameter Change Audit Modal */}
-      <SignalChangeAuditModal
-        isOpen={isAuditModalOpen}
-        onClose={() => setIsAuditModalOpen(false)}
-        signal={signal}
-        onAskAi={onAskAi}
-      />
+      <div onClick={(e) => e.stopPropagation()}>
+        {/* Signal Parameter Change Audit Modal */}
+        <SignalChangeAuditModal
+          isOpen={isAuditModalOpen}
+          onClose={() => setIsAuditModalOpen(false)}
+          signal={signal}
+          onAskAi={onAskAi}
+        />
 
-      {/* Trade Demotion Audit Modal */}
-      <TradeDemotionAuditModal
-        isOpen={isDemotionModalOpen}
-        onClose={() => setIsDemotionModalOpen(false)}
-        signal={signal}
-        onAskAi={onAskAi}
-      />
+        {/* Trade Demotion Audit Modal */}
+        <TradeDemotionAuditModal
+          isOpen={isDemotionModalOpen}
+          onClose={() => setIsDemotionModalOpen(false)}
+          signal={signal}
+          onAskAi={onAskAi}
+        />
 
-      {/* Time Machine Modal */}
-      <TimeMachineModal
-        isOpen={isTimeMachineOpen}
-        onClose={() => setIsTimeMachineOpen(false)}
-        signal={signal}
-        onOpenElev8Order={onOpenElev8Order ? () => onOpenElev8Order() : undefined}
-      />
+        {/* Time Machine Modal */}
+        <TimeMachineModal
+          isOpen={isTimeMachineOpen}
+          onClose={() => setIsTimeMachineOpen(false)}
+          signal={signal}
+          onOpenElev8Order={onOpenElev8Order ? () => onOpenElev8Order() : undefined}
+        />
+      </div>
     </div>
   );
 };
