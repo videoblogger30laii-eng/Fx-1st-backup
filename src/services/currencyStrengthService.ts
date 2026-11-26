@@ -380,31 +380,33 @@ class CurrencyStrengthService {
     }
 
     const diff = baseItem.strength - quoteItem.strength;
+    if (isBuySignal && diff < 0.35) {
+      return {
+        isAligned: false,
+        blocked: true,
+        meterBias: diff <= -0.35 ? 'SELL' : 'NEUTRAL',
+        reason: `Weak Currency Divergence Blocked BUY ${pairSymbol}: ${base} (${baseItem.strength}/10) vs ${quote} (${quoteItem.strength}/10, Δ ${diff.toFixed(2)})`
+      };
+    }
+
+    if (isSellSignal && diff > -0.35) {
+      return {
+        isAligned: false,
+        blocked: true,
+        meterBias: diff >= 0.35 ? 'BUY' : 'NEUTRAL',
+        reason: `Weak Currency Divergence Blocked SELL ${pairSymbol}: ${base} (${baseItem.strength}/10) vs ${quote} (${quoteItem.strength}/10, Δ ${diff.toFixed(2)})`
+      };
+    }
+
     if (diff >= 1.5) {
-      if (isSellSignal) {
-        return {
-          isAligned: false,
-          blocked: true,
-          meterBias: 'BUY',
-          reason: `Conflict Filter Blocked SELL ${pairSymbol}: Live ${base} (${baseItem.strength}/10) stronger than ${quote} (${quoteItem.strength}/10)`
-        };
-      }
       return { isAligned: true, blocked: false, meterBias: 'BUY' };
     }
 
     if (diff <= -1.5) {
-      if (isBuySignal) {
-        return {
-          isAligned: false,
-          blocked: true,
-          meterBias: 'SELL',
-          reason: `Conflict Filter Blocked BUY ${pairSymbol}: Live ${quote} (${quoteItem.strength}/10) stronger than ${base} (${baseItem.strength}/10)`
-        };
-      }
       return { isAligned: true, blocked: false, meterBias: 'SELL' };
     }
 
-    return { isAligned: true, blocked: false, meterBias: 'NEUTRAL' };
+    return { isAligned: true, blocked: false, meterBias: isBuySignal ? 'BUY' : 'SELL' };
   }
 }
 

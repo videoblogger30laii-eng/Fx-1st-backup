@@ -498,10 +498,31 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
     pairSymbol: null,
     outcomeFilter: null
   });
-  // Automatically compute backtest summary via useMemo whenever signals, filter, or cached trades change
-  const backtestSummary = useMemo(() => {
+  // Automatically compute backtest summary ONLY when Backtesting Lab tab is active
+  const backtestSummary = useMemo<BacktestSummary>(() => {
+    if (selectedTab !== 'BACKTEST') {
+      return {
+        strategy: backtestFilter.strategy,
+        totalTrades: 0,
+        winTrades: 0,
+        lossTrades: 0,
+        winRate: 0,
+        totalPips: 0,
+        profitFactor: 0,
+        maxDrawdownPercent: 0,
+        avgRiskReward: '1:2.0',
+        netRoiPercent: 0,
+        consecutiveWins: 0,
+        consecutiveLosses: 0,
+        avgWinPips: 0,
+        avgLossPips: 0,
+        equityCurve: [],
+        confluenceMatrix: [],
+        filteredTrades: []
+      };
+    }
     return BacktestEngine.runBacktest(backtestFilter, cachedBacktestTrades.length > 0 ? cachedBacktestTrades : undefined, signals);
-  }, [signals, backtestFilter, cachedBacktestTrades]);
+  }, [selectedTab, signals, backtestFilter, cachedBacktestTrades]);
 
   // Macro & Fundamentals
   const [macroData, setMacroData] = useState<MacroMarketData>(() => ({
@@ -944,10 +965,11 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
     };
   }, [runAutoSignalScanner]);
 
-  // Persist live signals state (including HIT_SL / HIT_TP closed status) & dispatch transition alerts strictly from committed state
-  useEffect(() => {
-    PersistenceManager.saveSignalsState(signals);
+  const saveSignalsTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Persist live signals state (debounced to avoid JSON serialization storms on ticks) & dispatch transition alerts strictly from committed state
+  useEffect(() => {
+    let hasStatusTransition = false;
     const marketOpen = isForexMarketOpen(new Date());
 
     signals.forEach(sig => {
@@ -955,6 +977,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       prevSignalsStatusRef.current.set(sig.id, sig.status);
 
       if (!prevStatus || prevStatus === sig.status) return;
+      hasStatusTransition = true;
 
       // Immediately emit unified PersistenceManager transition event whenever RUNNING transitions to HIT_SL or HIT_TP
       if (prevStatus === 'RUNNING' && (sig.status === 'HIT_TP' || sig.status === 'HIT_SL')) {
@@ -1010,20 +1033,31 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
           notifiedTransitionsRef.current.add(transKey);
           PersistenceManager.saveNotifiedTransition(transKey);
           
+          const isBeProtectedClose = Boolean(sig.isBreakevenArmed && Math.abs(sig.pips) <= 3.0);
           soundFx.playTpChime();
           TelegramAlertService.sendAlert(
-            `🎉 *SIGNAL TAKE PROFIT 1 HIT!*\n\n` +
-            `📊 *Pair:* ${sig.pair.symbol} (${sig.type.replace('_', ' ')})\n` +
-            `📍 *Entry:* ${sig.entryPrice}\n` +
-            `🎯 *TP1 Reached:* ${quote} (+${Math.abs(sig.pips)} pips)\n` +
-            `🛡️ *Action:* Moved to Closed History (+${Math.abs(sig.pips)} pips win)!`
+            isBeProtectedClose
+              ? `🛡️ *BREAKEVEN STOP PROTECTED!*\n\n` +
+                `📊 *Pair:* ${sig.pair.symbol} (${sig.type.replace('_', ' ')})\n` +
+                `📍 *Entry:* ${sig.entryPrice}\n` +
+                `✅ *Locked Profit:* ${quote} (+${Math.abs(sig.pips)} pips)\n` +
+                `🛡️ *Action:* Protected at Entry+1p & moved to Closed History!`
+              : `🎉 *SIGNAL TAKE PROFIT 1 HIT!*\n\n` +
+                `📊 *Pair:* ${sig.pair.symbol} (${sig.type.replace('_', ' ')})\n` +
+                `📍 *Entry:* ${sig.entryPrice}\n` +
+                `🎯 *TP1 Reached:* ${quote} (+${Math.abs(sig.pips)} pips)\n` +
+                `🛡️ *Action:* Moved to Closed History (+${Math.abs(sig.pips)} pips win)!`
           );
           const tpEvt: TriggeredAlertEvent = {
             id: `sig-tp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${sig.id}`,
             alertId: sig.id,
             pairSymbol: sig.pair.symbol,
-            title: `🎉 ${sig.pair.symbol} Take Profit 1 Hit!`,
-            message: `${sig.type.replace('_', ' ')} reached TP1 at ${quote} (+${Math.abs(sig.pips)} pips) • Moved to Closed section.`,
+            title: isBeProtectedClose
+              ? `🛡️ ${sig.pair.symbol} Breakeven (+${Math.abs(sig.pips)}p) Locked!`
+              : `🎉 ${sig.pair.symbol} Take Profit 1 Hit!`,
+            message: isBeProtectedClose
+              ? `${sig.type.replace('_', ' ')} protected at Entry+1p BE (${quote}, +${Math.abs(sig.pips)} pips) • Moved to Closed section.`
+              : `${sig.type.replace('_', ' ')} reached TP1 at ${quote} (+${Math.abs(sig.pips)} pips) • Moved to Closed section.`,
             timestamp: Date.now(),
             condition: 'TP_HIT' as any,
             price: quote
@@ -1058,6 +1092,19 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
         }
       }
     });
+
+    if (saveSignalsTimerRef.current) clearTimeout(saveSignalsTimerRef.current);
+    if (hasStatusTransition) {
+      PersistenceManager.saveSignalsState(signals);
+    } else {
+      saveSignalsTimerRef.current = setTimeout(() => {
+        PersistenceManager.saveSignalsState(signalsRef.current);
+      }, 3000);
+    }
+
+    return () => {
+      if (saveSignalsTimerRef.current) clearTimeout(saveSignalsTimerRef.current);
+    };
   }, [signals, appendUniqueTriggeredEvent]);
 
 
@@ -1157,7 +1204,11 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
   useEffect(() => {
     const syncPromise = perform247Sync();
     initial247SyncPromiseRef.current = syncPromise;
-    const interval = setInterval(perform247Sync, 30000);
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        perform247Sync();
+      }
+    }, 30000);
     return () => clearInterval(interval);
   }, [perform247Sync]);
 
@@ -1226,17 +1277,18 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       const now = Date.now();
       setNowClockMs(now);
       const isOpen = isForexMarketOpen(new Date(now));
-      if (isOpen) {
-        // Run news sync every 15 seconds instead of every 1 second
-        if (Math.floor(now / 1000) % 15 === 0) {
+      if (isOpen && !document.hidden) {
+        const step5s = Math.floor(now / 5000);
+        // Run news sync every 30 seconds
+        if (step5s % 6 === 0) {
           runNewsSignalSync(false);
         }
-        // Auto-scan every 30 seconds for missing setups during open market hours
-        if (Math.floor(now / 1000) % 30 === 0) {
+        // Auto-scan every 60 seconds for missing setups during open market hours
+        if (step5s % 12 === 0) {
           runAutoSignalScanner(false);
         }
       }
-    }, 1000);
+    }, 5000);
     return () => {
       isCancelled = true;
       clearInterval(clockTimer);
@@ -1245,38 +1297,67 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
 
 
 
-  // Apply live quote to signals, allPairs, candles, and alerts
-  const applyLiveQuote = useCallback((symbol: string, quote: number) => {
-    if (quote <= 0) return;
+  // Batched live quote applier (prevents 30 synchronous React re-renders per 3s poll)
+  const pendingQuotesRef = React.useRef<Record<string, number>>({});
 
-    // Pure state update for signals (transitions are handled in the committed useEffect above)
-    const ohlc = realPriceService.getOHLC(symbol);
-    setSignals(prev =>
-      prev.map(sig => (sig.pair.symbol === symbol ? updateSignalWithLiveMarket(sig, quote, ohlc) : sig))
-    );
+  const applyLiveQuotesBatch = useCallback((quotesMap: Record<string, number>) => {
+    const entries = Object.entries(quotesMap).filter(([, q]) => q > 0);
+    if (entries.length === 0) return;
 
-    // Update allPairs
-    setAllPairs(prev =>
-      prev.map(p => (p.symbol === symbol ? { ...p, currentPrice: quote } : p))
-    );
+    // 1. Update ONLY non-closed signals whose symbol received a new price
+    setSignals(prev => {
+      let modified = false;
+      const next = prev.map(sig => {
+        if (sig.status === 'HIT_TP' || sig.status === 'HIT_SL') {
+          return sig;
+        }
+        const quote = quotesMap[sig.pair.symbol];
+        if (!quote || quote <= 0 || quote === sig.currentPrice) {
+          return sig;
+        }
+        modified = true;
+        const ohlc = realPriceService.getOHLC(sig.pair.symbol);
+        return updateSignalWithLiveMarket(sig, quote, ohlc);
+      });
+      return modified ? next : prev;
+    });
 
-    // Update selected pair
-    setSelectedPair(prev => (prev.symbol === symbol ? { ...prev, currentPrice: quote } : prev));
+    // 2. Update allPairs only if any pair price actually changed
+    setAllPairs(prev => {
+      let modified = false;
+      const next = prev.map(p => {
+        const quote = quotesMap[p.symbol];
+        if (quote && quote > 0 && quote !== p.currentPrice) {
+          modified = true;
+          return { ...p, currentPrice: quote };
+        }
+        return p;
+      });
+      return modified ? next : prev;
+    });
 
-    // Sync last candle if matching
-    setCandles(prev => {
-      if (selectedPairRef.current.symbol === symbol && prev.length > 0) {
+    // 3. Update selected pair if changed
+    setSelectedPair(prev => {
+      const quote = quotesMap[prev.symbol];
+      return quote && quote > 0 && quote !== prev.currentPrice ? { ...prev, currentPrice: quote } : prev;
+    });
+
+    // 4. Sync last candle if selected pair updated
+    const selectedQuote = quotesMap[selectedPairRef.current.symbol];
+    if (selectedQuote && selectedQuote > 0) {
+      setCandles(prev => {
+        if (prev.length === 0) return prev;
         const last = prev[prev.length - 1];
+        if (last.close === selectedQuote) return prev;
         const updatedLast = {
           ...last,
-          close: quote,
-          high: Math.max(last.high, quote),
-          low: Math.min(last.low, quote)
+          close: selectedQuote,
+          high: Math.max(last.high, selectedQuote),
+          low: Math.min(last.low, selectedQuote)
         };
         return [...prev.slice(0, -1), updatedLast];
-      }
-      return prev;
-    });
+      });
+    }
 
     // During weekend market closure, do not fire automated Price Alerts or Elev8 Order triggers
     if (!isForexMarketOpen(new Date())) {
@@ -1289,7 +1370,8 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       setAlerts(prev => {
         let hasChanges = false;
         const updated = prev.map(a => {
-          if (a.isEnabled && !a.isTriggered && a.pairSymbol === symbol) {
+          const quote = quotesMap[a.pairSymbol];
+          if (quote && quote > 0 && a.isEnabled && !a.isTriggered) {
             let met = false;
             if (a.condition === 'PRICE_ABOVE') met = quote >= a.targetPrice;
             else if (a.condition === 'PRICE_BELOW') met = quote <= a.targetPrice;
@@ -1314,7 +1396,8 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
     setAlerts(prev => {
       let hasTriggeredChange = false;
       const updated = prev.map(a => {
-        if (a.isEnabled && !a.isTriggered && a.pairSymbol === symbol) {
+        const quote = quotesMap[a.pairSymbol];
+        if (quote && quote > 0 && a.isEnabled && !a.isTriggered) {
           let fired = false;
           if (a.condition === 'PRICE_ABOVE') fired = quote >= a.targetPrice;
           else if (a.condition === 'PRICE_BELOW') fired = quote <= a.targetPrice;
@@ -1357,12 +1440,18 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
 
     // Check Elev8 Pending Orders for Auto-Trigger or Invalidation
     setElev8Trades(prevTrades => {
-      let hasChanges = false;
-      const cleanTickSym = symbol.replace('/', '');
+      if (prevTrades.length === 0) return prevTrades;
+      const suffix = elev8Config.symbolSuffix || '';
+      const cleanQuotes: Record<string, number> = {};
+      for (const [sym, q] of entries) {
+        cleanQuotes[sym.replace('/', '')] = q;
+      }
 
+      let hasChanges = false;
       const updated = prevTrades.map(trade => {
-        const cleanTradeSym = trade.symbol.replace(elev8Config.symbolSuffix || '', '').replace('/', '');
-        if (cleanTickSym !== cleanTradeSym) return trade;
+        const cleanTradeSym = trade.symbol.replace(suffix, '').replace('/', '');
+        const quote = cleanQuotes[cleanTradeSym];
+        if (!quote || quote <= 0) return trade;
 
         if (trade.status === 'PENDING') {
           // 1. Check if Pending Order is TRIGGERED & FILLED
@@ -1573,44 +1662,65 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
     });
   }, [elev8Config.symbolSuffix, appendUniqueTriggeredEvent]);
 
+  const applyLiveQuote = useCallback((symbol: string, quote: number) => {
+    if (quote > 0) applyLiveQuotesBatch({ [symbol]: quote });
+  }, [applyLiveQuotesBatch]);
+
   useEffect(() => {
     marketPrecisionService.setPrecisionMode(isMarketPrecisionEnabled);
     try {
       localStorage.setItem('fx_market_precision_mode', String(isMarketPrecisionEnabled));
     } catch {}
     const unsubscribe = marketPrecisionService.onPrecisionTick((sym, price) => {
-      applyLiveQuote(sym, price);
+      if (price > 0) pendingQuotesRef.current[sym] = price;
     });
     return () => {
       unsubscribe();
     };
-  }, [isMarketPrecisionEnabled, applyLiveQuote]);
+  }, [isMarketPrecisionEnabled]);
 
-  // Real Price Service Setup: Gold API (5s) + Open ER-API (10s) + Binance BTC (8s)
+  // Real Price Service Setup + 1000ms Batched Quote Flush (prevents OOM / UI thrashing)
   useEffect(() => {
     realPriceService.start();
 
     const unsubscribePrice = realPriceService.onPrice(tick => {
-      applyLiveQuote(tick.symbol, tick.price);
+      if (tick.price > 0) {
+        pendingQuotesRef.current[tick.symbol] = tick.price;
+      }
     });
 
+    const flushTimer = setInterval(() => {
+      const pending = pendingQuotesRef.current;
+      const keys = Object.keys(pending);
+      if (keys.length === 0) return;
+      pendingQuotesRef.current = {};
+      applyLiveQuotesBatch(pending);
+    }, 1000);
+
     const unsubscribeAll = realPriceService.onAllPrices(prices => {
-      setAllPairs(prev =>
-        prev.map(p => {
+      setAllPairs(prev => {
+        let modified = false;
+        const next = prev.map(p => {
           const price = prices[p.symbol];
-          return price && price > 0 ? { ...p, currentPrice: price } : p;
-        })
-      );
+          if (price && price > 0 && price !== p.currentPrice) {
+            modified = true;
+            return { ...p, currentPrice: price };
+          }
+          return p;
+        });
+        return modified ? next : prev;
+      });
     });
 
     setProviderStatus('Real FX & Gold API • Active');
 
     return () => {
+      clearInterval(flushTimer);
       unsubscribePrice();
       unsubscribeAll();
       realPriceService.stop();
     };
-  }, [applyLiveQuote]);
+  }, [applyLiveQuotesBatch]);
 
   // Format last sync time (e.g. "18:45")
   const formatLastSyncTime = useCallback((timestamp: number): string => {
@@ -1636,7 +1746,6 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       const updatedUsed = PersistenceManager.incrementApiQuota(1);
       setApiQuota({ used: updatedUsed, limit: 800 });
       setProviderStatus('TradingView • Live Interbank Real Feed');
-      runAutoSignalScannerRef.current(false);
     } catch {
       // fallback
     } finally {
@@ -1671,8 +1780,9 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        // Tab minimized or switched -> freeze polling
+        // Tab minimized or switched -> freeze polling and flush any debounced state
         realPriceService.stop();
+        PersistenceManager.saveSignalsState(signalsRef.current);
       } else {
         // Tab foregrounded -> resume if active
         if (refreshInterval > 0) {
@@ -1763,6 +1873,8 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
     loadCandles(selectedPair, tf);
   }, [selectedPair, loadCandles]);
 
+  const clockBucket15s = Math.floor(nowClockMs / 15000) * 15000;
+
   // Filtered Signals: Enforces Best TF Wins (One Pair = One Signal Only) and Single Active Strategy
   const filteredSignals = useMemo(() => {
     // 1. Gather all signals meeting base validity, cooldown, active filter, and search
@@ -1772,7 +1884,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
         return false;
       }
 
-      const isValidAndActive = isSignalValidAndActive(sig, nowClockMs);
+      const isValidAndActive = isSignalValidAndActive(sig, clockBucket15s);
       const isClosedOrExpired = !isValidAndActive;
 
       // The Closed / History tab displays closed, hit-TP, hit-SL, or expired orders
@@ -1876,13 +1988,13 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       }
       return b.confluenceScore - a.confluenceScore;
     });
-  }, [signals, nowClockMs, selectedFilter, confluenceFilter, activeStrategy, searchQuery, sortOption]);
+  }, [signals, clockBucket15s, selectedFilter, confluenceFilter, activeStrategy, searchQuery, sortOption]);
 
   const confluenceCounts = useMemo(() => {
     const seenPairs = new Map<string, ForexSignal>();
     for (const sig of signals) {
       if (PersistenceManager.isPairInCloseCooldown(sig.pair.symbol)) continue;
-      if (!isSignalValidAndActive(sig, nowClockMs)) continue;
+      if (!isSignalValidAndActive(sig, clockBucket15s)) continue;
       const strat = getSignalStrategy(sig);
       if (activeStrategy !== 'ALL_STRATEGIES' && strat !== activeStrategy) continue;
       if (activeStrategy === 'GOLD_HUNTER' && getAssetCategory(sig.pair.symbol) !== 'METALS') continue;
@@ -1910,7 +2022,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       plus70: list.filter(s => (s.confluenceScore ?? 0) >= 70).length,
       plus80: list.filter(s => (s.confluenceScore ?? 0) >= 80).length
     };
-  }, [signals, nowClockMs, activeStrategy, selectedFilter, searchQuery]);
+  }, [signals, clockBucket15s, activeStrategy, selectedFilter, searchQuery]);
 
   // Favorite & Alert Toggles
   const handleToggleFavorite = (id: string) => {

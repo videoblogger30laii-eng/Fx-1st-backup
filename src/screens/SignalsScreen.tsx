@@ -191,8 +191,14 @@ export const SignalsScreen: React.FC<Props> = ({
   const [isHiddenConflictsExpanded, setIsHiddenConflictsExpanded] = useState<boolean>(false);
   const [acknowledgedConflictIds, setAcknowledgedConflictIds] = useState<Record<string, boolean>>({});
 
+  const [closedVisibleCount, setClosedVisibleCount] = useState<number>(40);
+  const closedClockBucket = Math.floor((nowClockMs || Date.now()) / 30000) * 30000;
+
   // Strictly active, tradeable, non-expired, and non-invalidated signals (>= 60 confluence)
-  const activeSignals = signals.filter(s => isSignalValidAndActive(s, nowClockMs) && (s.confluenceScore ?? 0) >= 60);
+  const activeSignals = useMemo(
+    () => signals.filter(s => isSignalValidAndActive(s, closedClockBucket) && (s.confluenceScore ?? 0) >= 60),
+    [signals, closedClockBucket]
+  );
   const isAPlusNonRepeated = selectedFilter === 'A_PLUS_NON_REPEATED';
   const bestTrade = isAPlusNonRepeated
     ? (filteredSignals[0] || activeSignals.find(s => s.isBestTradeNow) || activeSignals[0])
@@ -288,7 +294,7 @@ export const SignalsScreen: React.FC<Props> = ({
     const seen = new Set<string>();
     const seenFp = new Set<string>();
     return signals.filter(s => {
-      if (isSignalValidAndActive(s, nowClockMs)) return false;
+      if (isSignalValidAndActive(s, closedClockBucket)) return false;
       const baseId = (s.id || '').replace(/-HIST-\d+/g, '').replace(/-HIT_TP-\d+/g, '').replace(/-HIT_SL-\d+/g, '');
       const sym = (s.pair?.symbol || '').toUpperCase();
       const entry = s.entryPrice || 0;
@@ -319,7 +325,7 @@ export const SignalsScreen: React.FC<Props> = ({
       seenFp.add(fingerprint);
       return true;
     });
-  }, [signals, nowClockMs]);
+  }, [signals, closedClockBucket]);
 
   // Calculate win/loss rates per timeframe (ALL, M15, H1, H4) across current closed time range
   const timeframeStats = useMemo<Record<ClosedTfFilter, TimeframeStat>>(() => {
@@ -340,7 +346,7 @@ export const SignalsScreen: React.FC<Props> = ({
       return 'OTHER';
     };
 
-    const now = nowClockMs || Date.now();
+    const now = closedClockBucket || Date.now();
     const timeRangeFiltered = allClosedSignals.filter(s => {
       const closedTime = s.closedAtMs || s.createdAtMs || now;
       if (closedTimeRange === '24H') return closedTime >= now - 24 * 3600 * 1000;
@@ -361,11 +367,11 @@ export const SignalsScreen: React.FC<Props> = ({
       H1: calc(timeRangeFiltered.filter(s => getTfKey(s) === 'H1')),
       H4: calc(timeRangeFiltered.filter(s => getTfKey(s) === 'H4')),
     };
-  }, [allClosedSignals, closedTimeRange, customStartDate, customEndDate, nowClockMs]);
+  }, [allClosedSignals, closedTimeRange, customStartDate, customEndDate, closedClockBucket]);
 
   // Dynamically filtered and sorted closed trades for the Closed / History tab
   const displayedClosedSignals = useMemo(() => {
-    const now = nowClockMs || Date.now();
+    const now = closedClockBucket || Date.now();
     const isSearchActive = Boolean(searchQuery && searchQuery.trim());
 
     // 1. Time Range Filter
@@ -461,7 +467,7 @@ export const SignalsScreen: React.FC<Props> = ({
     });
 
     return sorted;
-  }, [allClosedSignals, closedTimeRange, closedOutcome, closedTimeframe, searchQuery, closedSortOption, customStartDate, customEndDate, nowClockMs]);
+  }, [allClosedSignals, closedTimeRange, closedOutcome, closedTimeframe, searchQuery, closedSortOption, customStartDate, customEndDate, closedClockBucket]);
 
   const tfSuffix = closedTimeframe === 'M15' ? ' · 15 Min (M15)' : closedTimeframe === 'H1' ? ' · 1 Hour (H1)' : closedTimeframe === 'H4' ? ' · 4 Hours (H4)' : '';
   const activeTimeframeLabel =
@@ -1735,7 +1741,10 @@ export const SignalsScreen: React.FC<Props> = ({
 
       {/* Signal Cards */}
       <div className="space-y-2">
-        {(selectedFilter === 'HISTORY' ? displayedClosedSignals : displayedActiveSignals).map((sig, idx) => (
+        {(selectedFilter === 'HISTORY'
+          ? displayedClosedSignals.slice(0, closedVisibleCount)
+          : displayedActiveSignals
+        ).map((sig, idx) => (
           <SignalCard
             key={`${sig.id}-${sig.status}-${sig.createdAtMs || idx}`}
             signal={sig}
@@ -1757,6 +1766,16 @@ export const SignalsScreen: React.FC<Props> = ({
             onAcknowledgeConflict={handleToggleAcknowledgeConflict}
           />
         ))}
+
+        {selectedFilter === 'HISTORY' && displayedClosedSignals.length > closedVisibleCount && (
+          <button
+            type="button"
+            onClick={() => setClosedVisibleCount(prev => prev + 40)}
+            className="w-full py-2.5 px-4 rounded-xl bg-[#101522] hover:bg-[#161F33] border border-[#222F47] text-xs font-bold text-[#60A5FA] transition-colors cursor-pointer"
+          >
+            Load More Closed Trades ({displayedClosedSignals.length - closedVisibleCount} remaining)
+          </button>
+        )}
 
         {(selectedFilter === 'HISTORY' ? displayedClosedSignals : displayedActiveSignals).length === 0 && (
           <div className="p-8 text-center bg-[#101522] rounded-xl border border-[#222F47] space-y-3">

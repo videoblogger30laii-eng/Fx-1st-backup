@@ -552,22 +552,22 @@ export function evaluateSwingRangePosition(
   const zoneLabel: 'DISCOUNT' | 'EQUILIBRIUM' | 'PREMIUM' =
     rangePosPct <= 38 ? 'DISCOUNT' : rangePosPct >= 62 ? 'PREMIUM' : 'EQUILIBRIUM';
 
-  // Ideal value: BUY in discount/equilibrium (<= 60%), SELL in premium/equilibrium (>= 40%)
-  const isInValueZone = isBuy ? rangePosPct <= 60 : rangePosPct >= 40;
+  // True institutional value: BUY strictly in Discount/Equilibrium (<= 52%), SELL strictly in Premium/Equilibrium (>= 48%)
+  const isInValueZone = isBuy ? rangePosPct <= 52 : rangePosPct >= 48;
 
-  // Chasing guard: Buying at upper range/overbought or Selling at lower range/oversold
+  // Tight Anti-Chase guard: block buying in Premium (>= 65% or RSI >= 68) or selling in Discount (<= 35% or RSI <= 32)
   const isChasingZone = isBuy
-    ? rangePosPct >= 78 || (tfRsi !== null && tfRsi >= 72)
-    : rangePosPct <= 22 || (tfRsi !== null && tfRsi <= 28);
+    ? rangePosPct >= 65 || (tfRsi !== null && tfRsi >= 68)
+    : rangePosPct <= 35 || (tfRsi !== null && tfRsi <= 32);
 
   const isExtremeChase = isBuy
-    ? rangePosPct >= 86 || (tfRsi !== null && tfRsi >= 75)
-    : rangePosPct <= 14 || (tfRsi !== null && tfRsi <= 25);
+    ? rangePosPct >= 78 || (tfRsi !== null && tfRsi >= 73)
+    : rangePosPct <= 22 || (tfRsi !== null && tfRsi <= 27);
 
   // Compute genuine structural pullback entry level (EMA21 / Equilibrium) bounded to sensible ATR range
   const atrRef = tfAtr && tfAtr > 0 ? tfAtr : span * 0.22;
   const minPullback = atrRef * 0.30;
-  const maxPullback = atrRef * 0.95;
+  const maxPullback = atrRef * 1.15;
 
   const structuralRefs: number[] = [];
   if (tfEma21 && Number.isFinite(tfEma21)) {

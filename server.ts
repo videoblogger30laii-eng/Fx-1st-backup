@@ -1226,6 +1226,15 @@ async function startServer() {
           return;
         }
 
+        const tf = workingSig.winningTf || workingSig.timeframe || 'H1';
+        const beRatio = tf === 'H4' || tf === 'D1' ? 0.30 : 0.45;
+        const tp1DistPips = Math.abs(tp1 - entry) * mult;
+        const beTriggerPips = Math.max(12, tp1DistPips * beRatio);
+        const beTriggerPrice = entry + (isBuy ? 1 : -1) * (beTriggerPips / mult);
+        const beProtectedSl = Number((entry + (isBuy ? 1 : -1) * (1.0 / mult)).toFixed(isGold ? 2 : isJpy || isSilver ? 3 : 5));
+        let beArmed = Boolean(workingSig.isBreakevenArmed);
+        let isBeExit = false;
+
         let isSlHit = false;
         let isTpHit = false;
         let exitPrice = refClose;
@@ -1234,13 +1243,23 @@ async function startServer() {
 
         // 1. Live Bid/Ask check (MT5: BUY exits on Bid, SELL exits on Ask = Bid + spread)
         const liveExitQuote = isBuy ? liveBid : liveAsk;
+        const activeLiveSl = beArmed
+          ? (isBuy ? Math.max(sl, beProtectedSl) : Math.min(sl, beProtectedSl))
+          : sl;
         if (isBuy) {
-          if (liveExitQuote <= sl) {
-            const slOvershoot = (sl - liveExitQuote) * mult;
+          if (liveExitQuote <= activeLiveSl) {
+            const slOvershoot = (activeLiveSl - liveExitQuote) * mult;
             if (slOvershoot <= maxOvershootPips) {
-              isSlHit = true;
-              exitPrice = sl;
-              triggerSource = `live Bid ${liveExitQuote.toFixed(isJpy || isGold ? 3 : 5)}`;
+              if (beArmed) {
+                isTpHit = true;
+                isBeExit = true;
+                exitPrice = activeLiveSl;
+                triggerSource = `🛡️ Breakeven SL (+1.0p) live Bid ${liveExitQuote.toFixed(isJpy || isGold ? 3 : 5)}`;
+              } else {
+                isSlHit = true;
+                exitPrice = sl;
+                triggerSource = `live Bid ${liveExitQuote.toFixed(isJpy || isGold ? 3 : 5)}`;
+              }
             }
           } else if (liveExitQuote >= tp1) {
             const tpOvershoot = (liveExitQuote - tp1) * mult;
@@ -1251,12 +1270,19 @@ async function startServer() {
             }
           }
         } else {
-          if (liveExitQuote >= sl) {
-            const slOvershoot = (liveExitQuote - sl) * mult;
+          if (liveExitQuote >= activeLiveSl) {
+            const slOvershoot = (liveExitQuote - activeLiveSl) * mult;
             if (slOvershoot <= maxOvershootPips) {
-              isSlHit = true;
-              exitPrice = sl;
-              triggerSource = `live Ask ${liveExitQuote.toFixed(isJpy || isGold ? 3 : 5)}`;
+              if (beArmed) {
+                isTpHit = true;
+                isBeExit = true;
+                exitPrice = activeLiveSl;
+                triggerSource = `🛡️ Breakeven SL (+1.0p) live Ask ${liveExitQuote.toFixed(isJpy || isGold ? 3 : 5)}`;
+              } else {
+                isSlHit = true;
+                exitPrice = sl;
+                triggerSource = `live Ask ${liveExitQuote.toFixed(isJpy || isGold ? 3 : 5)}`;
+              }
             }
           } else if (liveExitQuote <= tp1) {
             const tpOvershoot = (tp1 - liveExitQuote) * mult;
@@ -1273,11 +1299,21 @@ async function startServer() {
         if (!isSlHit && !isTpHit && bars.length > 0 && entryStartMs > 0) {
           for (const bar of bars) {
             if (bar.timestamp < entryStartMs) continue;
+            const activeBarSl = beArmed
+              ? (isBuy ? Math.max(sl, beProtectedSl) : Math.min(sl, beProtectedSl))
+              : sl;
             if (isBuy) {
-              if (bar.low <= sl) {
-                isSlHit = true;
-                exitPrice = sl;
-                triggerSource = `intrabar wick low ${bar.low} @ ${new Date(bar.timestamp).toISOString()}`;
+              if (bar.low <= activeBarSl) {
+                if (beArmed) {
+                  isTpHit = true;
+                  isBeExit = true;
+                  exitPrice = activeBarSl;
+                  triggerSource = `🛡️ Breakeven SL (+1.0p) intrabar low ${bar.low} @ ${new Date(bar.timestamp).toISOString()}`;
+                } else {
+                  isSlHit = true;
+                  exitPrice = sl;
+                  triggerSource = `intrabar wick low ${bar.low} @ ${new Date(bar.timestamp).toISOString()}`;
+                }
                 break;
               }
               if (bar.high >= tp1) {
@@ -1286,14 +1322,24 @@ async function startServer() {
                 triggerSource = `intrabar wick high ${bar.high} @ ${new Date(bar.timestamp).toISOString()}`;
                 break;
               }
+              if (!beArmed && bar.high >= beTriggerPrice) {
+                beArmed = true;
+              }
             } else {
               // SELL closes on MT5 ASK = Bid bar high/low + spread
               const askBarHigh = bar.high + effectiveSpread;
               const askBarLow = bar.low + effectiveSpread;
-              if (askBarHigh >= sl) {
-                isSlHit = true;
-                exitPrice = sl;
-                triggerSource = `intrabar Ask wick ${askBarHigh.toFixed(isJpy || isGold ? 3 : 5)} (Bid high ${bar.high} + spread ${effectiveSpread}) @ ${new Date(bar.timestamp).toISOString()}`;
+              if (askBarHigh >= activeBarSl) {
+                if (beArmed) {
+                  isTpHit = true;
+                  isBeExit = true;
+                  exitPrice = activeBarSl;
+                  triggerSource = `🛡️ Breakeven SL (+1.0p) intrabar Ask ${askBarHigh.toFixed(isJpy || isGold ? 3 : 5)} @ ${new Date(bar.timestamp).toISOString()}`;
+                } else {
+                  isSlHit = true;
+                  exitPrice = sl;
+                  triggerSource = `intrabar Ask wick ${askBarHigh.toFixed(isJpy || isGold ? 3 : 5)} (Bid high ${bar.high} + spread ${effectiveSpread}) @ ${new Date(bar.timestamp).toISOString()}`;
+                }
                 break;
               }
               if (askBarLow <= tp1) {
@@ -1301,6 +1347,9 @@ async function startServer() {
                 exitPrice = tp1;
                 triggerSource = `intrabar Ask low ${askBarLow.toFixed(isJpy || isGold ? 3 : 5)} @ ${new Date(bar.timestamp).toISOString()}`;
                 break;
+              }
+              if (!beArmed && askBarLow <= beTriggerPrice) {
+                beArmed = true;
               }
             }
           }
@@ -1332,23 +1381,26 @@ async function startServer() {
             } catch {}
           }
         } else if (isTpHit) {
-          const pipsGain = Math.round(Math.abs(exitPrice - entry) * mult * 10) / 10;
-          console.log(`[24/7 Server Monitor] Signal ${workingSig.id} (${sym}) HIT TP1 at ${exitPrice} (${triggerSource}) (+${pipsGain}p)`);
+          const pipsGain = isBeExit ? 1.0 : Math.round(Math.abs(exitPrice - entry) * mult * 10) / 10;
+          console.log(`[24/7 Server Monitor] Signal ${workingSig.id} (${sym}) ${isBeExit ? 'BREAKEVEN LOCKED' : 'HIT TP1'} at ${exitPrice} (${triggerSource}) (+${pipsGain}p)`);
           serverSignalsStore[workingSig.id] = {
             ...workingSig,
             status: 'HIT_TP',
             currentPrice: exitPrice,
             pips: pipsGain,
+            isBreakevenArmed: isBeExit || beArmed,
             closedAtMs: Date.now(),
             isPastReconciled: true,
-            validityTimeLeft: `Closed (TP1 Hit: +${pipsGain}p)`,
-            validityExpiresAt: `TP1 Hit at ${exitPrice}`
+            validityTimeLeft: isBeExit ? 'Closed (Breakeven +1.0p Lock)' : `Closed (TP1 Hit: +${pipsGain}p)`,
+            validityExpiresAt: isBeExit ? `🛡️ BE SL Protected at ${exitPrice}` : `TP1 Hit at ${exitPrice}`
           };
           storeModified = true;
 
           if (serverTelegramConfig.enabled && serverTelegramConfig.botToken && serverTelegramConfig.chatId) {
             try {
-              const text = `🎉 *[24/7 SERVER]* *SIGNAL TAKE PROFIT 1 HIT*\n\n📊 *Pair:* ${sym} (${workingSig.type})\n📍 *Entry:* ${workingSig.entryPrice}\n🎯 *TP1 Reached:* ${exitPrice} (+${pipsGain}p)\nℹ️ Triggered via ${triggerSource}.`;
+              const text = isBeExit
+                ? `🛡️ *[24/7 SERVER]* *BREAKEVEN STOP PROTECTED*\n\n📊 *Pair:* ${sym} (${workingSig.type})\n📍 *Entry:* ${workingSig.entryPrice}\n✅ *Locked Profit:* ${exitPrice} (+${pipsGain}p)`
+                : `🎉 *[24/7 SERVER]* *SIGNAL TAKE PROFIT 1 HIT*\n\n📊 *Pair:* ${sym} (${workingSig.type})\n📍 *Entry:* ${workingSig.entryPrice}\n🎯 *TP1 Reached:* ${exitPrice} (+${pipsGain}p)\nℹ️ Triggered via ${triggerSource}.`;
               fetch(`https://api.telegram.org/bot${serverTelegramConfig.botToken}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1357,14 +1409,17 @@ async function startServer() {
             } catch {}
           }
         } else {
-          // Keep running signal's currentPrice & pips fresh on server store
+          // Keep running signal's currentPrice, pips, and Breakeven state fresh on server store
           const livePips = Math.round((isBuy ? (liveExitQuote - entry) : (entry - liveExitQuote)) * mult * 10) / 10;
+          if (livePips >= beTriggerPips) beArmed = true;
           const prevPips = Number(workingSig.pips || 0);
-          if (Math.abs(livePips - prevPips) >= 0.2 || workingSig.currentPrice !== refClose) {
+          if (Math.abs(livePips - prevPips) >= 0.2 || workingSig.currentPrice !== refClose || Boolean(workingSig.isBreakevenArmed) !== beArmed) {
             serverSignalsStore[workingSig.id] = {
               ...workingSig,
               currentPrice: refClose,
-              pips: livePips
+              pips: livePips,
+              isBreakevenArmed: beArmed,
+              ...(beArmed ? { validityTimeLeft: `🛡️ Breakeven Protected (${livePips >= 0 ? '+' : ''}${livePips}p)` } : {})
             };
             storeModified = true;
           }
@@ -1823,7 +1878,7 @@ async function startServer() {
     const quoteScore = quoteItem?.strength ?? 5.25;
     const directionalDelta = isBuy ? baseScore - quoteScore : quoteScore - baseScore;
 
-    // Prevent buying weaker currency against stronger currency on 24h momentum
+    // Require clean currency strength divergence (block flat/counter-flow FX pairs)
     if (!pairSymbol.startsWith('XAU') && !pairSymbol.startsWith('XAG')) {
       if (isBuy && baseScore < 4.5 && quoteScore > 5.5) {
         return { allowed: false, reason: `24h Strength Conflict: Weak ${base} (${baseScore}) vs Strong ${quote} (${quoteScore})`, directionalDelta };
@@ -1831,12 +1886,12 @@ async function startServer() {
       if (!isBuy && baseScore > 5.5 && quoteScore < 4.5) {
         return { allowed: false, reason: `24h Strength Conflict: Strong ${base} (${baseScore}) vs Weak ${quote} (${quoteScore})`, directionalDelta };
       }
-      if (directionalDelta < -1.4) {
-        return { allowed: false, reason: `24h Currency Delta (${directionalDelta.toFixed(2)}) strongly opposes ${isBuy ? 'BUY' : 'SELL'}`, directionalDelta };
+      if (directionalDelta < 0.35) {
+        return { allowed: false, reason: `Weak Currency Divergence (${directionalDelta.toFixed(2)} < +0.35) for ${isBuy ? 'BUY' : 'SELL'}`, directionalDelta };
       }
-    } else if (isBuy && quoteScore >= 7.2 && directionalDelta < -1.5) {
+    } else if (isBuy && quoteScore >= 7.0 && directionalDelta < -0.4) {
       return { allowed: false, reason: `Strong ${quote} (${quoteScore}) opposes long Metal`, directionalDelta };
-    } else if (!isBuy && quoteScore <= 3.2 && directionalDelta < -1.5) {
+    } else if (!isBuy && quoteScore <= 3.5 && directionalDelta < -0.4) {
       return { allowed: false, reason: `Weak ${quote} (${quoteScore}) opposes short Metal`, directionalDelta };
     }
     return { allowed: true, directionalDelta };
@@ -1882,17 +1937,17 @@ async function startServer() {
     const equilibrium = (swingHigh + swingLow) / 2;
     const rangePosPct = Math.round(Math.max(0, Math.min(100, ((livePrice - swingLow) / span) * 100)));
     const zoneLabel = rangePosPct <= 38 ? 'DISCOUNT' : rangePosPct >= 62 ? 'PREMIUM' : 'EQUILIBRIUM';
-    const isInValueZone = isBuy ? rangePosPct <= 60 : rangePosPct >= 40;
+    const isInValueZone = isBuy ? rangePosPct <= 52 : rangePosPct >= 48;
     const isChasingZone = isBuy
-      ? rangePosPct >= 78 || (tfRsi !== null && tfRsi >= 72)
-      : rangePosPct <= 22 || (tfRsi !== null && tfRsi <= 28);
+      ? rangePosPct >= 65 || (tfRsi !== null && tfRsi >= 68)
+      : rangePosPct <= 35 || (tfRsi !== null && tfRsi <= 32);
     const isExtremeChase = isBuy
-      ? rangePosPct >= 86 || (tfRsi !== null && tfRsi >= 75)
-      : rangePosPct <= 14 || (tfRsi !== null && tfRsi <= 25);
+      ? rangePosPct >= 78 || (tfRsi !== null && tfRsi >= 73)
+      : rangePosPct <= 22 || (tfRsi !== null && tfRsi <= 27);
 
     const atrRef = tfAtr && tfAtr > 0 ? tfAtr : span * 0.22;
     const minPullback = atrRef * 0.30;
-    const maxPullback = atrRef * 0.95;
+    const maxPullback = atrRef * 1.15;
     const refs: number[] = [];
     if (tfEma21 && Number.isFinite(tfEma21)) {
       if ((isBuy && tfEma21 < livePrice) || (!isBuy && tfEma21 > livePrice)) refs.push(tfEma21);
@@ -2280,7 +2335,7 @@ async function startServer() {
               const swingCandles = sortedH1.length >= 16 ? sortedH1 : sortedH4;
               const swingEval = srvEvaluateSwingRange(pair, swingCandles, livePrice, isBuy, h1Rsi, h1Ema21, h1Atr);
               const valueAdjustment = swingEval.hasData
-                ? (swingEval.isExtremeChase ? -22 : swingEval.isChasingZone ? -14 : swingEval.isInValueZone ? 4 : 0)
+                ? (swingEval.isExtremeChase ? -24 : swingEval.isChasingZone ? -16 : swingEval.isInValueZone ? 6 : 0)
                 : 0;
 
               // Compute per-TF scores WITHOUT artificial 1.5x M15 boost; prioritize proven H1 & H4 setups
@@ -2324,7 +2379,9 @@ async function startServer() {
               const tp3Pips = Math.round(tp1Pips * 2.0 * 10) / 10;
               const pipUnit = srvPipFactor(pair.symbol);
 
-              const nearValueEntry = swingEval.isInValueZone || isLiquiditySwept;
+              // Only allow MARKET execution strictly in Value Zone (Discount/Equilibrium <= 52% BUY, Premium/Equilibrium >= 48% SELL);
+              // otherwise force LIMIT pullback entry waiting for better price
+              const nearValueEntry = swingEval.isInValueZone;
               const signalType = nearValueEntry
                 ? (isBuy ? 'BUY_MARKET' : 'SELL_MARKET')
                 : (isBuy ? 'BUY_LIMIT' : 'SELL_LIMIT');

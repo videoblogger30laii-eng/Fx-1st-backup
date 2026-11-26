@@ -174,6 +174,7 @@ export const StrategyBacktester = {
     const ema50 = this.calculateEMA(closes, 50);
     const ema200 = this.calculateEMA(closes, 200);
     const atr14 = this.calculateATR(candles, 14);
+    const adx14 = this.calculateADX(candles, 14);
 
     let validSetupsCount = 0;
     const lookback = 35;
@@ -207,8 +208,8 @@ export const StrategyBacktester = {
       const rangePosPct = span48 > 1e-8
         ? Math.round(Math.max(0, Math.min(100, ((signalCandle.close - swingLow48) / span48) * 100)))
         : 50;
-      const inDiscountOrEarlyTrend = rangePosPct <= 60;
-      const inPremiumOrEarlyTrend = rangePosPct >= 40;
+      const inDiscountOrEarlyTrend = rangePosPct <= 52;
+      const inPremiumOrEarlyTrend = rangePosPct >= 48;
 
       const recentBodies = candles.slice(Math.max(0, i - 14), i).map(c => Math.abs(c.close - c.open));
       const avgBody14 = recentBodies.reduce((a, b) => a + b, 0) / Math.max(1, recentBodies.length);
@@ -216,10 +217,10 @@ export const StrategyBacktester = {
       const hasInstitutionalDisplacement = signalBody >= Math.max(avgBody14 * 1.15, 0.22 * currentAtr);
 
       const rsi14 = this.calculateRSI(closes, 14, i);
-      const rsiNotExhaustedBuy = rsi14 >= 40 && rsi14 <= 71;
-      const rsiNotExhaustedSell = rsi14 <= 60 && rsi14 >= 29;
-      const isChasingBuy = span48 > 1e-8 && (rangePosPct >= 78 || rsi14 >= 72);
-      const isChasingSell = span48 > 1e-8 && (rangePosPct <= 22 || rsi14 <= 28);
+      const rsiNotExhaustedBuy = rsi14 >= 38 && rsi14 <= 68;
+      const rsiNotExhaustedSell = rsi14 <= 62 && rsi14 >= 32;
+      const isChasingBuy = span48 > 1e-8 && (rangePosPct >= 65 || rsi14 >= 68);
+      const isChasingSell = span48 > 1e-8 && (rangePosPct <= 35 || rsi14 <= 32);
 
       const candleDate = new Date(signalCandle.timestamp);
       const utcHour = candleDate.getUTCHours();
@@ -566,6 +567,10 @@ export const StrategyBacktester = {
       }
 
       if (!isSetup) continue;
+
+      // CHOP / REGIME GATE: Block low-ADX sideways chop markets (< 18)
+      const curAdx = adx14[i] || 0;
+      if (i >= 30 && curAdx > 0 && curAdx < 18) continue;
 
       // ANTI-CHASE GUARD: Never buy near swing highs/overbought or sell near swing lows/oversold
       if (isBuy && isChasingBuy) continue;
@@ -1029,6 +1034,62 @@ export const StrategyBacktester = {
     return atr;
   },
 
+  calculateADX(candles: CandleStick[], period: number = 14): number[] {
+    const adxArr: number[] = new Array(candles.length).fill(0);
+    if (candles.length < period * 2 + 1) return adxArr;
+
+    const tr: number[] = new Array(candles.length).fill(0);
+    const plusDM: number[] = new Array(candles.length).fill(0);
+    const minusDM: number[] = new Array(candles.length).fill(0);
+
+    for (let i = 1; i < candles.length; i++) {
+      const up = candles[i].high - candles[i - 1].high;
+      const down = candles[i - 1].low - candles[i].low;
+      plusDM[i] = up > down && up > 0 ? up : 0;
+      minusDM[i] = down > up && down > 0 ? down : 0;
+      tr[i] = Math.max(
+        candles[i].high - candles[i].low,
+        Math.abs(candles[i].high - candles[i - 1].close),
+        Math.abs(candles[i].low - candles[i - 1].close)
+      );
+    }
+
+    let smTr = 0;
+    let smPlus = 0;
+    let smMinus = 0;
+    for (let i = 1; i <= period; i++) {
+      smTr += tr[i];
+      smPlus += plusDM[i];
+      smMinus += minusDM[i];
+    }
+
+    const dx: number[] = new Array(candles.length).fill(0);
+    for (let i = period; i < candles.length; i++) {
+      if (i > period) {
+        smTr = smTr - smTr / period + tr[i];
+        smPlus = smPlus - smPlus / period + plusDM[i];
+        smMinus = smMinus - smMinus / period + minusDM[i];
+      }
+      const pdi = smTr > 0 ? (smPlus / smTr) * 100 : 0;
+      const mdi = smTr > 0 ? (smMinus / smTr) * 100 : 0;
+      const sum = pdi + mdi;
+      dx[i] = sum > 0 ? (Math.abs(pdi - mdi) / sum) * 100 : 0;
+    }
+
+    const startAdx = period * 2 - 1;
+    if (startAdx < candles.length) {
+      let sumDx = 0;
+      for (let i = period; i <= startAdx; i++) sumDx += dx[i];
+      let curAdx = sumDx / period;
+      adxArr[startAdx] = curAdx;
+      for (let i = startAdx + 1; i < candles.length; i++) {
+        curAdx = (curAdx * (period - 1) + dx[i]) / period;
+        adxArr[i] = curAdx;
+      }
+    }
+    return adxArr;
+  },
+
   getSpread(symbol: string): number {
     if (DERIV_SPREADS[symbol] !== undefined) {
       return DERIV_SPREADS[symbol];
@@ -1131,24 +1192,24 @@ export const StrategyBacktester = {
     else if (hour >= 17 && hour <= 20) score += 9;
     else score += 5;
 
-    // 5. Premium/Discount Value Zone & RSI Non-Exhaustion (0 - 10 pts, harsh anti-chase penalties)
-    const inValueZone = isBuy ? rangePosPct <= 60 : rangePosPct >= 40;
-    if (inValueZone) score += 4;
+    // 5. Premium/Discount Value Zone & RSI Non-Exhaustion (0 - 12 pts, harsh anti-chase penalties)
+    const inValueZone = isBuy ? rangePosPct <= 52 : rangePosPct >= 48;
+    if (inValueZone) score += 6;
 
     if (isBuy) {
-      if (rsi14 >= 42 && rsi14 <= 66) score += 6;
-      else if ((rsi14 >= 34 && rsi14 < 42) || (rsi14 > 66 && rsi14 <= 71)) score += 3;
-      else if (rsi14 > 75) score -= 10;
-      else if (rsi14 > 71) score -= 5;
-      if (rangePosPct >= 86) score -= 22;
-      else if (rangePosPct >= 78) score -= 14;
+      if (rsi14 >= 42 && rsi14 <= 64) score += 6;
+      else if ((rsi14 >= 34 && rsi14 < 42) || (rsi14 > 64 && rsi14 <= 68)) score += 3;
+      else if (rsi14 > 73) score -= 12;
+      else if (rsi14 > 68) score -= 6;
+      if (rangePosPct >= 78) score -= 24;
+      else if (rangePosPct >= 65) score -= 16;
     } else {
-      if (rsi14 >= 34 && rsi14 <= 58) score += 6;
-      else if ((rsi14 > 58 && rsi14 <= 66) || (rsi14 >= 29 && rsi14 < 34)) score += 3;
-      else if (rsi14 < 25) score -= 10;
-      else if (rsi14 < 29) score -= 5;
-      if (rangePosPct <= 14) score -= 22;
-      else if (rangePosPct <= 22) score -= 14;
+      if (rsi14 >= 36 && rsi14 <= 58) score += 6;
+      else if ((rsi14 > 58 && rsi14 <= 66) || (rsi14 >= 32 && rsi14 < 36)) score += 3;
+      else if (rsi14 < 27) score -= 12;
+      else if (rsi14 < 32) score -= 6;
+      if (rangePosPct <= 22) score -= 24;
+      else if (rangePosPct <= 35) score -= 16;
     }
 
     return Math.min(100, Math.max(0, Math.round(score)));

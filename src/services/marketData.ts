@@ -1380,6 +1380,12 @@ export function updateSignalWithLiveMarket(
   let closedAtMs = signal.closedAtMs;
   let executedAtMs = signal.executedAtMs;
 
+  const tp1DistPips = Math.abs(calculatePips(updatedPair, finalEntry, finalTp1, isBuy));
+  const beRatio = tf === 'H4' || tf === 'D1' ? 0.30 : 0.45;
+  const beTriggerPips = Math.max(12, tp1DistPips * beRatio);
+  const beProtectedSl = Number((finalEntry + pipsToPrice(updatedPair, isBuy ? 1.0 : -1.0)).toFixed(updatedPair.pipDigits));
+  const wasBeArmed = Boolean(signal.isBreakevenArmed);
+
   switch (signal.status) {
     case 'PENDING': {
       let isFilled = false;
@@ -1416,10 +1422,19 @@ export function updateSignalWithLiveMarket(
     }
     case 'RUNNING': {
       newPips = calculatePips(updatedPair, finalEntry, exitCheckPrice, isBuy);
-      const isSlHit = (isBuy && exitCheckPrice <= finalStopLoss) || (!isBuy && exitCheckPrice >= finalStopLoss);
+      const activeStopLoss = wasBeArmed
+        ? (isBuy ? Math.max(finalStopLoss, beProtectedSl) : Math.min(finalStopLoss, beProtectedSl))
+        : finalStopLoss;
+      const isSlHit = (isBuy && exitCheckPrice <= activeStopLoss) || (!isBuy && exitCheckPrice >= activeStopLoss);
       const isTpHit = (isBuy && exitCheckPrice >= finalTp1) || (!isBuy && exitCheckPrice <= finalTp1);
 
-      if (isSlHit) {
+      if (isSlHit && wasBeArmed) {
+        newStatus = 'HIT_TP';
+        newPips = 1.0;
+        validityTimeLeft = 'Closed (Breakeven +1.0p Lock)';
+        validityExpiresAt = `🛡️ BE SL Protected at ${formatPrice(updatedPair, activeStopLoss)}`;
+        closedAtMs = signal.closedAtMs || Date.now();
+      } else if (isSlHit) {
         newStatus = 'HIT_SL';
         newPips = -Math.abs(calculatePips(updatedPair, finalEntry, finalStopLoss, isBuy));
         validityTimeLeft = 'Closed (SL Hit)';
@@ -1433,9 +1448,7 @@ export function updateSignalWithLiveMarket(
         closedAtMs = signal.closedAtMs || Date.now();
       } else {
         newStatus = 'RUNNING';
-        const tp1DistPips = Math.abs(calculatePips(updatedPair, finalEntry, finalTp1, isBuy));
-        const beRatio = tf === 'H4' || tf === 'D1' ? 0.30 : 0.45;
-        if (newPips >= Math.max(12, tp1DistPips * beRatio) || signal.isBreakevenArmed) {
+        if (newPips >= beTriggerPips || wasBeArmed) {
           validityTimeLeft = `🛡️ Breakeven Protected (${newPips >= 0 ? '+' : ''}${Math.round(newPips * 10) / 10}p)`;
         }
       }
@@ -1443,9 +1456,9 @@ export function updateSignalWithLiveMarket(
     }
   }
 
-  const tp1DistPips = Math.abs(calculatePips(updatedPair, finalEntry, finalTp1, isBuy));
-  const beRatio = tf === 'H4' || tf === 'D1' ? 0.30 : 0.45;
-  const isBreakevenArmed = newStatus === 'RUNNING' && (newPips >= Math.max(12, tp1DistPips * beRatio) || Boolean(signal.isBreakevenArmed));
+  const isBreakevenArmed =
+    (newStatus === 'RUNNING' && (newPips >= beTriggerPips || wasBeArmed)) ||
+    (newStatus === 'HIT_TP' && wasBeArmed && newPips <= 3.0);
 
   return enforceTimeframeHierarchy({
     ...signal,

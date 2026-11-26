@@ -184,6 +184,19 @@ class OfflineGapReconciler {
           ? Math.max(typicalSpread * 0.65, ohlc.ask! - ohlc.bid!)
           : typicalSpread;
 
+        const isJpy = sym.includes('JPY');
+        const isGold = sym.includes('XAU') || sym.includes('GOLD');
+        const isSilver = sym.includes('XAG') || sym.includes('SILVER');
+        const mult = isGold ? 10 : (isJpy || isSilver) ? 100 : 10000;
+        const pipDigits = sig.pair?.pipDigits ?? (isGold ? 2 : isJpy || isSilver ? 3 : 5);
+        const tp1DistPips = Math.abs(calculatePips(sig.pair, sig.entryPrice, sig.takeProfit1, isBuy));
+        const beRatio = sig.timeframe === 'H4' || sig.timeframe === 'D1' ? 0.30 : 0.45;
+        const beTriggerPips = Math.max(12, tp1DistPips * beRatio);
+        const beTriggerPrice = sig.entryPrice + (isBuy ? 1 : -1) * (beTriggerPips / mult);
+        const beProtectedSl = Number((sig.entryPrice + (isBuy ? 1 : -1) * (1.0 / mult)).toFixed(pipDigits));
+
+        let beArmed = Boolean(sig.isBreakevenArmed);
+        let beHit = false;
         let slBreached = false;
         let tpBreached = false;
         let breachTimestamp = 0;
@@ -193,11 +206,6 @@ class OfflineGapReconciler {
         // 1. First check: current live Bid/Ask from active feed
         const liveNow = realPriceService.getPrice(sym);
         if (liveNow > 0) {
-          const isJpy = sym.includes('JPY');
-          const isGold = sym.includes('XAU') || sym.includes('GOLD');
-          const isSilver = sym.includes('XAG') || sym.includes('SILVER');
-          const mult = isGold ? 10 : (isJpy || isSilver) ? 100 : 10000;
-
           // Reject signals whose entry price is disconnected from current market reality (> 120p FX, > 250p Gold)
           const entryDistPips = Math.abs(sig.entryPrice - liveNow) * mult;
           const maxAllowedPips = isGold ? 250 : isJpy ? 180 : 120;
@@ -212,14 +220,25 @@ class OfflineGapReconciler {
               ? Math.max(ohlc.ask, liveBid + effectiveSpread * 0.65)
               : liveBid + effectiveSpread;
           const liveExitQuote = isBuy ? liveBid : liveAsk;
+          const activeLiveSl = beArmed
+            ? (isBuy ? Math.max(sig.stopLoss, beProtectedSl) : Math.min(sig.stopLoss, beProtectedSl))
+            : sig.stopLoss;
 
-          if ((isBuy && liveExitQuote <= sig.stopLoss) || (!isBuy && liveExitQuote >= sig.stopLoss)) {
-            const slOvershootPips = isBuy ? (sig.stopLoss - liveExitQuote) * mult : (liveExitQuote - sig.stopLoss) * mult;
+          if ((isBuy && liveExitQuote <= activeLiveSl) || (!isBuy && liveExitQuote >= activeLiveSl)) {
+            const slOvershootPips = isBuy ? (activeLiveSl - liveExitQuote) * mult : (liveExitQuote - activeLiveSl) * mult;
             if (slOvershootPips <= maxOvershootPips) {
-              slBreached = true;
-              breachExitPrice = sig.stopLoss;
-              breachTimestamp = Date.now();
-              reason = `Live ${isBuy ? 'Bid' : 'Ask'} ${liveExitQuote.toFixed(isJpy || isGold ? 3 : 5)} reached SL at ${sig.stopLoss}`;
+              if (beArmed) {
+                tpBreached = true;
+                beHit = true;
+                breachExitPrice = activeLiveSl;
+                breachTimestamp = Date.now();
+                reason = `🛡️ Breakeven SL (+1.0p) protected profit at ${activeLiveSl}`;
+              } else {
+                slBreached = true;
+                breachExitPrice = sig.stopLoss;
+                breachTimestamp = Date.now();
+                reason = `Live ${isBuy ? 'Bid' : 'Ask'} ${liveExitQuote.toFixed(isJpy || isGold ? 3 : 5)} reached SL at ${sig.stopLoss}`;
+              }
             }
           } else if ((isBuy && liveExitQuote >= sig.takeProfit1) || (!isBuy && liveExitQuote <= sig.takeProfit1)) {
             const tpOvershootPips = isBuy ? (liveExitQuote - sig.takeProfit1) * mult : (sig.takeProfit1 - liveExitQuote) * mult;
@@ -245,18 +264,38 @@ class OfflineGapReconciler {
             for (const c of candles) {
               if (c.timestamp < entryStartMs) continue;
 
+              const activeBarSl = beArmed
+                ? (isBuy ? Math.max(sig.stopLoss, beProtectedSl) : Math.min(sig.stopLoss, beProtectedSl))
+                : sig.stopLoss;
+
               // MT5: BUY closes on Bid (candle low/high); SELL closes on Ask (Bid + spread)
-              if (!isBuy && (c.high + effectiveSpread) >= sig.stopLoss) {
-                slBreached = true;
-                breachExitPrice = sig.stopLoss;
-                breachTimestamp = c.timestamp;
-                reason = `Ask wick ${(c.high + effectiveSpread).toFixed(3)} (Bid high ${c.high} + spread ${effectiveSpread}) hit SL ${sig.stopLoss}`;
+              if (!isBuy && (c.high + effectiveSpread) >= activeBarSl) {
+                if (beArmed) {
+                  tpBreached = true;
+                  beHit = true;
+                  breachExitPrice = activeBarSl;
+                  breachTimestamp = c.timestamp;
+                  reason = `🛡️ Ask ${(c.high + effectiveSpread).toFixed(3)} locked Breakeven SL (+1.0p) at ${activeBarSl}`;
+                } else {
+                  slBreached = true;
+                  breachExitPrice = sig.stopLoss;
+                  breachTimestamp = c.timestamp;
+                  reason = `Ask wick ${(c.high + effectiveSpread).toFixed(3)} (Bid high ${c.high} + spread ${effectiveSpread}) hit SL ${sig.stopLoss}`;
+                }
                 break;
-              } else if (isBuy && c.low <= sig.stopLoss) {
-                slBreached = true;
-                breachExitPrice = sig.stopLoss;
-                breachTimestamp = c.timestamp;
-                reason = `Candle Bid low ${c.low} hit SL ${sig.stopLoss}`;
+              } else if (isBuy && c.low <= activeBarSl) {
+                if (beArmed) {
+                  tpBreached = true;
+                  beHit = true;
+                  breachExitPrice = activeBarSl;
+                  breachTimestamp = c.timestamp;
+                  reason = `🛡️ Bid low ${c.low} locked Breakeven SL (+1.0p) at ${activeBarSl}`;
+                } else {
+                  slBreached = true;
+                  breachExitPrice = sig.stopLoss;
+                  breachTimestamp = c.timestamp;
+                  reason = `Candle Bid low ${c.low} hit SL ${sig.stopLoss}`;
+                }
                 break;
               }
 
@@ -272,6 +311,13 @@ class OfflineGapReconciler {
                 breachTimestamp = c.timestamp;
                 reason = `Candle Bid high ${c.high} hit TP1 ${sig.takeProfit1}`;
                 break;
+              }
+
+              // Arm Breakeven SL for subsequent candles once price reaches beTriggerPrice
+              if (!beArmed) {
+                if ((isBuy && c.high >= beTriggerPrice) || (!isBuy && (c.low + effectiveSpread) <= beTriggerPrice)) {
+                  beArmed = true;
+                }
               }
             }
           }
@@ -305,14 +351,17 @@ class OfflineGapReconciler {
           });
         } else if (tpBreached) {
           const finalExit = breachExitPrice || sig.takeProfit1;
-          const pips = Math.abs(calculatePips(sig.pair, sig.entryPrice, finalExit, isBuy));
+          const pips = beHit ? 1.0 : Math.abs(calculatePips(sig.pair, sig.entryPrice, finalExit, isBuy));
           const closedSig: ForexSignal = {
             ...sig,
             status: 'HIT_TP',
             currentPrice: finalExit,
             pips,
-            validityTimeLeft: `Closed (TP1 Hit: +${pips}p)`,
-            validityExpiresAt: `TP1 Hit at ${formatPrice(sig.pair, finalExit)}`,
+            isBreakevenArmed: beHit || beArmed,
+            validityTimeLeft: beHit ? 'Closed (Breakeven +1.0p Lock)' : `Closed (TP1 Hit: +${pips}p)`,
+            validityExpiresAt: beHit
+              ? `🛡️ BE SL Protected at ${formatPrice(sig.pair, finalExit)}`
+              : `TP1 Hit at ${formatPrice(sig.pair, finalExit)}`,
             closedAtMs: breachTimestamp || Date.now(),
             isLiveSynced: true
           };
@@ -328,6 +377,13 @@ class OfflineGapReconciler {
             signal: closedSig,
             allSignals: updatedSignals
           });
+        } else if (beArmed && !sig.isBreakevenArmed) {
+          updatedSignals[i] = {
+            ...sig,
+            isBreakevenArmed: true,
+            validityTimeLeft: `🛡️ Breakeven Protected (${sig.pips >= 0 ? '+' : ''}${sig.pips}p)`
+          };
+          reconciledCount++;
         }
       }
 

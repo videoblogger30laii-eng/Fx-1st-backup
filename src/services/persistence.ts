@@ -648,7 +648,15 @@ export const PersistenceManager = {
     try {
       if (!Array.isArray(signals)) return;
       const now = Date.now();
-      const existing = this.getSavedSignalsState();
+      let existing: Record<string, any> = {};
+      try {
+        const rawExisting = safeGetStorageItem(STORAGE_KEYS.SIGNALS_STATE);
+        if (rawExisting) {
+          existing = JSON.parse(rawExisting) || {};
+        }
+      } catch {
+        existing = {};
+      }
       // Preserve closed history from existing store, while using `signals` as the authoritative source for active/standby/pending trades
       const map: Record<string, any> = {};
       Object.entries(existing).forEach(([id, item]: [string, any]) => {
@@ -764,20 +772,33 @@ export const PersistenceManager = {
         }
       });
 
-      // 2. Keep single unique instance per distinct closed trade outcome (strictly eliminate clones)
+      // 2. Keep up to 150 newest unique closed trade outcomes (strictly eliminate clones & cap storage size)
+      const closedCandidates: Array<{ id: string; item: any; ts: number }> = [];
       Object.entries(map).forEach(([id, item]) => {
         if (!item) return;
         const isClosed = item.status === 'HIT_SL' || item.status === 'HIT_TP' || item.status === 'EXPIRED';
         const sym = String(item.pair?.symbol || '').toUpperCase();
         if (isClosed && sym) {
-          const pipsRounded = Math.round((item.pips ?? 0) * 10) / 10;
-          const fp = `${sym}-${item.status}-${pipsRounded}`;
-          if (!seenMapClosedFp.has(fp)) {
-            seenMapClosedFp.add(fp);
-            cleanedMap[id] = item;
-          }
+          closedCandidates.push({
+            id,
+            item,
+            ts: Number(item.closedAtMs || item.savedAt || item.createdAtMs || 0)
+          });
         }
       });
+      closedCandidates.sort((a, b) => b.ts - a.ts);
+      let closedKept = 0;
+      for (const { id, item } of closedCandidates) {
+        if (closedKept >= 150) break;
+        const sym = String(item.pair?.symbol || '').toUpperCase();
+        const pipsRounded = Math.round((item.pips ?? 0) * 10) / 10;
+        const fp = `${sym}-${item.status}-${pipsRounded}`;
+        if (!seenMapClosedFp.has(fp)) {
+          seenMapClosedFp.add(fp);
+          cleanedMap[id] = item;
+          closedKept++;
+        }
+      }
 
       safeSetStorageItem(STORAGE_KEYS.SIGNALS_STATE, JSON.stringify(cleanedMap));
 
@@ -1271,7 +1292,7 @@ export const PersistenceManager = {
     try {
       const existing = this.getSignalAuditLog();
       const filtered = existing.filter(a => a.signalId !== audit.signalId);
-      const updated = [audit, ...filtered].slice(0, 500);
+      const updated = [audit, ...filtered].slice(0, 120);
       safeSetStorageItem(STORAGE_KEYS.SIGNAL_AUDIT_LOG, JSON.stringify(updated));
     } catch {
       // ignore

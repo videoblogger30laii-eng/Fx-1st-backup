@@ -109,8 +109,11 @@ export const SignalCard: React.FC<Props> = ({
   const isParamChanged = isSignalChangedOrRecalculated(signal);
   const paramAudit = isParamChanged ? getSignalParameterAudit(signal) : null;
 
-  // Live real-time price hook from Deriv/Twelve Data
+  const isClosedOrder = signal.status === 'HIT_SL' || signal.status === 'HIT_TP' || Boolean(signal.closedAtMs);
+
+  // Live real-time price hook from Deriv/Twelve Data (active cards only)
   const [livePrice, setLivePrice] = useState<number>(() => {
+    if (isClosedOrder) return signal.currentPrice || signal.entryPrice;
     const current = realPriceService.getPrice(signal.pair.symbol);
     return current > 0 ? current : (signal.pair.currentPrice || signal.entryPrice);
   });
@@ -123,6 +126,8 @@ export const SignalCard: React.FC<Props> = ({
   }, [livePrice]);
 
   useEffect(() => {
+    if (isClosedOrder) return;
+
     const current = realPriceService.getPrice(signal.pair.symbol);
     if (current > 0) {
       setLivePrice(current);
@@ -138,8 +143,8 @@ export const SignalCard: React.FC<Props> = ({
           setFlashDir(dir);
           flashTimerRef.current = setTimeout(() => setFlashDir(null), 900);
           prevPriceRef.current = tick.price;
+          setLivePrice(tick.price);
         }
-        setLivePrice(tick.price);
       }
     });
 
@@ -147,7 +152,7 @@ export const SignalCard: React.FC<Props> = ({
       unsubscribe();
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     };
-  }, [signal.pair.symbol]);
+  }, [signal.pair.symbol, isClosedOrder]);
 
   const livePips = calculatePips(signal.pair, signal.entryPrice, livePrice, isBuy);
   const isProfit = livePips >= 0;
@@ -176,7 +181,6 @@ export const SignalCard: React.FC<Props> = ({
   const tp1Pips = Math.abs(calculatePips(signal.pair, signal.entryPrice, signal.takeProfit1, isBuy));
   const tpRatio = Math.round(getTpProgressRatio(signal, livePrice) * 100);
   const validityRatio = getValidityProgress(signal, nowClockMs);
-  const isClosedOrder = signal.status === 'HIT_SL' || signal.status === 'HIT_TP' || Boolean(signal.closedAtMs);
   const isWin = signal.status === 'HIT_TP' || (signal.status !== 'HIT_SL' && (signal.pips ?? 0) > 0);
   const isMarketExecution = isMarketExecutionSignal(signal.type);
   const isRunning = signal.status === 'RUNNING';

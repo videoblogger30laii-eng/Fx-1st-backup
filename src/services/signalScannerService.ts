@@ -675,15 +675,15 @@ class SignalScannerService {
 
     if (tfRsi !== null) {
       if (isBuy) {
-        if (tfRsi >= 42 && tfRsi <= 66) momentumPts += 6;
-        else if ((tfRsi >= 34 && tfRsi < 42) || (tfRsi > 66 && tfRsi <= 71)) momentumPts += 3;
-        else if (tfRsi > 71 && tfRsi <= 75) momentumPts -= 5;
-        else if (tfRsi > 75) momentumPts -= 10;
+        if (tfRsi >= 42 && tfRsi <= 64) momentumPts += 6;
+        else if ((tfRsi >= 34 && tfRsi < 42) || (tfRsi > 64 && tfRsi <= 68)) momentumPts += 3;
+        else if (tfRsi > 68 && tfRsi <= 73) momentumPts -= 6;
+        else if (tfRsi > 73) momentumPts -= 12;
       } else {
-        if (tfRsi >= 34 && tfRsi <= 58) momentumPts += 6;
-        else if ((tfRsi > 58 && tfRsi <= 66) || (tfRsi >= 29 && tfRsi < 34)) momentumPts += 3;
-        else if (tfRsi >= 25 && tfRsi < 29) momentumPts -= 5;
-        else if (tfRsi < 25) momentumPts -= 10;
+        if (tfRsi >= 36 && tfRsi <= 58) momentumPts += 6;
+        else if ((tfRsi > 58 && tfRsi <= 66) || (tfRsi >= 32 && tfRsi < 36)) momentumPts += 3;
+        else if (tfRsi >= 27 && tfRsi < 32) momentumPts -= 6;
+        else if (tfRsi < 27) momentumPts -= 12;
       }
     }
 
@@ -746,7 +746,7 @@ class SignalScannerService {
     const pullbackDetail = swingEval.chaseReason || pullbackRes.pullbackDetail;
 
     const swingAdjustment = swingEval.hasData
-      ? (swingEval.isExtremeChase ? -22 : swingEval.isChasingZone ? -14 : swingEval.isInValueZone ? 4 : 0)
+      ? (swingEval.isExtremeChase ? -24 : swingEval.isChasingZone ? -16 : swingEval.isInValueZone ? 6 : 0)
       : 0;
     const spreadPenalty = spreadTooHigh ? 15 : 0;
     const overextPenalty = isOverextended ? 15 : 0;
@@ -892,6 +892,23 @@ class SignalScannerService {
         'CONFLICT_BLOCKED',
         conflictCheck.reason || `Blocked ${intendedDirection} ${pair.symbol} by Currency Conflict Filter`
       );
+    }
+
+    // STEP 5 GATE: Hard ADX Chop / Regime Filter (avoid low-momentum ranging whipsaws)
+    const isBuyDir = h4Filter.bias === 'BUY_ONLY';
+    const h1AdxGate = h1Candles && h1Candles.length >= 30 ? computeADX(sortCandlesAsc(h1Candles), 14) : null;
+    const h4AdxGate = h4Candles && h4Candles.length >= 30 ? computeADX(sortCandlesAsc(h4Candles), 14) : null;
+    const h1ChopBlocked = Boolean(
+      h1AdxGate && (h1AdxGate.adx < 18 || !(isBuyDir ? h1AdxGate.plusDI > h1AdxGate.minusDI : h1AdxGate.minusDI > h1AdxGate.plusDI))
+    );
+    const h4ChopBlocked = Boolean(
+      h4AdxGate && (h4AdxGate.adx < 16 || !(isBuyDir ? h4AdxGate.plusDI > h4AdxGate.minusDI : h4AdxGate.minusDI > h4AdxGate.plusDI))
+    );
+    if (h1ChopBlocked || h4ChopBlocked) {
+      const adxMsg = h4ChopBlocked
+        ? `Choppy H4 Market Blocked (ADX ${h4AdxGate?.adx ?? 0} < 16 or DI opposes ${intendedDirection})`
+        : `Choppy H1 Market Blocked (ADX ${h1AdxGate?.adx ?? 0} < 18 or DI opposes ${intendedDirection})`;
+      return makeBlockedResult('LOW_SCORE', adxMsg);
     }
 
     const ctx = { strengthSnap, h4Filter, m15Candles, h1Candles, h4Candles, d1Candles };
@@ -1159,10 +1176,16 @@ class SignalScannerService {
     const cleanSymId = pair.symbol.replace(/[^A-Za-z0-9]/g, '');
     const symSeed = cleanSymId.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
     const isChaseGuarded = Boolean(evalResult.isChasingExtreme || evalResult.isChasingZone || evalResult.isOverextended);
-    // Order type comes from real pullback proximity & Anti-Chase Guard:
-    // Never market-buy near highs or market-sell near lows; place genuine Limit orders at EMA21/Equilibrium pullback
+    const isInValueZone = evalResult.rangePosPct === undefined
+      ? true
+      : isBuy
+      ? evalResult.rangePosPct <= 52
+      : evalResult.rangePosPct >= 48;
+    // Order type comes from real value-zone discipline & Anti-Chase Guard:
+    // Never market-buy above Equilibrium (>52%) or market-sell below Equilibrium (<48%); force LIMIT orders on pullback
     const isPullbackLimit =
       isChaseGuarded ||
+      !isInValueZone ||
       (!sweepRes.isLiquiditySwept &&
         !evalResult.isPullbackMitigated &&
         !evalResult.isNearEmaPullback &&
@@ -1804,92 +1827,73 @@ class SignalScannerService {
 
     evaluations.sort((a, b) => b.evalRes.highestScore - a.evalRes.highestScore);
 
-    const currentExposures = this.getCurrencyDirectionalExposure(currentSignals);
-    const runningExposures = { ...currentExposures };
+    const parsePairKeys = (pairSymbol: string, dirIsBuy: boolean): string[] => {
+      const upper = pairSymbol.toUpperCase();
+      if (upper.includes('/')) {
+        const [b, q] = upper.split('/');
+        return [
+          `${b}:${dirIsBuy ? 'LONG' : 'SHORT'}`,
+          `${q}:${dirIsBuy ? 'SHORT' : 'LONG'}`
+        ];
+      }
+      if (upper.startsWith('XAU') || upper.startsWith('XAG')) {
+        return [`${upper.slice(0, 3)}:${dirIsBuy ? 'LONG' : 'SHORT'}`, `USD:${dirIsBuy ? 'SHORT' : 'LONG'}`];
+      }
+      return [];
+    };
+
+    const dirExposures: Record<string, number> = {};
+    const existingActiveSet = new Set<string>();
+    currentSignals.forEach(s => {
+      if (!s || s.isCorrelationBlocked) return;
+      if (s.status !== 'RUNNING' && s.status !== 'PENDING') return;
+      existingActiveSet.add(s.pair.symbol);
+      parsePairKeys(s.pair.symbol, s.type.startsWith('BUY')).forEach(k => {
+        dirExposures[k] = (dirExposures[k] || 0) + 1;
+      });
+    });
+
     const candCorrGuardMap = new Map<string, { isCorrelationBlocked: boolean; blockReason?: string; exposureTag?: string }>();
     const activePairSet = new Set<string>();
 
     for (const cand of evaluations) {
       const isBuy = cand.evalRes.isBuy;
       const score = cand.evalRes.highestScore;
-      const sym = cand.pair.symbol.toUpperCase();
+      const sym = cand.pair.symbol;
+      const isAlreadyOpen = existingActiveSet.has(sym);
+      const keys = parsePairKeys(sym, isBuy);
 
-      let base = '';
-      let quote = '';
-      if (sym.includes('/')) {
-        const parts = sym.split('/');
-        base = parts[0];
-        quote = parts[1];
-      }
+      const primaryKey = keys.find(k => !k.startsWith('XAU:') && !k.startsWith('XAG:')) || keys[0] || '';
+      const [primaryCcy, primaryDir] = primaryKey.split(':');
+      const currentPrimaryCount = primaryKey ? (dirExposures[primaryKey] || 0) : 0;
+      const projectedCount = isAlreadyOpen ? currentPrimaryCount : currentPrimaryCount + 1;
+      const exposureTag = primaryKey
+        ? `🔒 ${primaryCcy} ${primaryDir === 'LONG' ? 'Long' : 'Short'} (${projectedCount}/2)`
+        : `🔒 Exposure Clear`;
 
-      let exposureTag = '';
+      const overLimitKey = !isAlreadyOpen
+        ? keys.find(k => (dirExposures[k] || 0) >= 2)
+        : undefined;
 
-      if (base === 'USD') {
-        const dir = isBuy ? 'LONG' : 'SHORT';
-        const projected = dir === 'LONG' ? runningExposures.USD_LONG + 1 : runningExposures.USD_SHORT + 1;
-        exposureTag = `🔒 USD ${dir === 'LONG' ? 'Long' : 'Short'} (${projected})`;
-      } else if (quote === 'USD' || sym.includes('XAU') || sym.includes('XAG')) {
-        const dir = isBuy ? 'SHORT' : 'LONG';
-        const projected = dir === 'LONG' ? runningExposures.USD_LONG + 1 : runningExposures.USD_SHORT + 1;
-        exposureTag = `🔒 USD ${dir === 'LONG' ? 'Long' : 'Short'} (${projected})`;
-      } else if (base === 'EUR') {
-        const dir = isBuy ? 'LONG' : 'SHORT';
-        const projected = dir === 'LONG' ? runningExposures.EUR_LONG + 1 : runningExposures.EUR_SHORT + 1;
-        exposureTag = `🔒 EUR ${dir === 'LONG' ? 'Long' : 'Short'} (${projected})`;
-      } else if (quote === 'EUR') {
-        const dir = isBuy ? 'SHORT' : 'LONG';
-        const projected = dir === 'LONG' ? runningExposures.EUR_LONG + 1 : runningExposures.EUR_SHORT + 1;
-        exposureTag = `🔒 EUR ${dir === 'LONG' ? 'Long' : 'Short'} (${projected})`;
-      } else if (base === 'JPY') {
-        const dir = isBuy ? 'LONG' : 'SHORT';
-        const projected = dir === 'LONG' ? runningExposures.JPY_LONG + 1 : runningExposures.JPY_SHORT + 1;
-        exposureTag = `🔒 JPY ${dir === 'LONG' ? 'Long' : 'Short'} (${projected})`;
-      } else if (quote === 'JPY') {
-        const dir = isBuy ? 'SHORT' : 'LONG';
-        const projected = dir === 'LONG' ? runningExposures.JPY_LONG + 1 : runningExposures.JPY_SHORT + 1;
-        exposureTag = `🔒 JPY ${dir === 'LONG' ? 'Long' : 'Short'} (${projected})`;
-      } else if (base === 'GBP') {
-        const dir = isBuy ? 'LONG' : 'SHORT';
-        const projected = dir === 'LONG' ? runningExposures.GBP_LONG + 1 : runningExposures.GBP_SHORT + 1;
-        exposureTag = `🔒 GBP ${dir === 'LONG' ? 'Long' : 'Short'} (${projected})`;
-      } else if (quote === 'GBP') {
-        const dir = isBuy ? 'SHORT' : 'LONG';
-        const projected = dir === 'LONG' ? runningExposures.GBP_LONG + 1 : runningExposures.GBP_SHORT + 1;
-        exposureTag = `🔒 GBP ${dir === 'LONG' ? 'Long' : 'Short'} (${projected})`;
-      }
+      // A+ Active threshold from real MTF institutional confluence (>= 76), passing Anti-Chase Guard, and <= 2 correlated positions
+      const isChaseBlocked = Boolean(cand.evalRes.isChasingExtreme || cand.evalRes.isChasingZone || cand.evalRes.isOverextended);
+      const isCorrCapReached = Boolean(overLimitKey);
+      const canBeActive = isAlreadyOpen || (score >= 76 && !isChaseBlocked && !isCorrCapReached);
 
-      candCorrGuardMap.set(cand.pair.symbol, {
-        isCorrelationBlocked: false,
-        blockReason: undefined,
-        exposureTag: exposureTag || `🔒 Exposure Clear`
+      candCorrGuardMap.set(sym, {
+        isCorrelationBlocked: isCorrCapReached && score >= 76 && !isChaseBlocked,
+        blockReason: isCorrCapReached
+          ? `BLOCKED: Max 2 active ${overLimitKey?.replace(':', ' ')} trades open (Correlation Cap)`
+          : undefined,
+        exposureTag
       });
 
-      // A+ Active threshold from real MTF institutional confluence (>= 76) AND passing Anti-Chase Guard
-      const isChaseBlocked = Boolean(cand.evalRes.isChasingExtreme || cand.evalRes.isChasingZone || cand.evalRes.isOverextended);
-      const canBeActive = score >= 76 && !isChaseBlocked;
-
       if (canBeActive) {
-        activePairSet.add(cand.pair.symbol);
-
-        if (base === 'USD') {
-          if (isBuy) runningExposures.USD_LONG++; else runningExposures.USD_SHORT++;
-        } else if (quote === 'USD' || sym.includes('XAU') || sym.includes('XAG')) {
-          if (isBuy) runningExposures.USD_SHORT++; else runningExposures.USD_LONG++;
-        }
-        if (base === 'EUR') {
-          if (isBuy) runningExposures.EUR_LONG++; else runningExposures.EUR_SHORT++;
-        } else if (quote === 'EUR') {
-          if (isBuy) runningExposures.EUR_SHORT++; else runningExposures.EUR_LONG++;
-        }
-        if (base === 'JPY') {
-          if (isBuy) runningExposures.JPY_LONG++; else runningExposures.JPY_SHORT++;
-        } else if (quote === 'JPY') {
-          if (isBuy) runningExposures.JPY_SHORT++; else runningExposures.JPY_LONG++;
-        }
-        if (base === 'GBP') {
-          if (isBuy) runningExposures.GBP_LONG++; else runningExposures.GBP_SHORT++;
-        } else if (quote === 'GBP') {
-          if (isBuy) runningExposures.GBP_SHORT++; else runningExposures.GBP_LONG++;
+        activePairSet.add(sym);
+        if (!isAlreadyOpen) {
+          keys.forEach(k => {
+            dirExposures[k] = (dirExposures[k] || 0) + 1;
+          });
         }
       }
     }
