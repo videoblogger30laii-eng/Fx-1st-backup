@@ -254,8 +254,8 @@ export const SignalCard: React.FC<Props> = ({
       {/* TIER 1: CLEAN HEADER (Identity + Utilities on Row 1 | Unboxed Metadata + Confluence Score on Row 2) */}
       <div className="space-y-1.5 pb-2 border-b border-[#1E293B]">
         {/* Row 1: Symbol + Direction + Utility Toolbar */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+          <div className="flex items-center flex-wrap gap-1.5 min-w-0">
             <span className="text-[15px] sm:text-[16px] font-black tracking-tight text-[#F8FAFC] leading-none whitespace-nowrap">
               {signal.pair.symbol}
             </span>
@@ -294,7 +294,7 @@ export const SignalCard: React.FC<Props> = ({
           </div>
 
           {/* Right Quick Utilities */}
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-1 shrink-0 ml-auto">
             {onCloseTrade && (
               <button
                 type="button"
@@ -302,7 +302,7 @@ export const SignalCard: React.FC<Props> = ({
                   e.stopPropagation();
                   onCloseTrade(signal);
                 }}
-                className="h-7 px-2 flex items-center gap-1 text-[10px] font-bold rounded-lg border border-[#FF3366]/35 bg-[#FF3366]/10 hover:bg-[#FF3366]/25 text-[#FF5252] transition-colors cursor-pointer shrink-0"
+                className="h-7 px-2 flex items-center gap-1 text-[10px] font-bold rounded-lg border border-[#FF3366]/35 bg-[#FF3366]/10 hover:bg-[#FF3366]/25 text-[#FF5252] transition-colors cursor-pointer shrink-0 whitespace-nowrap"
                 title="Dismiss & hide for 15 minutes"
               >
                 <X className="w-3 h-3" />
