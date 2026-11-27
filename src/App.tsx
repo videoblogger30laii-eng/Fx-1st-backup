@@ -1988,7 +1988,14 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
     });
 
     // 2. Ensure Best TF Wins (One Pair = One Signal Only)
-    // Keep the highest quality setup for each pair (Best Trade Now > A_PLUS > higher confluence score)
+    // Strict timeframe priority across all strategies: 1st H1 -> 2nd H4 -> 3rd ONLY M15
+    const getTfPriority = (sig: ForexSignal): number => {
+      const tf = (sig.timeframe || sig.winningTf || 'H1').toUpperCase();
+      return tf === 'H1' ? 3 : tf === 'H4' ? 2 : tf === 'M15' ? 1 : 0;
+    };
+    const isActiveTierSignal = (sig: ForexSignal): boolean =>
+      (sig.status === 'RUNNING' || sig.status === 'PENDING') && !sig.isDemotedFromActive;
+
     const bestSignalByPair = new Map<string, ForexSignal>();
     for (const sig of eligibleSignals) {
       const sym = sig.pair.symbol;
@@ -1996,12 +2003,22 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       if (!existing) {
         bestSignalByPair.set(sym, sig);
       } else {
-        const isBetter = (
-          (sig.isBestTradeNow && !existing.isBestTradeNow) ||
-          (sig.quality === 'A_PLUS' && existing.quality !== 'A_PLUS') ||
-          (sig.confluenceScore > existing.confluenceScore) ||
-          (sig.confluenceScore === existing.confluenceScore && (sig.winProbability || 0) > (existing.winProbability || 0))
-        );
+        const sigActive = isActiveTierSignal(sig) ? 1 : 0;
+        const exActive = isActiveTierSignal(existing) ? 1 : 0;
+        const sigTf = getTfPriority(sig);
+        const exTf = getTfPriority(existing);
+        const isBetter =
+          sigActive !== exActive
+            ? sigActive > exActive
+            : sigTf !== exTf
+            ? sigTf > exTf
+            : (sig.isBestTradeNow ? 1 : 0) !== (existing.isBestTradeNow ? 1 : 0)
+            ? Boolean(sig.isBestTradeNow)
+            : (sig.quality === 'A_PLUS' ? 1 : 0) !== (existing.quality === 'A_PLUS' ? 1 : 0)
+            ? sig.quality === 'A_PLUS'
+            : sig.confluenceScore !== existing.confluenceScore
+            ? sig.confluenceScore > existing.confluenceScore
+            : (sig.winProbability || 0) > (existing.winProbability || 0);
         if (isBetter) {
           bestSignalByPair.set(sym, sig);
         }
@@ -2047,7 +2064,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
         const rrB = parseFloat(b.riskReward.split(':')[1] || '1');
         return rrB - rrA;
       }
-      return b.confluenceScore - a.confluenceScore;
+      return (b.confluenceScore - a.confluenceScore) || (getTfPriority(b) - getTfPriority(a));
     });
   }, [signals, clockBucket15s, selectedFilter, confluenceFilter, activeStrategy, searchQuery, sortOption]);
 

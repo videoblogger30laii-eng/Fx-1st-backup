@@ -557,10 +557,10 @@ export const STRATEGY_CONFIGS: Record<StrategyType, StrategyConfig> = {
   LONDON_KILLER: {
     title: 'London Killer (Forex Only)',
     shortBadge: 'LONDON KILLER',
-    description: 'D1 Previous Day Box + H1 Sweep of Asia/Prev Day extreme + M15 MSS+ & Pin Bar wick rejection (07:00-10:00 UTC) with Anti-Chase & 6 Institutional Risk Gates.',
+    description: 'D1 Previous Day Box + H1 Sweep of Asia/Prev Day extreme + M15 MSS+ & Pin Bar wick rejection (06:00-16:00 UTC expanded London/NY window, 75+ confluence) with Anti-Chase & 6 Institutional Risk Gates.',
     modelRule: 'Precision 1:2.0 RR (SL above/below sweep wick, TP 1:2.0 / opposite box side, Automated BE +1p at 1:1)',
     tierTag: 'UPGRADED',
-    allowedPairs: ['EUR/USD', 'GBP/USD', 'GBP/JPY'],
+    allowedPairs: ['EUR/USD', 'GBP/USD', 'GBP/JPY', 'USD/JPY', 'AUD/USD'],
     allowedCategories: ['MAJORS', 'MINORS'],
     timeframes: 'Entry M15 · Confirm H1 · Bias H4 · D1 Box',
     targetRR: '1:2.0'

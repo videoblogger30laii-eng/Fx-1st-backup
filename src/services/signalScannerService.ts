@@ -112,7 +112,7 @@ export interface BestTfEvaluationResult {
  * Institutional Smart Money Concepts (SMC) & Multi-Timeframe Strategy Scanner Service.
  * Implements the 3 Final Unified Strategies:
  * 1. GOLD HUNTER (Metals Only: XAU/USD, XAG/USD) - TP 1:2.5
- * 2. LONDON KILLER (Forex Only: EUR/USD, GBP/USD, GBP/JPY) - TP 1:2.0
+ * 2. LONDON KILLER (Forex Only: EUR/USD, GBP/USD, GBP/JPY, USD/JPY, AUD/USD) - TP 1:2.0
  * 3. TREND RIDER (Forex + Metals: USD/JPY, USD/CAD, AUD/USD, XAU/USD) - TP 1:3.0
  *
  * Runs MTF background evaluation across M15, H1, H4 using real market candles.
@@ -297,16 +297,17 @@ class SignalScannerService {
     }
 
     if (strategy === 'LONDON_KILLER') {
-      const isLondonOpen = decimalHour >= 7.0 && decimalHour <= 10.0;
-      const isNyOverlap = decimalHour >= 12.0 && decimalHour <= 16.0;
+      const isExpandedLondonNyWindow = decimalHour >= 6.0 && decimalHour <= 16.0;
+      const isExtendedShoulderWindow =
+        (decimalHour >= 5.0 && decimalHour < 6.0) || (decimalHour > 16.0 && decimalHour <= 19.0);
       return {
-        timeFilterMatched: isLondonOpen,
-        isPartialSession: !isLondonOpen && isNyOverlap,
-        sessionName: isLondonOpen
-          ? 'London Killzone (07:00-10:00 UTC)'
-          : isNyOverlap
-          ? 'NY Overlap Window (Outside London Open)'
-          : 'Outside London Killzone'
+        timeFilterMatched: isExpandedLondonNyWindow,
+        isPartialSession: isExtendedShoulderWindow,
+        sessionName: isExpandedLondonNyWindow
+          ? 'Expanded London/NY Killzone (06:00-16:00 UTC)'
+          : isExtendedShoulderWindow
+          ? 'Extended London Shoulder Window (05:00-06:00 / 16:00-19:00 UTC)'
+          : 'Outside London/NY Session'
       };
     }
 
@@ -811,12 +812,12 @@ class SignalScannerService {
   }
 
   /**
-   * Runs M15, H1, H4 in background using real market candles, selects best timeframe according to tie-breaker rules:
+   * Runs M15, H1, H4 in background using real market candles, selects best timeframe according to strict priority rules across ALL strategies:
    * 1st priority: H1 (1 Hour)
-   * 2nd priority: M15 (15 Min)
-   * 3rd priority: H4 (4 Hours)
+   * 2nd priority: H4 (4 Hours)
+   * 3rd priority ONLY: M15 (15 Min — used only if neither H1 nor H4 qualifies)
    *
-   * If highest score < 65, returns isEligible = false (weak setups eliminated).
+   * If highest score < 60, returns isEligible = false (weak setups eliminated).
    */
   public evaluateBestTimeframeForStrategy(
     pair: ForexPair,
@@ -920,22 +921,36 @@ class SignalScannerService {
     const h1 = h1Res.score;
     const h4 = h4Res.score;
 
+    const minActiveThreshold = strategy === 'LONDON_KILLER' ? 75 : 76;
     let winningTf: 'M15' | 'H1' | 'H4' = 'H1';
-    const highestScore = Math.max(m15, h1, h4);
 
-    // Strict tie-breaker evaluation: 1st H1 -> 2nd M15 -> 3rd H4
-    if (h1 >= m15 && h1 >= h4) {
+    // Strict Timeframe Priority across ALL strategies:
+    // 1st H1 (1 Hour) -> 2nd H4 (4 Hours) -> 3rd ONLY M15 (15 Min)
+    if (h1 >= minActiveThreshold) {
       winningTf = 'H1';
-    } else if (m15 >= h4) {
-      winningTf = 'M15';
-    } else {
+    } else if (h4 >= minActiveThreshold) {
       winningTf = 'H4';
+    } else if (m15 >= minActiveThreshold) {
+      winningTf = 'M15';
+    } else if (h1 >= 60) {
+      winningTf = 'H1';
+    } else if (h4 >= 60) {
+      winningTf = 'H4';
+    } else if (m15 >= 60) {
+      winningTf = 'M15';
+    } else if (h1 >= h4 && h1 >= m15) {
+      winningTf = 'H1';
+    } else if (h4 >= m15) {
+      winningTf = 'H4';
+    } else {
+      winningTf = 'M15';
     }
 
     const winningCandles = winningTf === 'M15' ? m15Candles : winningTf === 'H1' ? h1Candles : h4Candles;
     const atrCheck = this.evaluateAtrVolatility(pair, livePrice, winningCandles && winningCandles.length >= 15 ? winningCandles : h4Candles);
     const winningRes = winningTf === 'H4' ? h4Res : winningTf === 'H1' ? h1Res : m15Res;
-    const scoreBreakdownText = `M15:${m15} | H1:${h1} | H4:${h4} - ${winningTf} won`;
+    const highestScore = winningRes.score;
+    const scoreBreakdownText = `H1:${h1} | H4:${h4} | M15:${m15} - ${winningTf} won`;
 
     // Enforce minimum 60 confluence rate: never generate or display new setups below 60 confluence
     if (highestScore < 60) {
@@ -1227,13 +1242,16 @@ class SignalScannerService {
     const takeProfit2 = round(isBuy ? entryPrice + tp2Dist : entryPrice - tp2Dist);
     const takeProfit3 = round(isBuy ? entryPrice + tp3Dist : entryPrice - tp3Dist);
 
+    const timeFilterRes = this.evaluateTimeFilter(strategy);
+    const minActiveThreshold = strategy === 'LONDON_KILLER' ? 75 : 76;
+
     // Active threshold derived strictly from real institutional confluence + Anti-Chase Guard
     const isStandby = Boolean(
       forceStandby ||
         isCorrelationBlocked ||
         isChaseGuarded ||
-        highestScore < 76 ||
-        (strategy === 'LONDON_KILLER' && !sweepRes.isLiquiditySwept && highestScore < 82)
+        highestScore < minActiveThreshold ||
+        (strategy === 'LONDON_KILLER' && !sweepRes.isLiquiditySwept && !timeFilterRes.timeFilterMatched && highestScore < 78)
     );
 
     const calculatedCurrentPips = isStandby || isWeekend
@@ -1251,7 +1269,7 @@ class SignalScannerService {
       standbyTriggerDetail = correlationGuardOptions?.correlationBlockReason || 'BLOCKED: Max Currency Correlation Exposure Limit Reached';
     } else if (evalResult.chaseWarning) {
       standbyTriggerDetail = evalResult.chaseWarning;
-    } else if (!sweepRes.isLiquiditySwept && strategy === 'LONDON_KILLER') {
+    } else if (!sweepRes.isLiquiditySwept && !timeFilterRes.timeFilterMatched && strategy === 'LONDON_KILLER') {
       standbyTriggerDetail = sweepRes.liquiditySweepDetail;
     } else if (highestScore < 60) {
       standbyTriggerDetail = `Below 60% Confluence Watch (${highestScore}/100). H4 ${isBuy ? 'Bullish' : 'Bearish'} bias aligned on ${winningTf}; awaiting stronger momentum/SMC confirmation.`;
@@ -1264,7 +1282,6 @@ class SignalScannerService {
         || `Tracking H4 EMA 9/50 ${isBuy ? 'Bullish' : 'Bearish'} trend. Current score ${highestScore}/100.`;
     }
 
-    const timeFilterRes = this.evaluateTimeFilter(strategy);
     const checklist: ConfluenceChecklistItem[] = [
       {
         title: isChaseGuarded
@@ -1307,7 +1324,7 @@ class SignalScannerService {
       },
       {
         title: 'Best Timeframe MTF Evaluation',
-        isConfirmed: highestScore >= 76,
+        isConfirmed: highestScore >= minActiveThreshold,
         detail: `${scoreBreakdownText} (Score: ${highestScore}/100 • ADX: ${evalResult.adxValue ?? 'N/A'} • RSI: ${evalResult.rsiValue ?? 'N/A'})`
       },
       {
@@ -1862,7 +1879,11 @@ class SignalScannerService {
       }
     }
 
-    evaluations.sort((a, b) => b.evalRes.highestScore - a.evalRes.highestScore);
+    const tfPriorityRank = (tf?: string): number => (tf === 'H1' ? 3 : tf === 'H4' ? 2 : tf === 'M15' ? 1 : 0);
+    evaluations.sort((a, b) =>
+      (b.evalRes.highestScore - a.evalRes.highestScore) ||
+      (tfPriorityRank(b.evalRes.winningTf) - tfPriorityRank(a.evalRes.winningTf))
+    );
 
     const parsePairKeys = (pairSymbol: string, dirIsBuy: boolean): string[] => {
       const upper = pairSymbol.toUpperCase();
@@ -1912,13 +1933,14 @@ class SignalScannerService {
         ? keys.find(k => (dirExposures[k] || 0) >= 2)
         : undefined;
 
-      // A+ Active threshold from real MTF institutional confluence (>= 76), passing Anti-Chase Guard, and <= 2 correlated positions
+      // A+ Active threshold from real MTF institutional confluence (>= 75 London Killer / >= 76 others), passing Anti-Chase Guard, and <= 2 correlated positions
+      const minCandThreshold = cand.pairStrategy === 'LONDON_KILLER' ? 75 : 76;
       const isChaseBlocked = Boolean(cand.evalRes.isChasingExtreme || cand.evalRes.isChasingZone || cand.evalRes.isOverextended);
       const isCorrCapReached = Boolean(overLimitKey);
-      const canBeActive = isAlreadyOpen || (score >= 76 && !isChaseBlocked && !isCorrCapReached);
+      const canBeActive = isAlreadyOpen || (score >= minCandThreshold && !isChaseBlocked && !isCorrCapReached);
 
       candCorrGuardMap.set(sym, {
-        isCorrelationBlocked: isCorrCapReached && score >= 76 && !isChaseBlocked,
+        isCorrelationBlocked: isCorrCapReached && score >= minCandThreshold && !isChaseBlocked,
         blockReason: isCorrCapReached
           ? `BLOCKED: Max 2 active ${overLimitKey?.replace(':', ' ')} trades open (Correlation Cap)`
           : undefined,
@@ -1938,6 +1960,7 @@ class SignalScannerService {
     const refreshedActiveBySymbol = new Map<string, ForexSignal>();
 
     for (const { pair, livePrice, pairStrategy, evalRes, m15Candles, h1Candles, h4Candles, d1Candles } of evaluations) {
+      const minPairThreshold = pairStrategy === 'LONDON_KILLER' ? 75 : 76;
       const isEligibleForActive = activePairSet.has(pair.symbol);
       const corrGuard = candCorrGuardMap.get(pair.symbol);
       const isCorrelationBlocked = Boolean(corrGuard?.isCorrelationBlocked);
@@ -1956,10 +1979,10 @@ class SignalScannerService {
         let actionableAdvice = '';
         const details: string[] = [];
 
-        if (evalRes.highestScore < 76) {
+        if (evalRes.highestScore < minPairThreshold) {
           triggerFactor = 'SCORE_DROP';
           verdict = evalRes.highestScore < 65 ? 'STOP_IMMEDIATELY' : 'WATCH_OUT';
-          demotionReason = `Confluence Score dropped to ${evalRes.highestScore}% (below 76% A+ threshold)`;
+          demotionReason = `Confluence Score dropped to ${evalRes.highestScore}% (below ${minPairThreshold}% A+ threshold)`;
           actionableAdvice = evalRes.highestScore < 65
             ? 'Score dropped significantly below institutional threshold. Consider closing the position or tightening Stop Loss immediately to protect capital.'
             : 'Confluence weakened slightly. Position is still running on MT4/MT5, but watch price action closely around the nearest support/resistance.';
@@ -2015,7 +2038,7 @@ class SignalScannerService {
           if (item.title.includes('Best Timeframe MTF')) {
             return {
               ...item,
-              isConfirmed: evalRes.highestScore >= 76,
+              isConfirmed: evalRes.highestScore >= minPairThreshold,
               detail: `${evalRes.scoreBreakdownText} (Score: ${evalRes.highestScore}/100 • ADX: ${evalRes.adxValue ?? 'N/A'} • RSI: ${evalRes.rsiValue ?? 'N/A'})`
             };
           }
@@ -2097,7 +2120,10 @@ class SignalScannerService {
            isStatusTierMismatch ||
            (existingStrat !== pairStrategy && activeStrategy !== 'ALL_STRATEGIES') ||
            options?.forceFormNewForTopPairs ||
-           (existing.winningTf && existing.winningTf !== evalRes.winningTf && evalRes.highestScore > (existing.confluenceScore || 0)) ||
+           (existing.winningTf && existing.winningTf !== evalRes.winningTf && (
+             tfPriorityRank(evalRes.winningTf) > tfPriorityRank(existing.winningTf) ||
+             evalRes.highestScore > (existing.confluenceScore || 0)
+           )) ||
            (existing.confluenceScore !== evalRes.highestScore));
 
       if (shouldReplace) {

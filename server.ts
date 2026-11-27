@@ -2386,8 +2386,25 @@ async function startServer() {
                 ? Math.max(0, Math.min(100, h4Pts + h1Pts + m15Pts + sharedOther))
                 : 0;
 
+              const isGold = pair.symbol.includes('XAU');
+              const isLondonKillerPair = ['EUR/USD', 'GBP/USD', 'GBP/JPY', 'USD/JPY', 'AUD/USD'].includes(pair.symbol);
+              const strategy = isGold || pair.symbol.includes('XAG')
+                ? 'GOLD_HUNTER'
+                : (isLondonKillerPair || isLiquiditySwept)
+                ? 'LONDON_KILLER'
+                : 'TREND_RIDER';
+              const minConfluenceGate = strategy === 'LONDON_KILLER' ? 75 : 76;
+
+              // Strict Institutional Timeframe Priority across ALL strategies:
+              // 1st Priority: H1 (1 Hour) -> 2nd Priority: H4 (4 Hours) -> 3rd Priority ONLY: M15 (15 Min)
               let winningTf: 'M15' | 'H1' | 'H4' = 'H1';
-              if (h1ScoreVal >= h4ScoreVal && h1ScoreVal >= m15ScoreVal) winningTf = 'H1';
+              if (h1ScoreVal >= minConfluenceGate) winningTf = 'H1';
+              else if (h4ScoreVal >= minConfluenceGate) winningTf = 'H4';
+              else if (m15ScoreVal >= minConfluenceGate) winningTf = 'M15';
+              else if (h1ScoreVal >= 60) winningTf = 'H1';
+              else if (h4ScoreVal >= 60) winningTf = 'H4';
+              else if (m15ScoreVal >= 60) winningTf = 'M15';
+              else if (h1ScoreVal >= h4ScoreVal && h1ScoreVal >= m15ScoreVal) winningTf = 'H1';
               else if (h4ScoreVal >= m15ScoreVal) winningTf = 'H4';
               else winningTf = 'M15';
 
@@ -2401,10 +2418,8 @@ async function startServer() {
                 Math.min(100, Math.round(effectiveH4Pts + effectiveH1M15Pts + strengthPts + d1LiquidityPts + effectiveAtrSpreadPts))
               );
 
-              // Strict institutional gate: Score >= 76 AND NOT chasing highs/lows
-              if (finalBreakdownTotal < 76 || swingEval.isChasingZone || swingEval.isExtremeChase) return;
-
-              const isGold = pair.symbol.includes('XAU');
+              // Strict institutional gate: Score >= 75 (London Killer) or >= 76 (others) AND NOT chasing highs/lows
+              if (finalBreakdownTotal < minConfluenceGate || swingEval.isChasingZone || swingEval.isExtremeChase) return;
               const slPips = winningTf === 'M15'
                 ? Math.min(isGold ? 60 : 34, Math.max(isGold ? 36 : 22, Math.round(atrPips * 1.15)))
                 : winningTf === 'H1'
@@ -2437,12 +2452,6 @@ async function startServer() {
               const takeProfit1 = Number((entryPrice + (isBuy ? 1 : -1) * tp1Pips * pipUnit).toFixed(pair.pipDigits));
               const takeProfit2 = Number((entryPrice + (isBuy ? 1 : -1) * tp2Pips * pipUnit).toFixed(pair.pipDigits));
               const takeProfit3 = Number((entryPrice + (isBuy ? 1 : -1) * tp3Pips * pipUnit).toFixed(pair.pipDigits));
-
-              const strategy = isGold || pair.symbol.includes('XAG')
-                ? 'GOLD_HUNTER'
-                : isLiquiditySwept
-                ? 'LONDON_KILLER'
-                : 'TREND_RIDER';
 
               const createdAtMs = Date.now();
               const cleanIdSym = pair.symbol.replace(/[^A-Za-z0-9]/g, '');

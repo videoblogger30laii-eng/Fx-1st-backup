@@ -84,11 +84,11 @@ const STRATEGY_CORE_SPECS: Record<StrategyType, StrategyCoreSpecification> = {
     tp2Multiplier: 2.0,
     atrSlMultiplier: '0.95x ATR (Beyond Sweep Wick Extreme)',
     minDisplacementAtr: '≥1.28x 14-Period ATR Impulse',
-    sessionVolumeFilter: 'London Killzone 07:00–10:00 UTC Only (News Blackout Protected)',
+    sessionVolumeFilter: 'Expanded London/NY Killzone 06:00–16:00 UTC (75+ Confluence, News Protected)',
     equilibriumRule: 'D1 Previous Day High/Low Box + D1 Macro Structure Gate',
     rsiFilterRule: 'M15 MSS+ & John Wick Rejection Absorption',
     primaryTimeframes: 'M15 Entry / H1 Sweep / H4 Bias / D1 Box & 200 EMA',
-    entryTriggerRule: 'H1 sweep of Asian/D1 Box closing back inside, triggered on M15 MSS+ & pin bar wick rejection during 07:00–10:00 UTC. Automated BE (+1p) locked at 1:1 RR.',
+    entryTriggerRule: 'H1 sweep of Asian/D1 Box closing back inside, triggered on M15 MSS+ & pin bar wick rejection during 06:00–16:00 UTC (75+ score). Automated BE (+1p) locked at 1:1 RR.',
     invalidationRule: 'Hard stop 0.95x ATR snugly beyond sweep wick; rollover spread expansion gate',
     selectivityFactor: 0.84
   },
@@ -539,17 +539,17 @@ export const StrategyBacktester = {
         }
       } else if (strategy === 'LONDON_KILLER') {
         // Combine: ORR Box Pivot (ARC) + ICT Sweep + MSS+ + London Fakeout+
-        // Pairs: EUR/USD, GBP/USD, GBP/JPY. 07:00-10:00 UTC London Open only.
+        // Pairs: EUR/USD, GBP/USD, GBP/JPY, USD/JPY, AUD/USD. Expanded 06:00-16:00 UTC London/NY Killzone.
         const orrRes = evalOpeningRangeBoxPivot();
         const sweepRes = evalIctSmartMoney();
         const fakeoutRes = evalLiquiditySweep();
 
-        const isLondonKillzone = (utcHour >= 7 && utcHour <= 10);
+        const isLondonKillzone = (utcHour >= 6 && utcHour <= 16);
         if (isLondonKillzone && (orrRes.matched || sweepRes.matched || fakeoutRes.matched)) {
           isSetup = true;
           isBuy = orrRes.matched ? orrRes.buy : sweepRes.matched ? sweepRes.buy : fakeoutRes.buy;
           qualityBonus = 9;
-          rationale = `London Killer: D1 Previous Day Box sweep on H1, confirmed by M15 MSS+ & pin bar wick rejection during London Open 07:00-10:00 UTC.`;
+          rationale = `London Killer: D1 Previous Day Box sweep on H1, confirmed by M15 MSS+ & pin bar wick rejection during Expanded London/NY Killzone 06:00-16:00 UTC.`;
         }
       } else if (strategy === 'TREND_RIDER') {
         // Combine: Triple EMA + ATR Gate + OB + FVG + 50% Zone + MTF H4+M15 Fractal

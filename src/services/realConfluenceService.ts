@@ -328,17 +328,29 @@ export function evaluateRealConfluence(input: RealConfluenceInput): RealConfluen
 
   const sharedOtherPts = strengthPts + d1LiquidityPts + atrSpreadPts - newsPenalty;
   const h1ScoreVal = Math.max(0, Math.min(100, h4Pts + h1Pts + m15Pts + sharedOtherPts));
-  const m15ScoreVal = Math.max(0, Math.min(100, h4Pts + Math.round(m15Pts * 1.5) + h1Pts + sharedOtherPts));
-  const h4ScoreVal = Math.max(0, Math.min(100, Math.round(h4Pts * 1.15) + h1Pts + Math.round(m15Pts * 0.6) + sharedOtherPts));
+  const m15ScoreVal = Math.max(0, Math.min(100, h4Pts + m15Pts + h1Pts + sharedOtherPts));
+  const h4ScoreVal = Math.max(0, Math.min(100, Math.round(h4Pts * 1.15) + h1Pts + Math.round(m15Pts * 0.5) + sharedOtherPts));
 
-  // Best Timeframe Selection using tie-breaker priority: 1st H1 -> 2nd M15 -> 3rd H4
+  // Best Timeframe Selection using strict priority: 1st H1 -> 2nd H4 -> 3rd ONLY M15
   let winningTf: 'M15' | 'H1' | 'H4' = 'H1';
-  if (h1ScoreVal >= m15ScoreVal && h1ScoreVal >= h4ScoreVal) {
+  if (h1ScoreVal >= 75) {
     winningTf = 'H1';
-  } else if (m15ScoreVal >= h4ScoreVal) {
-    winningTf = 'M15';
-  } else {
+  } else if (h4ScoreVal >= 75) {
     winningTf = 'H4';
+  } else if (m15ScoreVal >= 75) {
+    winningTf = 'M15';
+  } else if (h1ScoreVal >= 60) {
+    winningTf = 'H1';
+  } else if (h4ScoreVal >= 60) {
+    winningTf = 'H4';
+  } else if (m15ScoreVal >= 60) {
+    winningTf = 'M15';
+  } else if (h1ScoreVal >= h4ScoreVal && h1ScoreVal >= m15ScoreVal) {
+    winningTf = 'H1';
+  } else if (h4ScoreVal >= m15ScoreVal) {
+    winningTf = 'H4';
+  } else {
+    winningTf = 'M15';
   }
 
   const summaryText = `H4:${h4Pts} + H1/M15:${h1M15Pts} + Strength:${strengthPts} + D1/Liq:${d1LiquidityPts} + ATR:${atrSpreadPts}${newsPenalty ? ` - News:${newsPenalty}` : ''} = ${total}`;
