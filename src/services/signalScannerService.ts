@@ -1590,13 +1590,27 @@ class SignalScannerService {
     const now = Date.now();
     const h4D1TtlMs = 15 * 60 * 1000;
     const intradayTtlMs = 3 * 60 * 1000;
+    const recentSlPairsSet = new Set<string>();
+    const POST_SL_COOLDOWN_MS = 60 * 60 * 1000;
+    currentSignals.forEach(s => {
+      if (s && s.status === 'HIT_SL' && now - Number(s.closedAtMs || 0) < POST_SL_COOLDOWN_MS) {
+        recentSlPairsSet.add(String(s.pair?.symbol || '').toUpperCase());
+      }
+    });
+    Object.values(PersistenceManager.getSavedSignalsState()).forEach((s: any) => {
+      if (s && s.status === 'HIT_SL' && now - Number(s.closedAtMs || 0) < POST_SL_COOLDOWN_MS) {
+        recentSlPairsSet.add(String(s.pair?.symbol || '').toUpperCase());
+      }
+    });
 
     // Step A: Ensure H4 candles exist for all candidate pairs with live quotes
     const pairsNeedingH4 = candidatePairs.filter(pair => {
-      if (targetFilter && pair.symbol.toUpperCase() !== targetFilter) return false;
+      const sym = pair.symbol.toUpperCase();
+      if (targetFilter && sym !== targetFilter) return false;
       if (PersistenceManager.isPairInCloseCooldown(pair.symbol)) return false;
+      if (!targetFilter && recentSlPairsSet.has(sym)) return false;
       if (!realPriceService.hasLivePrice(pair.symbol)) return false;
-      const cached = this.h4CandleCache.get(pair.symbol.toUpperCase());
+      const cached = this.h4CandleCache.get(sym);
       return !cached || now - cached.fetchedAtMs > h4D1TtlMs || cached.candles.length < 50;
     });
 
@@ -1764,12 +1778,35 @@ class SignalScannerService {
 
     const evaluations: EvaluatedCandidate[] = [];
 
+    const evalNow = Date.now();
+    const recentSlEvalSet = new Set<string>();
+    const POST_SL_EVAL_COOLDOWN_MS = 60 * 60 * 1000;
+    currentSignals.forEach(s => {
+      if (s && s.status === 'HIT_SL' && evalNow - Number(s.closedAtMs || 0) < POST_SL_EVAL_COOLDOWN_MS) {
+        recentSlEvalSet.add(String(s.pair?.symbol || '').toUpperCase());
+      }
+    });
+    Object.values(PersistenceManager.getSavedSignalsState()).forEach((s: any) => {
+      if (s && s.status === 'HIT_SL' && evalNow - Number(s.closedAtMs || 0) < POST_SL_EVAL_COOLDOWN_MS) {
+        recentSlEvalSet.add(String(s.pair?.symbol || '').toUpperCase());
+      }
+    });
+
     for (const pair of candidatePairs) {
       if (options?.targetPairSymbol && pair.symbol.toUpperCase() !== options.targetPairSymbol.toUpperCase()) {
         continue;
       }
 
       if (PersistenceManager.isPairInCloseCooldown(pair.symbol)) {
+        continue;
+      }
+
+      if (!options?.targetPairSymbol && recentSlEvalSet.has(pair.symbol.toUpperCase()) && !activePairMap.has(pair.symbol)) {
+        this.lastBlockedDiagnostics.push({
+          pairSymbol: pair.symbol,
+          status: 'LOW_SCORE',
+          reason: '60m Post-SL Cooldown active (moved to Closed after SL hit)'
+        });
         continue;
       }
 
@@ -2017,16 +2054,21 @@ class SignalScannerService {
           return item;
         });
 
+        const lockedActiveTf: 'M15' | 'H1' | 'H4' =
+          existing.timeframe === 'M15' || existing.timeframe === 'H1' || existing.timeframe === 'H4'
+            ? existing.timeframe
+            : (existing.winningTf || evalRes.winningTf);
+
         refreshedActiveBySymbol.set(pair.symbol, {
           ...existing,
           confluenceScore: isCorrelationBlocked ? 0 : evalRes.highestScore,
-          winningTf: evalRes.winningTf,
+          winningTf: lockedActiveTf,
           scoreBreakdownText: evalRes.scoreBreakdownText,
           tfScores: {
             m15: evalRes.m15Score,
             h1: evalRes.h1Score,
             h4: evalRes.h4Score,
-            winningTf: evalRes.winningTf,
+            winningTf: lockedActiveTf,
             textSummary: evalRes.scoreBreakdownText
           },
           institutionalFlow: `${STRATEGY_CONFIGS[pairStrategy].shortBadge} [${existing.timeframe}] • ${evalRes.scoreBreakdownText}`,

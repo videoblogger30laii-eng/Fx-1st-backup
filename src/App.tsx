@@ -846,11 +846,25 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
           // Preserve any signals closed or newly synced from 24/7 server during async scan
           const closedPairIds = new Set(
             prevSignals
-              .filter(s => s.status === 'HIT_TP' || s.status === 'HIT_SL')
+              .filter(s => {
+                const st = String(s.status || '').toUpperCase();
+                return st === 'HIT_TP' || st === 'HIT_SL' || st === 'CANCELLED' || st === 'EXPIRED' || Boolean(s.closedAtMs);
+              })
               .map(s => s.id)
           );
+          const nowMs = Date.now();
+          const recentSlPairs = new Set(
+            prevSignals
+              .filter(s => s.status === 'HIT_SL' && nowMs - Number(s.closedAtMs || 0) < 60 * 60 * 1000)
+              .map(s => s.pair.symbol.toUpperCase())
+          );
           const merged = res.updatedSignals.filter(s => {
-            if ((s.status === 'RUNNING' || s.status === 'PENDING' || s.status === 'STANDBY') && closedPairIds.has(s.id)) {
+            const st = String(s.status || '').toUpperCase();
+            const isNonClosed = st === 'RUNNING' || st === 'PENDING' || st === 'STANDBY';
+            if (isNonClosed && closedPairIds.has(s.id)) {
+              return false;
+            }
+            if (isNonClosed && !targetPairSymbol && recentSlPairs.has(s.pair.symbol.toUpperCase())) {
               return false;
             }
             return true;
@@ -914,6 +928,27 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       const withoutActive = prev.filter(s => s.id !== signal.id && !(s.pair.symbol === sym && (s.status === 'RUNNING' || s.status === 'PENDING' || s.status === 'STANDBY')));
       return [closedSignal, ...withoutActive];
     });
+
+    // 4b. Notify 24/7 server immediately so original signal.id is also marked closed there
+    // and never re-adopted back onto the active signal board after the 15m local cooldown
+    fetch('/api/signals/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        signals: [
+          {
+            ...signal,
+            status: closedSignal.status,
+            closedAtMs: now,
+            currentPrice: closedSignal.currentPrice,
+            pips: realizedPips,
+            isPending: false,
+            validityTimeLeft: closedSignal.validityTimeLeft,
+            validityExpiresAt: closedSignal.validityExpiresAt
+          }
+        ]
+      })
+    }).catch(() => {});
 
     // 5. If detail modal is open for this signal, close it
     setSelectedSignalDetail(current => (current?.id === signal.id || current?.pair.symbol === sym ? null : current));
@@ -1119,29 +1154,42 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
       });
       const data = await res.json();
       if (data?.signals && Array.isArray(data.signals)) {
-        const closedOnServer = data.signals.filter(
-          (s: any) => s.status === 'HIT_SL' || s.status === 'HIT_TP' || s.status === 'CANCELLED'
-        );
+        const closedOnServer = data.signals.filter((s: any) => {
+          const st = String(s?.status || '').toUpperCase();
+          return st === 'HIT_SL' || st === 'HIT_TP' || st === 'CANCELLED' || st === 'EXPIRED';
+        });
         const activeOnServer = data.signals.filter(
           (s: any) =>
             s &&
             s.id &&
             s.pair?.symbol &&
             (s.status === 'RUNNING' || s.status === 'PENDING') &&
-            hasRealConfluenceBreakdown(s)
+            !s.closedAtMs &&
+            hasRealConfluenceBreakdown(s) &&
+            isSignalValidAndActive(s as ForexSignal)
         );
 
         if (closedOnServer.length > 0 || activeOnServer.length > 0) {
           setSignals(prev => {
             let modified = false;
+            const nowMs = Date.now();
+            const recentSlServerPairs = new Set(
+              closedOnServer
+                .filter((c: any) => c.status === 'HIT_SL' && nowMs - Number(c.closedAtMs || 0) < 60 * 60 * 1000)
+                .map((c: any) => String(c.pair?.symbol || '').toUpperCase())
+            );
             let next = prev.map(p => {
               const srv = closedOnServer.find((c: any) => c.id === p.id);
-              if (srv && (p.status === 'RUNNING' || p.status === 'PENDING')) {
+              const pSt = String(p.status || '').toUpperCase();
+              const pIsClosed = pSt === 'HIT_SL' || pSt === 'HIT_TP' || pSt === 'CANCELLED' || pSt === 'EXPIRED';
+              if (srv && !pIsClosed) {
                 modified = true;
                 return {
                   ...p,
                   status: srv.status,
                   currentPrice: srv.currentPrice,
+                  pips: typeof srv.pips === 'number' ? srv.pips : p.pips,
+                  isPending: false,
                   closedAtMs: srv.closedAtMs || Date.now(),
                   validityTimeLeft: srv.validityTimeLeft || p.validityTimeLeft,
                   validityExpiresAt: srv.validityExpiresAt || p.validityExpiresAt
@@ -1149,6 +1197,17 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
               }
               return p;
             });
+
+            // Remove any leftover STANDBY card if that pair just closed on server within 60m post-SL cooldown
+            if (recentSlServerPairs.size > 0) {
+              const filteredStandby = next.filter(
+                p => !(p.status === 'STANDBY' && recentSlServerPairs.has(p.pair.symbol.toUpperCase()))
+              );
+              if (filteredStandby.length !== next.length) {
+                next = filteredStandby;
+                modified = true;
+              }
+            }
 
             // Adopt any signals scanned by the 24/7 server while browser/app was closed
             const existingIds = new Set(next.map(s => s.id));
@@ -1163,6 +1222,7 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
               const sym = String(srv.pair.symbol).toUpperCase();
               if (existingIds.has(srv.id) || localActivePairs.has(sym)) return;
               if (PersistenceManager.isPairInCloseCooldown(srv.pair.symbol)) return;
+              if (recentSlServerPairs.has(sym)) return;
 
               const createdAt = Number(srv.createdAtMs) || Date.now();
               PersistenceManager.setExplicitSignalAnchor(srv.id, createdAt);
@@ -1308,7 +1368,8 @@ Tap a topic or suggested prompt below, or type any question in the chat bar!`,
     setSignals(prev => {
       let modified = false;
       const next = prev.map(sig => {
-        if (sig.status === 'HIT_TP' || sig.status === 'HIT_SL') {
+        const st = String(sig.status || '').toUpperCase();
+        if (st === 'HIT_TP' || st === 'HIT_SL' || st === 'CANCELLED' || st === 'EXPIRED' || Boolean(sig.closedAtMs)) {
           return sig;
         }
         const quote = quotesMap[sig.pair.symbol];

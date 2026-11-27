@@ -669,13 +669,31 @@ export const PersistenceManager = {
       signals.forEach(s => {
         if (!s || !s.id) return;
         const sym = String(s.pair?.symbol || '').toUpperCase();
-        const isClosed = s.status === 'HIT_SL' || s.status === 'HIT_TP' || s.status === 'EXPIRED';
+        const sStUpper = String(s.status || '').toUpperCase();
+        const isTerminalStatus =
+          sStUpper === 'HIT_SL' ||
+          sStUpper === 'HIT_TP' ||
+          sStUpper === 'EXPIRED' ||
+          sStUpper === 'CANCELLED';
+        const isClosed = isTerminalStatus;
         // Never persist active/standby/pending signals generated without a real confluence breakdown
         if (!isClosed && !hasRealConfluenceBreakdown(s)) {
           return;
         }
         const prior = existing[s.id] || {};
         const prevStatus = prior.status;
+        const priorStUpper = String(prevStatus || '').toUpperCase();
+        const priorIsTerminal =
+          priorStUpper === 'HIT_SL' ||
+          priorStUpper === 'HIT_TP' ||
+          priorStUpper === 'EXPIRED' ||
+          priorStUpper === 'CANCELLED';
+
+        // Never revert an already-closed signal back to RUNNING/PENDING/STANDBY
+        if (priorIsTerminal && !isTerminalStatus) {
+          return;
+        }
+
         const priorTf = prior.timeframe;
         let tfUpdateNotice = prior.tfUpdateNotice;
         if (priorTf && s.timeframe && priorTf !== s.timeframe) {
@@ -700,7 +718,8 @@ export const PersistenceManager = {
         if (!isClosed && sym) {
           Object.entries(map).forEach(([otherId, otherItem]: [string, any]) => {
             if (otherId !== s.id && otherItem && String(otherItem.pair?.symbol || '').toUpperCase() === sym) {
-              const otherClosed = otherItem.status === 'HIT_SL' || otherItem.status === 'HIT_TP' || otherItem.status === 'EXPIRED';
+              const oSt = String(otherItem.status || '').toUpperCase();
+              const otherClosed = oSt === 'HIT_SL' || oSt === 'HIT_TP' || oSt === 'EXPIRED' || oSt === 'CANCELLED';
               if (!otherClosed) {
                 const otherCreated = typeof otherItem.createdAtMs === 'number' && otherItem.createdAtMs > 0
                   ? otherItem.createdAtMs
@@ -721,7 +740,7 @@ export const PersistenceManager = {
           this.setPairActiveAnchor(sym, lockedCreatedAt);
         }
 
-        const resolvedClosedAtMs = s.closedAtMs || prior.closedAtMs || (isClosed ? now : undefined);
+        const resolvedClosedAtMs = isTerminalStatus ? (s.closedAtMs || prior.closedAtMs || now) : undefined;
         const resolvedExecutedAtMs = s.executedAtMs || prior.executedAtMs;
         const updatedRecord = {
           ...prior,
@@ -762,7 +781,8 @@ export const PersistenceManager = {
       // 1. Keep single most recent active trade per pair
       Object.entries(map).forEach(([id, item]) => {
         if (!item) return;
-        const isClosed = item.status === 'HIT_SL' || item.status === 'HIT_TP' || item.status === 'EXPIRED';
+        const st = String(item.status || '').toUpperCase();
+        const isClosed = st === 'HIT_SL' || st === 'HIT_TP' || st === 'EXPIRED' || st === 'CANCELLED';
         const sym = String(item.pair?.symbol || '').toUpperCase();
         if (!isClosed && sym) {
           if (!seenMapActivePairs.has(sym)) {
@@ -776,7 +796,8 @@ export const PersistenceManager = {
       const closedCandidates: Array<{ id: string; item: any; ts: number }> = [];
       Object.entries(map).forEach(([id, item]) => {
         if (!item) return;
-        const isClosed = item.status === 'HIT_SL' || item.status === 'HIT_TP' || item.status === 'EXPIRED';
+        const st = String(item.status || '').toUpperCase();
+        const isClosed = st === 'HIT_SL' || st === 'HIT_TP' || st === 'EXPIRED' || st === 'CANCELLED';
         const sym = String(item.pair?.symbol || '').toUpperCase();
         if (isClosed && sym) {
           closedCandidates.push({
@@ -867,7 +888,15 @@ export const PersistenceManager = {
             return;
           }
           const savedAt = item.savedAt || now;
-          const isClosed = item.status === 'HIT_SL' || item.status === 'HIT_TP' || item.status === 'EXPIRED';
+          const itemStUpper = String(item.status || '').toUpperCase();
+          if (itemStUpper === 'STANDBY' && item.closedAtMs) {
+            return; // Drop corrupted standby+closedAtMs record
+          }
+          if (itemStUpper === 'PENDING' && item.closedAtMs) {
+            item.status = 'EXPIRED';
+          }
+          const resolvedStUpper = String(item.status || '').toUpperCase();
+          const isClosed = resolvedStUpper === 'HIT_SL' || resolvedStUpper === 'HIT_TP' || resolvedStUpper === 'EXPIRED' || resolvedStUpper === 'CANCELLED';
           const itemSym = String(item.pair?.symbol || '').toUpperCase();
           const isRunning = item.status === 'RUNNING';
           const ONE_DAY_MS = 24 * 3600 * 1000;

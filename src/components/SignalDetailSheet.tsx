@@ -252,7 +252,7 @@ Tier: ${signal.quality} (${signal.confluenceScore}% Confluence)
               )}
             </div>
             <div className="text-[11px] text-[#94A3B8] mt-0.5 flex items-center gap-1.5 flex-wrap">
-              <span>{signal.pair.name} • [{signal.winningTf || signal.timeframe}]</span>
+              <span>{signal.pair.name} • [{(signal.timeframe || signal.winningTf || 'H1').toUpperCase()}]</span>
               <span>•</span>
               <span className="text-[#F1F5F9] font-bold">Posted: {formatSignalDateTime(signal.createdAtMs)}</span>
               <span>({getFormattedTimeElapsed(signal, nowClockMs)})</span>

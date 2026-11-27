@@ -463,7 +463,7 @@ export const Elev8OrderModal: React.FC<Props> = ({
               <div className="flex items-center gap-2">
                 <span className="text-base sm:text-lg font-black text-[#F1F5F9]">{symbolWithSuffix}</span>
                 <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#2979FF]/20 text-[#2979FF] border border-[#2979FF]/40">
-                  {signal.timeframe}
+                  {(signal.timeframe || signal.winningTf || 'H1').toUpperCase()}
                 </span>
                 <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
                   isOrderBuy ? 'bg-[#00E676]/20 text-[#00E676]' : 'bg-[#FF3366]/20 text-[#FF3366]'

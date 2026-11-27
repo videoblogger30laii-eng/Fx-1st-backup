@@ -988,7 +988,17 @@ async function startServer() {
           let purgedLegacyCount = 0;
           Object.entries(parsed).forEach(([id, s]: [string, any]) => {
             if (!s || !s.id) return;
-            const isClosed = s.status === 'HIT_TP' || s.status === 'HIT_SL' || s.status === 'EXPIRED';
+            const st = String(s.status || '').toUpperCase();
+            if (st === 'STANDBY' && s.closedAtMs) {
+              purgedLegacyCount++;
+              return;
+            }
+            if (st === 'PENDING' && s.closedAtMs) {
+              s.status = 'EXPIRED';
+              s.isPending = false;
+            }
+            const resolvedSt = String(s.status || '').toUpperCase();
+            const isClosed = resolvedSt === 'HIT_TP' || resolvedSt === 'HIT_SL' || resolvedSt === 'EXPIRED' || resolvedSt === 'CANCELLED';
             if (!isClosed) {
               if (!hasServerConfluenceBreakdown(s)) {
                 purgedLegacyCount++;
@@ -997,7 +1007,7 @@ async function startServer() {
               sanitized[id] = s;
             } else {
               const sym = s.pair?.symbol || '';
-              const key = `${sym}-${s.pips}`;
+              const key = `${sym}-${s.status}-${s.pips}`;
               if (!seenClosedCombinations.has(key)) {
                 seenClosedCombinations.add(key);
                 sanitized[id] = s;
@@ -1006,7 +1016,7 @@ async function startServer() {
           });
           if (purgedLegacyCount > 0) {
             saveServerSignalsStore(sanitized);
-            console.log(`[Purge] Deleted ${purgedLegacyCount} old pre-breakdown signals from server_signals_store.json.`);
+            console.log(`[Purge] Cleaned ${purgedLegacyCount} legacy/corrupted signals from server_signals_store.json.`);
           }
           console.log(`[24/7 Server Monitor] Loaded & sanitized ${Object.keys(sanitized).length} signals from persistent disk store.`);
           return sanitized;
@@ -1034,7 +1044,35 @@ async function startServer() {
     if (isWatchdogRunning) return;
     isWatchdogRunning = true;
     try {
-      lastServerMonitorTick = Date.now();
+      const nowTick = Date.now();
+      lastServerMonitorTick = nowTick;
+
+      // Sweep stale/expired PENDING or STANDBY entries cleanly
+      let cleanupModified = false;
+      Object.entries(serverSignalsStore).forEach(([id, s]: [string, any]) => {
+        if (!s) return;
+        const ageMs = Math.max(0, nowTick - Number(s.createdAtMs || nowTick));
+        if (s.status === 'STANDBY' && (s.closedAtMs || ageMs > 24 * 3600 * 1000)) {
+          delete serverSignalsStore[id];
+          cleanupModified = true;
+          return;
+        }
+        if (s.status === 'PENDING' && (s.closedAtMs || ageMs > 24 * 3600 * 1000)) {
+          serverSignalsStore[id] = {
+            ...s,
+            status: 'EXPIRED',
+            isPending: false,
+            closedAtMs: s.closedAtMs || nowTick,
+            validityTimeLeft: 'Expired (Unfilled Limit Order)',
+            validityExpiresAt: 'Order Cancelled (Time Horizon Passed)'
+          };
+          cleanupModified = true;
+        }
+      });
+      if (cleanupModified) {
+        saveServerSignalsStore(serverSignalsStore);
+      }
+
       const activeSignals = Object.values(serverSignalsStore).filter(
         (s: any) => s.status === 'RUNNING' || s.status === 'PENDING'
       );
@@ -2697,9 +2735,15 @@ async function startServer() {
       const clientSignals = Array.isArray(req.body?.signals) ? req.body.signals : [];
       let updatedCount = 0;
 
-      // Also ensure no legacy non-closed pre-breakdown signals remain in server store
+      // Also ensure no legacy non-closed pre-breakdown signals or corrupted standby+closedAtMs remain in server store
       Object.entries(serverSignalsStore).forEach(([id, s]: [string, any]) => {
-        const isClosed = s?.status === 'HIT_TP' || s?.status === 'HIT_SL' || s?.status === 'EXPIRED';
+        const st = String(s?.status || '').toUpperCase();
+        const isClosed = st === 'HIT_TP' || st === 'HIT_SL' || st === 'EXPIRED' || st === 'CANCELLED';
+        if (st === 'STANDBY' && s?.closedAtMs) {
+          delete serverSignalsStore[id];
+          updatedCount++;
+          return;
+        }
         if (!isClosed && !hasServerConfluenceBreakdown(s)) {
           delete serverSignalsStore[id];
           updatedCount++;
@@ -2709,19 +2753,25 @@ async function startServer() {
       clientSignals.forEach((sig: any) => {
         if (sig && sig.id) {
           const existing = serverSignalsStore[sig.id];
-          const isClosed = sig.status === 'HIT_SL' || sig.status === 'HIT_TP' || sig.status === 'EXPIRED' || sig.status === 'CANCELLED';
+          const st = String(sig.status || '').toUpperCase();
+          const isClosed = st === 'HIT_SL' || st === 'HIT_TP' || st === 'EXPIRED' || st === 'CANCELLED';
+          if (st === 'STANDBY' && sig.closedAtMs) {
+            return;
+          }
           if (!isClosed && !hasServerConfluenceBreakdown(sig)) {
             // Reject legacy active/standby signals lacking real breakdown
             return;
           }
-          // If server already marked it as HIT_SL / HIT_TP / CANCELLED, keep server's closed outcome
-          if (existing && (existing.status === 'HIT_SL' || existing.status === 'HIT_TP' || existing.status === 'CANCELLED')) {
+          const exSt = String(existing?.status || '').toUpperCase();
+          // If server already marked it as HIT_SL / HIT_TP / CANCELLED / EXPIRED, keep server's closed outcome
+          if (existing && (exSt === 'HIT_SL' || exSt === 'HIT_TP' || exSt === 'CANCELLED' || exSt === 'EXPIRED')) {
             // keep closed
           } else {
-            serverSignalsStore[sig.id] = {
-              ...sig,
-              lastSyncedAt: Date.now()
-            };
+            const sanitizedSig = { ...sig, lastSyncedAt: Date.now() };
+            if (!isClosed) {
+              delete sanitizedSig.closedAtMs;
+            }
+            serverSignalsStore[sig.id] = sanitizedSig;
             updatedCount++;
           }
         }

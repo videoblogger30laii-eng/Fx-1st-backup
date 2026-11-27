@@ -339,7 +339,7 @@ export const SignalsScreen: React.FC<Props> = ({
     };
 
     const getTfKey = (s: ForexSignal): 'M15' | 'H1' | 'H4' | 'OTHER' => {
-      const tf = (s.winningTf || s.tfScores?.winningTf || s.timeframe || '').toUpperCase();
+      const tf = (s.timeframe || s.winningTf || s.tfScores?.winningTf || '').toUpperCase();
       if (tf.includes('15') || tf === 'M15') return 'M15';
       if (tf.includes('1H') || tf === 'H1') return 'H1';
       if (tf.includes('4H') || tf === 'H4') return 'H4';
@@ -404,7 +404,7 @@ export const SignalsScreen: React.FC<Props> = ({
     // 1b. Timeframe Filter (M15, H1, H4, or ALL)
     if (closedTimeframe !== 'ALL') {
       const getTfKey = (s: ForexSignal): 'M15' | 'H1' | 'H4' | 'OTHER' => {
-        const tf = (s.winningTf || s.tfScores?.winningTf || s.timeframe || '').toUpperCase();
+        const tf = (s.timeframe || s.winningTf || s.tfScores?.winningTf || '').toUpperCase();
         if (tf.includes('15') || tf === 'M15') return 'M15';
         if (tf.includes('1H') || tf === 'H1') return 'H1';
         if (tf.includes('4H') || tf === 'H4') return 'H4';
@@ -1849,7 +1849,7 @@ export const SignalsScreen: React.FC<Props> = ({
                             {isBuy ? 'BUY' : 'SELL'}
                           </span>
                           <span className="text-[9.5px] font-mono text-[#94A3B8]">
-                            [{sig.winningTf || sig.timeframe}] · {sig.confluenceScore}/100
+                            [{(sig.timeframe || sig.winningTf || 'H1').toUpperCase()}] · {sig.confluenceScore}/100
                           </span>
                         </div>
                         <span className="text-[9px] font-bold text-[#94A3B8] underline underline-offset-2 shrink-0">

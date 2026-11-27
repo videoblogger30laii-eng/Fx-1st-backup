@@ -915,18 +915,30 @@ export function isSignalValidAndActive(signal: ForexSignal, now: number = Date.n
     return false;
   }
 
-  // 1. Closed status (Hit Take Profit or Stop Loss)
-  if (signal.status === 'HIT_TP' || signal.status === 'HIT_SL') {
+  // 1. Closed / Terminal status (Hit TP, Hit SL, Cancelled, Expired, or locked closedAtMs timestamp)
+  const st = String(signal.status || '').toUpperCase();
+  if (
+    st === 'HIT_TP' ||
+    st === 'HIT_SL' ||
+    st === 'CANCELLED' ||
+    st === 'EXPIRED' ||
+    (typeof signal.closedAtMs === 'number' && signal.closedAtMs > 0)
+  ) {
     return false;
   }
 
-  // 2. Closed / Target Reached text markers
+  // 2. Closed / Target Reached / Cancelled text markers
   const timeText = (signal.validityTimeLeft || '').toLowerCase();
   const expText = (signal.validityExpiresAt || '').toLowerCase();
   if (
     timeText.includes('target reached') ||
     timeText.includes('completed') ||
-    expText.includes('completed')
+    timeText.includes('cancelled') ||
+    timeText.includes('sl hit') ||
+    timeText.includes('tp1 hit') ||
+    timeText.startsWith('closed') ||
+    expText.includes('completed') ||
+    expText.includes('cancelled')
   ) {
     return false;
   }
@@ -1013,6 +1025,17 @@ export function isSignalValidAndActive(signal: ForexSignal, now: number = Date.n
       const distPips = Math.abs(calculatePips(signal.pair, signal.entryPrice, currentPrice, signal.type.startsWith('BUY')));
       if (distPips > maxPendingDistPips) {
         return false; // Invalidated: Pending order is unrealistically far (>75p) from live market
+      }
+    }
+  }
+
+  // 5. Structural SL Invalidation for STANDBY setups too (if live price already crossed SL before trigger)
+  if (signal.status === 'STANDBY') {
+    const currentPrice = signal.currentPrice > 0 ? signal.currentPrice : signal.pair?.currentPrice || 0;
+    const isBuy = String(signal.type || '').startsWith('BUY');
+    if (currentPrice > 0 && signal.stopLoss > 0) {
+      if ((isBuy && currentPrice <= signal.stopLoss) || (!isBuy && currentPrice >= signal.stopLoss)) {
+        return false;
       }
     }
   }
@@ -1326,8 +1349,15 @@ export function updateSignalWithLiveMarket(
 
   const updatedPair: ForexPair = { ...signal.pair, currentPrice: livePrice };
 
-  // Keep closed signals locked at their exit price, status, and realized pips
-  if (signal.status === 'HIT_TP' || signal.status === 'HIT_SL') {
+  // Keep closed/cancelled/expired signals locked at their exit price, status, and realized pips
+  const stUpper = String(signal.status || '').toUpperCase();
+  if (
+    stUpper === 'HIT_TP' ||
+    stUpper === 'HIT_SL' ||
+    stUpper === 'CANCELLED' ||
+    stUpper === 'EXPIRED' ||
+    (typeof signal.closedAtMs === 'number' && signal.closedAtMs > 0)
+  ) {
     return {
       ...signal,
       pair: updatedPair
@@ -1400,10 +1430,17 @@ export function updateSignalWithLiveMarket(
         newPips = calculatePips(updatedPair, finalEntry, exitCheckPrice, isBuy);
         validityTimeLeft = `Active (${newPips >= 0 ? '+' : ''}${newPips} pips)`;
         executedAtMs = signal.executedAtMs || Date.now();
+      } else if ((isBuy && exitCheckPrice <= finalStopLoss) || (!isBuy && exitCheckPrice >= finalStopLoss)) {
+        newStatus = 'CANCELLED' as SignalStatus;
+        newPips = 0;
+        validityTimeLeft = 'Cancelled (SL Breached Before Fill)';
+        validityExpiresAt = `Invalidated before fill at ${formatPrice(updatedPair, exitCheckPrice)}`;
+        closedAtMs = signal.closedAtMs || Date.now();
       } else {
         const remainingMs = getRemainingValidityMs(signal);
         if (remainingMs <= 0) {
-          newStatus = 'PENDING';
+          newStatus = 'EXPIRED' as SignalStatus;
+          newPips = 0;
           validityTimeLeft = 'Expired (Unfilled Limit Order)';
           validityExpiresAt = 'Order Cancelled (Time Horizon Passed)';
           closedAtMs = signal.closedAtMs || Date.now();

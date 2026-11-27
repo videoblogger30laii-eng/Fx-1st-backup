@@ -194,7 +194,7 @@ export const SignalCard: React.FC<Props> = ({
     !isClosedOrder &&
     Boolean(conflictInfo?.isConflict);
 
-  const cardTf = (signal.winningTf || signal.timeframe || 'M15').toUpperCase();
+  const cardTf = (signal.timeframe || signal.winningTf || 'M15').toUpperCase();
   const beThresholdPct = cardTf === 'H4' || cardTf === 'D1' ? 30 : 45;
   const isBreakevenActive = (signal.isBreakevenArmed || (signal.status === 'RUNNING' && tpRatio >= beThresholdPct)) && !isClosedOrder;
 
@@ -583,7 +583,7 @@ export const SignalCard: React.FC<Props> = ({
                 <>
                   <Timer className="w-3 h-3 text-[#FFD700] shrink-0" />
                   <span className="text-[#94A3B8] truncate">
-                    {isTimeExpired ? 'Window Expired' : `${signal.timeframe} Window: ${countdown}`}
+                    {isTimeExpired ? 'Window Expired' : `${cardTf} Window: ${countdown}`}
                   </span>
                 </>
               ) : isClosedOrder ? (
